@@ -17,6 +17,11 @@ fi
 
 # Conditional SFTP support: enable process-user-data.path only if ENABLE_SFTP is set
 
+# Generate SSH host keys at build time (writable root, no sshd-keygen@ on Ubuntu)
+if command -v ssh-keygen &>/dev/null; then
+    ssh-keygen -A
+fi
+
 ENABLE_SFTP=${ENABLE_SFTP:-false}
 
 if [[ "${ENABLE_SFTP}" == "true" ]]; then
