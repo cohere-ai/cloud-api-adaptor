@@ -23,9 +23,6 @@ if command -v ssh-keygen &>/dev/null; then
 fi
 
 # Ensure systemd-resolved stub is wired up so DNS works at boot.
-# Without this symlink, /etc/resolv.conf is missing and the GCE metadata
-# hostname (metadata.google.internal) can't be resolved, which breaks
-# process-user-data and agent-protocol-forwarder.
 ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
 
 ENABLE_SFTP=${ENABLE_SFTP:-false}
