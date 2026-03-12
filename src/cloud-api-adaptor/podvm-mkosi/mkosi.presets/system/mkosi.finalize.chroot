@@ -25,6 +25,15 @@ fi
 # Ensure systemd-resolved stub is wired up so DNS works at boot.
 ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
 
+# NVIDIA GPU support: enable services and ensure check script is executable.
+# Services gate themselves at runtime via ExecCondition=/usr/local/bin/check-nvidia-gpu
+# so they're harmless on non-GPU VMs.
+chmod +x /usr/local/bin/check-nvidia-gpu 2>/dev/null || true
+if command -v nvidia-persistenced &>/dev/null; then
+    systemctl enable nvidia-persistenced.service || true
+    systemctl enable nvidia-fabricmanager.service || true
+fi
+
 ENABLE_SFTP=${ENABLE_SFTP:-false}
 
 if [[ "${ENABLE_SFTP}" == "true" ]]; then
