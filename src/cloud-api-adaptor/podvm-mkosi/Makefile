@@ -15,6 +15,11 @@ PODVM_CONTAINER_NAME ?= $(REGISTRY)/podvm-docker-image-$(DISTRO_ARCH)
 VERIFY_PROVENANCE ?= no
 MKOSI_VERSION ?= v22
 
+# Set to a comma-separated list of cargo features to build attestation-agent
+# from source instead of pulling the pre-built OCI artifact.
+# Example: AA_FEATURES=bin,ttrpc,kbs,coco_as,rust-crypto,tdx-attester,nvidia-attester
+AA_FEATURES ?=
+
 _SHA := $(shell git rev-parse --short HEAD)
 _SHA_DIRTY := $(shell [ -n "$$(git status --porcelain 2>/dev/null)" ] && printf -- '-dirty')
 IMAGE_VERSION ?= $(_SHA)$(_SHA_DIRTY)
@@ -78,6 +83,7 @@ endif
 		--build-arg PAUSE_BIN=$(PAUSE_BIN) \
 		--build-arg IMAGE_NAME=mkosi-podvm-binaries \
 		--build-arg VERIFY_PROVENANCE=$(VERIFY_PROVENANCE) \
+		$(if $(AA_FEATURES),--build-arg AA_FEATURES=$(AA_FEATURES) --build-arg GUEST_COMPONENTS_REF=$(GUEST_COMPONENTS_REF),) \
 		$(if $(AUTHFILE),--build-arg AUTHFILE=$(AUTHFILE),) \
 		$(if $(DEFAULT_AGENT_POLICY_FILE),--build-arg DEFAULT_AGENT_POLICY_FILE=$(DEFAULT_AGENT_POLICY_FILE),) \
 		$(if $(filter $(PUSH),true),,-o type=local,dest="./resources/binaries-tree") \
