@@ -2,6 +2,7 @@
 Description=CDH API Server Rest Service
 BindsTo=netns@podns.service
 After=network.target kata-agent.service netns@podns.service
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
