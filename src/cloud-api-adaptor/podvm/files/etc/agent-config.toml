@@ -1,3 +1,2 @@
 server_addr = "unix:///run/kata-containers/agent.sock"
 guest_components_procs = "none"
-policy_file = "/run/peerpod/policy.rego"
