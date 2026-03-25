@@ -8,3 +8,6 @@ OutputDirectory=build
 
 [Distribution]
 Distribution=ubuntu
+
+[Build]
+WithNetwork=yes
