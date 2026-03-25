@@ -6,31 +6,44 @@
 # Build binaries for mkosi podvm image
 #
 
-# Optional: build attestation-agent from source with custom cargo features.
-# When AA_FEATURES is non-empty the pre-built OCI artifact is replaced with a
-# locally compiled binary, allowing feature combinations (e.g. tdx + nvidia)
-# that upstream CI does not publish.
-FROM rust:1.90-bookworm AS aa_builder
+# Optional: build guest-components binaries from source.
+# When AA_FEATURES is non-empty, attestation-agent is compiled with the given
+# cargo features (e.g. tdx + nvidia) instead of using the upstream pre-built binary.
+# When GUEST_COMPONENTS_REF is non-empty, api-server-rest is also compiled from
+# the same checkout so both binaries stay in sync.
+FROM rust:1.90-bookworm AS gc_builder
 ARG AA_FEATURES=""
 ARG GUEST_COMPONENTS_REF=""
+ARG GUEST_COMPONENTS_REPO="https://github.com/confidential-containers/guest-components.git"
 ARG DEBIAN_FRONTEND=noninteractive
 RUN set -e; \
-    if [ -n "${AA_FEATURES}" ]; then \
+    if [ -n "${GUEST_COMPONENTS_REF}" ]; then \
       apt-get update && \
       apt-get install -y --no-install-recommends \
         protobuf-compiler pkg-config clang libssl-dev libtss2-dev && \
       apt-get clean && rm -rf /var/lib/apt/lists/* && \
       mkdir -p /build/gc && cd /build/gc && \
       git init && \
-      git remote add origin https://github.com/confidential-containers/guest-components.git && \
+      git remote add origin "${GUEST_COMPONENTS_REPO}" && \
       git fetch --depth=1 origin "${GUEST_COMPONENTS_REF}" && \
-      git reset --hard FETCH_HEAD && \
-      cd attestation-agent/attestation-agent && \
+      git reset --hard FETCH_HEAD; \
+    fi
+RUN set -e; \
+    if [ -n "${AA_FEATURES}" ] && [ -n "${GUEST_COMPONENTS_REF}" ]; then \
+      cd /build/gc/attestation-agent/attestation-agent && \
       cargo build --release --no-default-features \
         --features "${AA_FEATURES}" --bin ttrpc-aa && \
       cp /build/gc/target/release/ttrpc-aa /aa-binary; \
     else \
       touch /aa-binary; \
+    fi
+RUN set -e; \
+    if [ -n "${GUEST_COMPONENTS_REF}" ]; then \
+      cd /build/gc/api-server-rest && \
+      cargo build --release && \
+      cp /build/gc/target/release/api-server-rest /api-server-rest-binary; \
+    else \
+      touch /api-server-rest-binary; \
     fi
 
 FROM ubuntu:24.04 AS builder
@@ -136,9 +149,14 @@ RUN ./hack/cross-build-extras.sh
 RUN LIBC=gnu make binaries
 
 ARG AA_FEATURES=""
-COPY --from=aa_builder /aa-binary /tmp/aa-binary
+ARG GUEST_COMPONENTS_REF=""
+COPY --from=gc_builder /aa-binary /tmp/aa-binary
+COPY --from=gc_builder /api-server-rest-binary /tmp/api-server-rest-binary
 RUN if [ -n "${AA_FEATURES}" ]; then \
       install -m0755 /tmp/aa-binary /src/cloud-api-adaptor/podvm/files/usr/local/bin/attestation-agent; \
+    fi
+RUN if [ -n "${GUEST_COMPONENTS_REF}" ]; then \
+      install -m0755 /tmp/api-server-rest-binary /src/cloud-api-adaptor/podvm/files/usr/local/bin/api-server-rest; \
     fi
 
 FROM scratch
