@@ -17,6 +17,14 @@ mv "${BUILDROOT}/etc/issue.d" "${BUILDROOT}/usr/lib/issue.d" || true
 rm -f "${BUILDROOT}"/etc/systemd/system/{run-image,run-kata\x2dcontainers}.mount
 rm -f "${BUILDROOT}"/etc/systemd/system/multi-user.target.wants/{run-image,run-kata\x2dcontainers}.mount
 
+# Override the target image's systemd-stub with the builder's v256 version.
+# mkosi may use the target's stub for UKI creation; ensure RTMR support is present.
+if [ -f /usr/lib/systemd/boot/efi/linuxx64.efi.stub ]; then
+    mkdir -p "${BUILDROOT}/usr/lib/systemd/boot/efi"
+    cp /usr/lib/systemd/boot/efi/linuxx64.efi.stub \
+       "${BUILDROOT}/usr/lib/systemd/boot/efi/linuxx64.efi.stub"
+fi
+
 # mask unwanted sytemd units that measure a bunch of stuff into the vTPM
 ln -s /dev/null "${BUILDROOT}/etc/systemd/system/systemd-pcrmachine.service"
 ln -s /dev/null "${BUILDROOT}/etc/systemd/system/systemd-pcrfs-root.service"

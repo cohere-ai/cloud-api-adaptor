@@ -26,6 +26,15 @@ RUN apt-get update && \
 	python3 \
 	zstd
 
+# Upgrade systemd-stub to v256 for TDX RTMR2 support (EFI_CC_MEASUREMENT_PROTOCOL).
+# Only the stub binary is replaced; all other build tools stay at v255.
+RUN curl -fsSL -o /tmp/systemd-boot-efi.deb \
+	http://old-releases.ubuntu.com/ubuntu/pool/universe/s/systemd/systemd-boot-efi_256.5-2ubuntu3_amd64.deb && \
+	dpkg -x /tmp/systemd-boot-efi.deb /tmp/systemd-boot-efi && \
+	cp /tmp/systemd-boot-efi/usr/lib/systemd/boot/efi/linuxx64.efi.stub \
+	   /usr/lib/systemd/boot/efi/linuxx64.efi.stub && \
+	rm -rf /tmp/systemd-boot-efi /tmp/systemd-boot-efi.deb
+
 RUN mkdir -p /build
 WORKDIR /build
 RUN git clone -b "$MKOSI_VERSION" https://github.com/systemd/mkosi
