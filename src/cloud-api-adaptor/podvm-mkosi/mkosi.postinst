@@ -14,8 +14,9 @@ mv "${BUILDROOT}/etc/issue.d" "${BUILDROOT}/usr/lib/issue.d" || true
 } >> "${BUILDROOT}/etc/os-release"
 
 # remove unused units of legacy image
-rm -f "${BUILDROOT}"/etc/systemd/system/{run-image,run-kata\x2dcontainers}.mount
-rm -f "${BUILDROOT}"/etc/systemd/system/multi-user.target.wants/{run-image,run-kata\x2dcontainers}.mount
+# Double-escape \x2d: unquoted \x is consumed by bash as a no-op escape.
+rm -f "${BUILDROOT}"/etc/systemd/system/{run-image,run-kata\\x2dcontainers}.mount
+rm -f "${BUILDROOT}"/etc/systemd/system/multi-user.target.wants/{run-image,run-kata\\x2dcontainers}.mount
 
 # Override the target image's systemd-stub with the builder's v256 version.
 # mkosi may use the target's stub for UKI creation; ensure RTMR support is present.
@@ -25,11 +26,15 @@ if [ -f /usr/lib/systemd/boot/efi/linuxx64.efi.stub ]; then
        "${BUILDROOT}/usr/lib/systemd/boot/efi/linuxx64.efi.stub"
 fi
 
-# mask unwanted sytemd units that measure a bunch of stuff into the vTPM
+# Mask systemd units that extend non-deterministic data into RTMR2 / PCR 11.
+# These vary per VM instance (machine-id, filesystem UUIDs) and would make
+# RTMR2 unpredictable across VMs booting the same image.
 ln -s /dev/null "${BUILDROOT}/etc/systemd/system/systemd-pcrmachine.service"
 ln -s /dev/null "${BUILDROOT}/etc/systemd/system/systemd-pcrfs-root.service"
 ln -s /dev/null "${BUILDROOT}/etc/systemd/system/systemd-pcrfs@.service"
 ln -s /dev/null "${BUILDROOT}/etc/systemd/system/systemd-pcrphase@.service"
-ln -s /dev/null "${BUILDROOT}/etc/systemd/system/systemd-pcrphase-initrd.service"
-ln -s /dev/null "${BUILDROOT}/etc/systemd/system/systemd-pcrphase-sysinit.service"
-ln -s /dev/null "${BUILDROOT}/etc/systemd/system/systemd-pcrphase.service"
+
+# Leave systemd-pcrphase boot-phase services UNMASKED so they extend
+# deterministic phase strings (enter-initrd → leave-initrd → sysinit → ready)
+# into RTMR2. This makes the final RTMR2 value match the "ready" phase output
+# of `systemd-measure calculate`, enabling build-time prediction.
