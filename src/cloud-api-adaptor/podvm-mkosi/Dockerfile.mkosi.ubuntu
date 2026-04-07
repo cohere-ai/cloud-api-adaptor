@@ -72,10 +72,6 @@ RUN mkdir -p /image/mkosi.skeleton/etc/apt/sources.list.d \
        'Pin-Priority: 1001' \
        > /image/mkosi.skeleton/etc/apt/preferences.d/nvidia-cuda-repo
 
-# macOS creates AppleDouble resource fork files (._*) that break mkosi's
-# config parser (it tries to read_text() on binary .conf files).
-RUN find /image -name "._*" -delete
-
 RUN --security=insecure mkosi --profile=$PROFILE --image-version=$IMAGE_VERSION
 
 FROM scratch
