@@ -59,10 +59,6 @@ RUN mkdir -p /image/mkosi.skeleton/etc/apt/sources.list.d \
     && echo 'deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://nvidia.github.io/libnvidia-container/stable/deb/amd64 /' \
        > /image/mkosi.skeleton/etc/apt/sources.list.d/nvidia-container-toolkit.list \
     && printf '%s\n' \
-       'Package: *' \
-       'Pin: origin developer.download.nvidia.com' \
-       'Pin-Priority: 1001' \
-       '' \
        'Package: nvidia-*' \
        'Pin: origin developer.download.nvidia.com' \
        'Pin-Priority: 1001' \
@@ -75,6 +71,10 @@ RUN mkdir -p /image/mkosi.skeleton/etc/apt/sources.list.d \
        'Pin: origin developer.download.nvidia.com' \
        'Pin-Priority: 1001' \
        > /image/mkosi.skeleton/etc/apt/preferences.d/nvidia-cuda-repo
+
+# macOS creates AppleDouble resource fork files (._*) that break mkosi's
+# config parser (it tries to read_text() on binary .conf files).
+RUN find /image -name "._*" -delete
 
 RUN --security=insecure mkosi --profile=$PROFILE --image-version=$IMAGE_VERSION
 
