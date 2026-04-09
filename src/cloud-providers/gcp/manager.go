@@ -28,6 +28,8 @@ func (*Manager) ParseCmd(flags *flag.FlagSet) {
 	reg.StringWithEnv(&gcpcfg.MachineType, "machine-type", "e2-medium", "GCP_MACHINE_TYPE", "Pod VM instance type")
 	reg.StringWithEnv(&gcpcfg.Network, "network", "", "GCP_NETWORK", "Network ID to be used for the Pod VMs", provider.Required())
 	reg.StringWithEnv(&gcpcfg.Subnetwork, "subnetwork", "", "GCP_SUBNETWORK", "Subnetwork ID to be used for the Pod VMs (required for custom subnet mode networks)")
+	reg.StringWithEnv(&gcpcfg.SecondaryNetwork, "secondary-network", "", "GCP_SECONDARY_NETWORK", "[EXPERIMENTAL] Secondary VPC network for multi-NIC peer pod VMs (required when EXTERNAL_NETWORK_VIA_PODVM=true)")
+	reg.StringWithEnv(&gcpcfg.SecondarySubnetwork, "secondary-subnetwork", "", "GCP_SECONDARY_SUBNETWORK", "[EXPERIMENTAL] Secondary subnetwork for multi-NIC peer pod VMs (must be in the secondary network, same region)")
 	reg.StringWithEnv(&gcpcfg.DiskType, "disk-type", "pd-standard", "GCP_DISK_TYPE", "Any GCP disk type (pd-standard, pd-ssd, pd-balanced or pd-extreme)")
 	reg.BoolWithEnv(&gcpcfg.DisableCVM, "disable-cvm", false, "DISABLECVM", "Use non-CVMs for peer pods")
 	reg.StringWithEnv(&gcpcfg.ConfidentialType, "confidential-type", "", "GCP_CONFIDENTIAL_TYPE", "Used when DisableCVM=false. i.e: TDX, SEV or SEV_SNP. Check if the machine type is compatible.")
@@ -37,6 +39,7 @@ func (*Manager) ParseCmd(flags *flag.FlagSet) {
 
 	// Custom flag types (comma-separated lists)
 	reg.CustomTypeWithEnv(&gcpcfg.Tags, "tags", "", "TAGS", "List of tags to be added to the Pod VMs. Tags must already exist in the GCP project. Format: key1=value1,key2=value2")
+	reg.CustomTypeWithEnv(&gcpcfg.NetworkTags, "network-tags", "", "GCP_NETWORK_TAGS", "Network tags for firewall rule targeting on peer pod VMs, comma separated")
 	reg.CustomTypeWithEnv(&gcpcfg.MachineTypes, "machine-types", "", "GCP_INSTANCE_TYPES", "Machine types to be used for the Pod VMs, comma separated")
 }
 

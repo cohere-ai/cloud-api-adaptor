@@ -66,6 +66,17 @@ providerConfigs:
     # (default: "")
     # GCP_SUBNETWORK: ""
 
+    # [EXPERIMENTAL] Secondary VPC network for multi-NIC peer pod VMs.
+    # Required when EXTERNAL_NETWORK_VIA_PODVM=true. GCP requires secondary
+    # NICs to be in a different VPC network than the primary.
+    # (default: "")
+    # GCP_SECONDARY_NETWORK: ""
+
+    # [EXPERIMENTAL] Secondary subnetwork for multi-NIC peer pod VMs.
+    # Must be in the secondary network, same region as the primary subnetwork.
+    # (default: "")
+    # GCP_SECONDARY_SUBNETWORK: ""
+
     # Use Spot (preemptible) instances for peer pod VMs. Reduces cost significantly but VMs may be reclaimed by GCP at any time.
     # (default: "false")
     # GCP_USE_SPOT_INSTANCES: "false"
@@ -113,6 +124,10 @@ providerConfigs:
     # List of tags to be added to the Pod VMs. Tags must already exist in the GCP project. Format: key1=value1,key2=value2
     # (default: "")
     # TAGS: ""
+
+    # Network tags for firewall rule targeting on peer pod VMs, comma separated
+    # (default: "")
+    # GCP_NETWORK_TAGS: ""
 
     # Skip TLS certificate verification - use it only for testing
     # (default: "false")

@@ -206,6 +206,23 @@ func (p *gcpProvider) selectMachineType(ctx context.Context, spec provider.Insta
 	return provider.SelectInstanceTypeToUse(spec, p.serviceConfig.MachineTypeSpecList, p.serviceConfig.MachineTypes, p.serviceConfig.MachineType)
 }
 
+// formatSubnetwork resolves a short subnetwork name to its full resource path.
+// Supports full paths, partial paths, URLs, and short names. Returns nil for empty input.
+func (p *gcpProvider) formatSubnetwork(subnetwork string) *string {
+	if subnetwork == "" {
+		return nil
+	}
+	if hasAnyPrefix(subnetwork, "projects/", "/projects", "regions/", "https") {
+		return proto.String(subnetwork)
+	}
+	zoneParts := strings.Split(p.serviceConfig.Zone, "-")
+	if len(zoneParts) >= 2 {
+		region := strings.Join(zoneParts[:len(zoneParts)-1], "-")
+		return proto.String(fmt.Sprintf("projects/%s/regions/%s/subnetworks/%s", p.serviceConfig.ProjectID, region, subnetwork))
+	}
+	return proto.String(subnetwork)
+}
+
 func (p *gcpProvider) CreateInstance(ctx context.Context, podName, sandboxID string, cloudConfig cloudinit.CloudConfigGenerator, spec provider.InstanceTypeSpec) (instance *provider.Instance, err error) {
 
 	instanceName := util.GenerateInstanceName(podName, sandboxID, maxInstanceNameLen)
@@ -269,30 +286,7 @@ func (p *gcpProvider) CreateInstance(ctx context.Context, podName, sandboxID str
 		imageSizeGB = int64(p.serviceConfig.RootVolumeSize)
 	}
 
-	// Format subnetwork: support both short names and full paths
-	// GCP accepts formats:
-	// - "projects/<project>/regions/<region>/subnetworks/<subnetwork>" (full path)
-	// - "regions/<region>/subnetworks/<subnetwork>" (partial path)
-	// - "<subnetwork>" (short name, will be formatted as full path)
-	// Extract region from zone (e.g., "us-central1-a" -> "us-central1")
-	var subnetworkValue *string
-	if p.serviceConfig.Subnetwork != "" {
-		subnetworkName := p.serviceConfig.Subnetwork
-		if hasAnyPrefix(subnetworkName, "projects/", "/projects", "regions/", "https") {
-			subnetworkValue = proto.String(subnetworkName)
-		} else {
-			// Extract region from zone (format: "region-zone" e.g., "us-central1-a")
-			zoneParts := strings.Split(p.serviceConfig.Zone, "-")
-			if len(zoneParts) >= 2 {
-				region := strings.Join(zoneParts[:len(zoneParts)-1], "-")
-				formattedSubnetwork := fmt.Sprintf("projects/%s/regions/%s/subnetworks/%s", p.serviceConfig.ProjectID, region, subnetworkName)
-				subnetworkValue = proto.String(formattedSubnetwork)
-			} else {
-				// Fallback: assume zone format is invalid, try to use as-is
-				subnetworkValue = proto.String(subnetworkName)
-			}
-		}
-	}
+	primarySubnet := p.formatSubnetwork(p.serviceConfig.Subnetwork)
 
 	networkInterface := &computepb.NetworkInterface{
 		Network: proto.String(p.serviceConfig.Network),
@@ -304,8 +298,34 @@ func (p *gcpProvider) CreateInstance(ctx context.Context, podName, sandboxID str
 		},
 		StackType: proto.String("IPV4_Only"),
 	}
-	if subnetworkValue != nil {
-		networkInterface.Subnetwork = subnetworkValue
+	if primarySubnet != nil {
+		networkInterface.Subnetwork = primarySubnet
+	}
+
+	networkInterfaces := []*computepb.NetworkInterface{networkInterface}
+
+	if spec.MultiNic {
+		if p.serviceConfig.SecondaryNetwork == "" {
+			return nil, fmt.Errorf("GCP_SECONDARY_NETWORK is required when EXTERNAL_NETWORK_VIA_PODVM is enabled")
+		}
+		logger.Printf("Multi-NIC enabled: adding secondary interface on network %s", p.serviceConfig.SecondaryNetwork)
+
+		secondaryNIC := &computepb.NetworkInterface{
+			Network:   proto.String(p.serviceConfig.SecondaryNetwork),
+			StackType: proto.String("IPV4_Only"),
+		}
+		if secondarySub := p.formatSubnetwork(p.serviceConfig.SecondarySubnetwork); secondarySub != nil {
+			secondaryNIC.Subnetwork = secondarySub
+		}
+		if p.serviceConfig.UsePublicIP {
+			secondaryNIC.AccessConfigs = []*computepb.AccessConfig{
+				{
+					Name:        proto.String("Secondary External NAT"),
+					NetworkTier: proto.String("STANDARD"),
+				},
+			}
+		}
+		networkInterfaces = append(networkInterfaces, secondaryNIC)
 	}
 
 	instanceResource := &computepb.Instance{
@@ -335,7 +355,13 @@ func (p *gcpProvider) CreateInstance(ctx context.Context, podName, sandboxID str
 			},
 		},
 		MachineType:       proto.String(fmt.Sprintf("zones/%s/machineTypes/%s", p.serviceConfig.Zone, machineType)),
-		NetworkInterfaces: []*computepb.NetworkInterface{networkInterface},
+		NetworkInterfaces: networkInterfaces,
+	}
+
+	if len(p.serviceConfig.NetworkTags) > 0 {
+		items := make([]string, len(p.serviceConfig.NetworkTags))
+		copy(items, p.serviceConfig.NetworkTags)
+		instanceResource.Tags = &computepb.Tags{Items: items}
 	}
 
 	// Check if OnHostMaintenance needs to be set to TERMINATE

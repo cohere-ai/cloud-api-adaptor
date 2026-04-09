@@ -15,7 +15,26 @@ option `ext-network-via-podvm` in cloud-api-adaptor. The equivalent option in th
 
 The prerequisite is for the pod VM to have a secondary interface with an IP. This interface will be moved to the pod network namespace and default routes adjusted so that pod network traverses via worker node, and any other traffic uses the secondary interface.
 
-**This is experimental feature and currently only available for AWS and Alibaba Cloud**
+**This is experimental feature and currently available for AWS, Alibaba Cloud, and GCP**
+
+## GCP-specific setup
+
+GCP requires the secondary NIC to be in a **different VPC network** than the primary
+(unlike AWS/Alibaba which reuse the same subnet). Configure via `peer-pods-cm`:
+
+| ConfigMap key | Description |
+|---|---|
+| `EXTERNAL_NETWORK_VIA_PODVM` | Set to `"true"` to enable multi-NIC |
+| `GCP_SECONDARY_NETWORK` | Full or short name of the secondary VPC network (required) |
+| `GCP_SECONDARY_SUBNETWORK` | Subnetwork in the secondary VPC, same region (optional if auto-mode VPC) |
+
+Both NICs are defined at instance creation time and auto-deleted with the VM—no
+post-boot attachment or manual cleanup is needed.
+
+Infrastructure prerequisites:
+- A secondary VPC with a subnet in the same region as the primary
+- Cloud NAT on the secondary VPC (if internet egress is needed from the secondary NIC)
+- Firewall rules on the secondary VPC allowing the required traffic
 
 ## Specifying Pod subnet CIDRs
 

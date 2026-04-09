@@ -25,23 +25,41 @@ func (m *machineTypes) Set(value string) error {
 	return nil
 }
 
+type networkTags []string
+
+func (n *networkTags) String() string {
+	return strings.Join(*n, ", ")
+}
+
+func (n *networkTags) Set(value string) error {
+	if len(value) == 0 {
+		*n = make(networkTags, 0)
+	} else {
+		*n = append(*n, strings.Split(value, ",")...)
+	}
+	return nil
+}
+
 type Config struct {
-	GcpCredentials      string
-	ProjectID           string
-	Zone                string
-	ImageName           string
-	MachineType         string
-	Network             string
-	Subnetwork          string
-	DiskType            string
-	DisableCVM          bool
-	ConfidentialType    string
-	RootVolumeSize      int
-	Tags                provider.KeyValueFlag
-	UsePublicIP         bool
-	UseSpotInstances    bool
-	MachineTypes        machineTypes
-	MachineTypeSpecList []provider.InstanceTypeSpec
+	GcpCredentials       string
+	ProjectID            string
+	Zone                 string
+	ImageName            string
+	MachineType          string
+	Network              string
+	Subnetwork           string
+	SecondaryNetwork     string
+	SecondarySubnetwork  string
+	DiskType             string
+	DisableCVM           bool
+	ConfidentialType     string
+	RootVolumeSize       int
+	Tags                 provider.KeyValueFlag
+	NetworkTags          networkTags
+	UsePublicIP          bool
+	UseSpotInstances     bool
+	MachineTypes         machineTypes
+	MachineTypeSpecList  []provider.InstanceTypeSpec
 }
 
 func (c Config) Redact() Config {
