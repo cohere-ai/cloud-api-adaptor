@@ -14,8 +14,11 @@ mv "${BUILDROOT}/etc/issue.d" "${BUILDROOT}/usr/lib/issue.d" || true
 } >> "${BUILDROOT}/etc/os-release"
 
 # remove unused units of legacy image
-rm -f "${BUILDROOT}"/etc/systemd/system/{run-image,run-kata\x2dcontainers}.mount
-rm -f "${BUILDROOT}"/etc/systemd/system/multi-user.target.wants/{run-image,run-kata\x2dcontainers}.mount
+# NB: the systemd-escaped filename contains a literal backslash (\x2d = '-').
+# Brace expansion is unquoted, so each alternative must double-escape the
+# backslash to survive bash quote removal.
+rm -f "${BUILDROOT}"/etc/systemd/system/{run-image,run-kata\\x2dcontainers}.mount
+rm -f "${BUILDROOT}"/etc/systemd/system/multi-user.target.wants/{run-image,run-kata\\x2dcontainers}.mount
 
 
 # mask unwanted sytemd units that measure a bunch of stuff into the vTPM
