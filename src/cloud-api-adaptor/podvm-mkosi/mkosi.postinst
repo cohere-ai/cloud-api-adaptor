@@ -31,7 +31,7 @@ ln -s /dev/null "${BUILDROOT}/etc/systemd/system/systemd-pcrphase-sysinit.servic
 ln -s /dev/null "${BUILDROOT}/etc/systemd/system/systemd-pcrphase.service"
 
 # Override the target image's systemd-stub with the builder's v256 version.
-# mkosi may use the target's stub for UKI creation; ensure RTMR support is present.
+# mkosi may use the target's stub for UKI creation; ensure TDX RTMR support is present.
 if [ -f /usr/lib/systemd/boot/efi/linuxx64.efi.stub ]; then
     mkdir -p "${BUILDROOT}/usr/lib/systemd/boot/efi"
     cp /usr/lib/systemd/boot/efi/linuxx64.efi.stub \
