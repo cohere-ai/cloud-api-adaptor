@@ -80,7 +80,7 @@ secrets:
 # Note: libvirt/docker provider files override this with the dev image.
 image:
   name: us-central1-docker.pkg.dev/cohere-confidential-computing/cloud-api-adaptor/cloud-api-adaptor
-  tag: "44d97551"
+  tag: "44d97551e74d3d835e6ab17d37475f1033b2011a"
 
 # Cloud provider: libvirt, aws, azure, gcp, ibmcloud, vsphere
 provider: gcp
@@ -137,7 +137,7 @@ resourceCtrl:
   enabled: true
   image:
     repository: us-central1-docker.pkg.dev/cohere-confidential-computing/cloud-api-adaptor/peerpod-ctrl
-    tag: "bfd5b984"
+    tag: "bfd5b9847b2fb44c843f6a3b6209092d0a217d83"
 
 # peerpods-webhook subchart configuration
 # Mutating webhook that modifies pod specs to use peer pods runtime and resources
