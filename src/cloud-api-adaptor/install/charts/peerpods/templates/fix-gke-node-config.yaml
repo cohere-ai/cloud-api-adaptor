@@ -39,12 +39,16 @@ spec:
             exit 0
           fi
 
-          sed -i 's/discard_unpacked_layers = true/discard_unpacked_layers = false/' "$TOML"
-          echo "containerd: patched $TOML"
-          grep discard_unpacked_layers "$TOML"
-
-          nsenter -t 1 -m -u -i -n -p -- systemctl restart containerd
-          echo "containerd: restarted"
+          if grep -q 'discard_unpacked_layers = true' "$TOML"; then
+            sed -i 's/discard_unpacked_layers = true/discard_unpacked_layers = false/g' "$TOML"
+            echo "containerd: patched $TOML"
+            grep discard_unpacked_layers "$TOML"
+            nsenter -t 1 -m -u -i -n -p -- systemctl restart containerd
+            echo "containerd: restarted"
+          else
+            echo "containerd: discard_unpacked_layers setting not found, skipping restart"
+            grep discard_unpacked_layers "$TOML" || true
+          fi
       - name: fix-kubelet
         image: alpine:3.21
         securityContext:
