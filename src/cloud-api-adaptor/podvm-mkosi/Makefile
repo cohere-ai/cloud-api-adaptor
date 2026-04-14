@@ -27,7 +27,10 @@ CUSTOM_GC_BINARIES ?=
 AA_FEATURES ?=
 
 # Git repo + ref for guest-components source checkout.
+# GUEST_COMPONENTS_REF is required when CUSTOM_GC_BINARIES is set.
+# Defaults to the OCI reference from versions.yaml via Makefile.defaults.
 GUEST_COMPONENTS_REPO ?= https://github.com/confidential-containers/guest-components.git
+# GUEST_COMPONENTS_REF is inherited from Makefile.defaults (oci.guest-components.reference)
 
 _SHA := $(shell git rev-parse --short HEAD)
 _SHA_DIRTY := $(shell [ -n "$$(git status --porcelain 2>/dev/null)" ] && printf -- '-dirty')

@@ -19,6 +19,10 @@ ARG GUEST_COMPONENTS_REF=""
 ARG GUEST_COMPONENTS_REPO="https://github.com/confidential-containers/guest-components.git"
 ARG DEBIAN_FRONTEND=noninteractive
 RUN set -e; \
+    if [ -n "${CUSTOM_GC_BINARIES}" ] && [ -z "${GUEST_COMPONENTS_REF}" ]; then \
+      echo "ERROR: GUEST_COMPONENTS_REF must be set when CUSTOM_GC_BINARIES is specified" >&2; \
+      exit 1; \
+    fi; \
     if [ -n "${CUSTOM_GC_BINARIES}" ] && [ -n "${GUEST_COMPONENTS_REF}" ]; then \
       apt-get update && \
       apt-get install -y --no-install-recommends \

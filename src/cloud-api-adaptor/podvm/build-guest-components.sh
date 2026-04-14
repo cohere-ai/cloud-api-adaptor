@@ -30,18 +30,18 @@ for bin in "${BINS[@]}"; do
         exit 1
       fi
       cd /build/gc/attestation-agent/attestation-agent
-      cargo build --release --no-default-features \
+      cargo build --release --locked --no-default-features \
         --features "$AA_FEATURES" --bin ttrpc-aa
       cp /build/gc/target/release/ttrpc-aa "$OUTDIR/attestation-agent"
       ;;
     api-server-rest)
       cd /build/gc/api-server-rest
-      cargo build --release
+      cargo build --release --locked
       cp /build/gc/target/release/api-server-rest "$OUTDIR/api-server-rest"
       ;;
     confidential-data-hub)
       cd /build/gc/confidential-data-hub
-      cargo build --release
+      cargo build --release --locked
       cp /build/gc/target/release/confidential-data-hub "$OUTDIR/confidential-data-hub"
       ;;
     *)
