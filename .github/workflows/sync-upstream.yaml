@@ -1,6 +1,10 @@
 name: Sync upstream
 
 on:
+  # TEMPORARY: testing on feature branch — remove before merging to cohere.
+  push:
+    branches:
+      - feat/sync-upstream-workflow
   schedule:
     # Every Monday at 09:00 UTC
     - cron: "0 9 * * 1"
