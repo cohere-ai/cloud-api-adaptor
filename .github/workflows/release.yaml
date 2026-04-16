@@ -87,6 +87,7 @@ jobs:
       packages: write
       id-token: write
       attestations: write
+      artifact-metadata: write  # Required by podvm_mkosi.yaml to write attestation metadata
     strategy:
       fail-fast: false
       matrix:
@@ -119,3 +120,4 @@ jobs:
       packages: write      # Required for pushing to GitHub Container Registry
       id-token: write      # Required for attestation signing
       attestations: write  # Required for persisting attestations
+      artifact-metadata: write  # Required by actions/attest
