@@ -43,6 +43,11 @@ jobs:
     outputs:
       new_commits: ${{ steps.ff.outputs.new_commits }}
       upstream_sha: ${{ steps.ff.outputs.upstream_sha }}
+    # GH_TOKEN must be available to every step — `gh auth setup-git`
+    # registers `gh` as a git credential helper, and that helper shells
+    # out to `gh` at push-time, which reads $GH_TOKEN from the environment.
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Checkout main
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -54,8 +59,6 @@ jobs:
           persist-credentials: false
 
       - name: Configure git
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -97,6 +100,11 @@ jobs:
     permissions:
       contents: write # push the sync/* branch
       pull-requests: write # create the sync PR via `gh pr create`
+    # GH_TOKEN must be available to every step — `gh auth setup-git`
+    # registers `gh` as a git credential helper, and that helper shells
+    # out to `gh` at push-time, which reads $GH_TOKEN from the environment.
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Checkout cohere branch
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -108,8 +116,6 @@ jobs:
           persist-credentials: false
 
       - name: Configure git
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
