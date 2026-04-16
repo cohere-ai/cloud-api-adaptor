@@ -20,7 +20,6 @@ import (
 	provider "github.com/confidential-containers/cloud-api-adaptor/src/cloud-providers"
 	"github.com/confidential-containers/cloud-api-adaptor/src/cloud-providers/util"
 	"github.com/confidential-containers/cloud-api-adaptor/src/cloud-providers/util/cloudinit"
-	"golang.org/x/oauth2/google"
 	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
 	proto "google.golang.org/protobuf/proto"
