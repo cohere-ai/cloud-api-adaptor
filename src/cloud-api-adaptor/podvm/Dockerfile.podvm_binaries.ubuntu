@@ -144,7 +144,7 @@ COPY --from=gc_builder /output/ /tmp/gc-overrides/
 RUN for bin in /tmp/gc-overrides/*; do \
       [ -f "$bin" ] && [ -s "$bin" ] && \
       install -m0755 "$bin" /src/cloud-api-adaptor/podvm/files/usr/local/bin/"$(basename "$bin")"; \
-    done
+    done; true
 
 FROM scratch
 COPY --from=podvm_binaries_builder /src/cloud-api-adaptor/podvm/files /
