@@ -49,19 +49,20 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
-          # Don't persist GITHUB_TOKEN in .git/config — pushes auth explicitly
-          # via extraheader below so the token can't leak to later steps.
+          # zizmor: token is set up explicitly below via `gh auth setup-git`
+          # so it isn't persisted in .git/config after this step.
           persist-credentials: false
 
       - name: Configure git
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          gh auth setup-git
 
       - name: Fast-forward main to upstream
         id: ff
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git remote add upstream "$UPSTREAM_REPO" || true
           git fetch upstream "$UPSTREAM_REF"
@@ -76,7 +77,6 @@ jobs:
             exit 0
           fi
 
-          # Verify this is a clean fast-forward (main should have no extra commits).
           AHEAD=$(git rev-list --count "upstream/$UPSTREAM_REF..HEAD")
           if [ "$AHEAD" -ne 0 ]; then
             echo "::error::origin/main is $AHEAD commits AHEAD of upstream — cannot fast-forward."
@@ -85,8 +85,7 @@ jobs:
           fi
 
           git merge --ff-only "upstream/$UPSTREAM_REF"
-          git -c "http.https://github.com/.extraheader=AUTHORIZATION: bearer $GH_TOKEN" \
-              push origin main
+          git push origin main
           echo "new_commits=$BEHIND" >> "$GITHUB_OUTPUT"
           echo "Fast-forwarded main by $BEHIND commits to $UPSTREAM_SHA"
 
@@ -104,12 +103,17 @@ jobs:
         with:
           ref: ${{ env.COHERE_BRANCH }}
           fetch-depth: 0
+          # zizmor: token is set up explicitly below via `gh auth setup-git`
+          # so it isn't persisted in .git/config after this step.
           persist-credentials: false
 
       - name: Configure git
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          gh auth setup-git
 
       - name: Check if cohere is behind main
         id: check
@@ -157,11 +161,8 @@ jobs:
       - name: Push sync branch
         if: steps.check.outputs.behind != '0'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SYNC_BRANCH: ${{ steps.check.outputs.sync_branch }}
-        run: |
-          git -c "http.https://github.com/.extraheader=AUTHORIZATION: bearer $GH_TOKEN" \
-              push origin "$SYNC_BRANCH"
+        run: git push origin "$SYNC_BRANCH"
 
       - name: Create pull request (clean merge)
         if: steps.check.outputs.behind != '0' && steps.merge.outputs.conflict == 'false'
