@@ -157,7 +157,7 @@ jobs:
           file: src/peerpod-ctrl/Dockerfile
           platforms: linux/amd64
           build-args: |
-            GOFLAGS=-tags=aws,azure,ibmcloud,ibmcloud_powervs
+            GOFLAGS=-tags=gcp
 
   chart:
     name: Publish peerpods Helm chart
