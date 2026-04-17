@@ -4,8 +4,8 @@
 # Builds the *release* CAA image only (no libvirt); upstream's reusable
 # caa_build_and_push.yaml has a hardcoded matrix that builds dev+release in
 # parallel, so we inline the release path here to avoid wasting an hour of CI
-# on a libvirt build we don't ship. peerpod-ctrl and the chart still call the
-# upstream reusables — they're single-build with no dev variant.
+# on a libvirt build we don't ship. peerpod-ctrl is also inlined (amd64-only,
+# GCP build tags) because upstream's reusable hardcodes all four arches.
 #
 # Tags produced (push to cohere):
 #   ghcr.io/cohere-ai/cloud-api-adaptor/cloud-api-adaptor:latest-cohere
@@ -111,21 +111,52 @@ jobs:
               make image registry="${REGISTRY}"
 
   peerpod-ctrl:
-    name: Build peerpod-ctrl image
+    name: Build peerpod-ctrl image (amd64)
     needs: tags
-    uses: ./.github/workflows/peerpod-ctrl_image.yaml
-    with:
-      registry: ghcr.io/cohere-ai/cloud-api-adaptor
-      git_ref: ${{ github.sha }}
-      image_tags: ${{ needs.tags.outputs.image_tags }}
+    runs-on: ubuntu-24.04
     permissions:
-      contents: read   # passed to reusable workflow for checkout
-      packages: write  # passed to reusable workflow for GHCR push
-    secrets:
-      # QUAY_PASSWORD is required by the reusable workflow's contract. The quay
-      # login step is gated on `startsWith(inputs.registry, 'quay.io')` so this
-      # token is never sent to quay; we pass GITHUB_TOKEN as a harmless dummy.
-      QUAY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+      contents: read   # checkout the cohere ref
+      packages: write  # push image manifests to GHCR
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+
+      - name: Login to GHCR
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Determine image tags
+        id: tags
+        env:
+          IMAGE_TAGS: ${{ needs.tags.outputs.image_tags }}
+          REGISTRY: ${{ env.REGISTRY }}
+        run: |
+          tags_csv=""
+          for t in ${IMAGE_TAGS//,/ }; do
+            tags_csv+="${REGISTRY}/peerpod-ctrl:${t},"
+          done
+          echo "tags=${tags_csv}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7.0.0
+        with:
+          tags: ${{ steps.tags.outputs.tags }}
+          push: true
+          context: src
+          file: src/peerpod-ctrl/Dockerfile
+          platforms: linux/amd64
+          build-args: |
+            GOFLAGS=-tags=aws,azure,ibmcloud,ibmcloud_powervs
 
   chart:
     name: Publish peerpods Helm chart
