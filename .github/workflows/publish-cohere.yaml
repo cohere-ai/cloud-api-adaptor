@@ -12,9 +12,9 @@
 #   ghcr.io/cohere-ai/cloud-api-adaptor/cloud-api-adaptor:<12-char-sha>
 #   ghcr.io/cohere-ai/cloud-api-adaptor/peerpod-ctrl:latest-cohere
 #   ghcr.io/cohere-ai/cloud-api-adaptor/peerpod-ctrl:<12-char-sha>
-#   ghcr.io/cohere-ai/cloud-api-adaptor/charts/peerpods:0.0.0-dev-cohere
+#   ghcr.io/cohere-ai/cloud-api-adaptor/charts/peerpods:0.0.0-dev.cohere
 #
-# The chart always publishes to the floating `0.0.0-dev-cohere` tag here —
+# The chart always publishes to the floating `0.0.0-dev.cohere` tag here —
 # mirroring upstream's `0.0.0-dev` convention for main-branch pushes — so we
 # never silently overwrite a real Chart.yaml version. Real SemVer chart tags
 # (e.g. 0.1.4-cohere.2) are produced by publish-cohere-release.yaml on release
@@ -134,7 +134,7 @@ jobs:
       git_ref: ${{ github.sha }}
       # Floating dev tag — mirrors upstream's `0.0.0-dev` convention for
       # main-branch pushes. Real SemVer is reserved for release events.
-      chart_version: "0.0.0-dev-cohere"
+      chart_version: "0.0.0-dev.cohere"
     permissions:
       contents: read           # checkout the cohere ref
       packages: write          # push chart artifact to GHCR
