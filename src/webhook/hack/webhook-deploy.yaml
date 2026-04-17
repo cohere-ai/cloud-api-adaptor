@@ -313,6 +313,7 @@ webhooks:
       namespace: peer-pods-webhook-system
       path: /mutate-v1-pod
   failurePolicy: Fail
+  reinvocationPolicy: IfNeeded
   name: mwebhook.peerpods.io
   rules:
   - apiGroups:
@@ -321,7 +322,6 @@ webhooks:
     - v1
     operations:
     - CREATE
-    - UPDATE
     resources:
     - pods
     scope: Namespaced

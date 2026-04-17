@@ -72,10 +72,11 @@ jobs:
     name: Build mkosi image for ${{ inputs.arch }}
     runs-on: ${{ inputs.arch == 's390x' && 's390x' || inputs.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     permissions:
-      contents: read
-      packages: write
-      id-token: write
-      attestations: write
+      contents: read  # Required for checkout on forks
+      packages: write  # Required to publish the oras package to ghcr
+      id-token: write  # Required for attestation signing
+      attestations: write  # Required to create attestations
+      artifact-metadata: write  # Required by actions/attest to write attestation metadata
     outputs:
       qcow2_oras_image: ${{ steps.publish_oras_qcow2.outputs.image }}:${{ steps.publish_oras_qcow2.outputs.tag }}
       docker_oci_image: ${{ steps.build_docker_oci.outputs.image }}
@@ -103,7 +104,7 @@ jobs:
 
       - name: Login to quay Container Registry
         if: ${{ startsWith(inputs.registry, 'quay.io') }}
-        uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4.0.0
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
         with:
           registry: quay.io
           username: ${{ vars.QUAY_USERNAME }}
@@ -111,7 +112,7 @@ jobs:
 
       - name: Login to the ghcr Container registry
         if: ${{ startsWith(inputs.registry, 'ghcr.io') }}
-        uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4.0.0
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
