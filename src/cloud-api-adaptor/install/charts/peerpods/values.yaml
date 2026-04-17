@@ -93,9 +93,11 @@ provider: gcp
 # using Workload Identity (no GCP_CREDENTIALS file needed).
 command: ["/bin/sh", "-c", "exec cloud-api-adaptor gcp"]
 
-# DaemonSet nodeSelector. GKE nodes are labeled by the node pool config.
-nodeSelector:
-  fortress.cohere.com/caa-worker: "true"
+# nodeSelector / tolerations applied to the cloud-api-adaptor and
+# fix-gke-node-config DaemonSets. Empty by default; consumers set these
+# to fence the DaemonSets onto their CAA worker pool.
+nodeSelector: {}
+tolerations: []
 
 # ServiceAccount annotations (e.g. Workload Identity binding)
 serviceAccount:
@@ -155,6 +157,10 @@ kata-deploy:
   # Set to false if kata is already installed (e.g., via another chart or operator).
   # If disabled, ensure kata-remote shim is enabled otherwise CAA will not work.
   enabled: true
+  # Fence the kata-deploy DaemonSet to the CAA worker pool. Empty by default;
+  # consumers must supply matching nodeSelector / tolerations via --set.
+  nodeSelector: {}
+  tolerations: []
   # No external snapshotter needed. The kata-remote shim uses
   # experimental_force_guest_pull (set in configuration-remote.toml)
   # to pull images inside the guest VM without nydus-snapshotter.

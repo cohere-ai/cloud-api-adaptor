@@ -16,6 +16,10 @@
 #   ghcr.io/cohere-ai/cloud-api-adaptor/peerpod-ctrl:v0.1.4-cohere.2
 #   ghcr.io/cohere-ai/cloud-api-adaptor/charts/peerpods:0.1.4-cohere.2
 #
+# The chart is self-contained: values.yaml is patched at package time so
+# image.tag and resourceCtrl.image.tag default to the release tag. A bare
+# `helm install` without overrides gets matching images.
+#
 # `latest-cohere` is NOT touched — that floats with the cohere branch tip via
 # publish-cohere.yaml. Consumers pin to the semver tag for stable releases.
 name: Publish (cohere release)
@@ -162,13 +166,105 @@ jobs:
   chart:
     name: Publish peerpods Helm chart
     needs: tags
-    uses: ./.github/workflows/peerpods-chart_image.yaml
-    with:
-      git_ref: ${{ needs.tags.outputs.git_ref }}
-      chart_version: ${{ needs.tags.outputs.chart_version }}
+    runs-on: ubuntu-24.04
     permissions:
       contents: read           # checkout the release tag
       packages: write          # push chart artifact to GHCR
       id-token: write          # OIDC token for actions/attest sigstore signing
       attestations: write      # write build provenance attestations
       artifact-metadata: write # actions/attest writes attestation metadata
+    defaults:
+      run:
+        working-directory: src/cloud-api-adaptor/install/charts/peerpods
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ needs.tags.outputs.git_ref }}
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Install yq
+        run: |
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+      - name: Patch values.yaml with release image tags
+        env:
+          IMAGE_TAG: ${{ needs.tags.outputs.image_tag }}
+        run: |
+          yq -i ".image.tag = \"${IMAGE_TAG}\"" values.yaml
+          yq -i ".resourceCtrl.image.tag = \"${IMAGE_TAG}\"" values.yaml
+          echo "Patched values.yaml default image tags to ${IMAGE_TAG}"
+          echo "  image.tag: $(yq '.image.tag' values.yaml)"
+          echo "  resourceCtrl.image.tag: $(yq '.resourceCtrl.image.tag' values.yaml)"
+
+      - name: Read versions
+        id: read_version
+        working-directory: .
+        env:
+          CHART_VERSION: ${{ needs.tags.outputs.chart_version }}
+        run: |
+          HELM_VERSION="$(yq -e '.tools.helm.version' src/cloud-api-adaptor/versions.yaml)"
+          HELM_CHECKSUM="$(yq -e '.tools.helm.sha256' src/cloud-api-adaptor/versions.yaml)"
+          {
+            echo "helm_version=${HELM_VERSION}"
+            echo "helm_checksum=${HELM_CHECKSUM}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Install Helm
+        env:
+          HELM_VERSION: ${{ steps.read_version.outputs.helm_version }}
+          HELM_CHECKSUM: ${{ steps.read_version.outputs.helm_checksum }}
+        run: |
+          curl -fsSL -o helm.tar.gz "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz"
+          echo "${HELM_CHECKSUM}  helm.tar.gz" | sha256sum --check --strict
+          tar -xzf helm.tar.gz
+          sudo mv linux-amd64/helm /usr/local/bin/helm
+          rm -rf helm.tar.gz linux-amd64
+
+      - name: Login to GHCR
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Authenticate Helm with GHCR
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_ACTOR: ${{ github.actor }}
+        run: |
+          echo "${GITHUB_TOKEN}" | helm registry login ghcr.io \
+            --username "${GITHUB_ACTOR}" \
+            --password-stdin
+
+      - name: Update Helm dependencies
+        run: helm dependency update
+
+      - name: Package Helm chart
+        env:
+          VERSION: ${{ needs.tags.outputs.chart_version }}
+        run: |
+          mkdir -p .cr-release-packages
+          helm package . --version "${VERSION}" --destination .cr-release-packages
+          ls -lh .cr-release-packages/
+
+      - name: Push Helm chart to OCI registry
+        id: push_chart
+        env:
+          VERSION: ${{ needs.tags.outputs.chart_version }}
+          REGISTRY: ${{ env.REGISTRY }}/charts
+        run: |
+          CHART_PACKAGE=".cr-release-packages/peerpods-${VERSION}.tgz"
+          helm push "${CHART_PACKAGE}" "oci://${REGISTRY}"
+          DIGEST=$(helm show chart "oci://${REGISTRY}/peerpods" --version "${VERSION}" 2>&1 | awk '/Digest:/ {print $2}')
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "Pushed: oci://${REGISTRY}/peerpods:${VERSION} (digest: ${DIGEST})"
+
+      - name: Generate attestation
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        with:
+          subject-name: ${{ env.REGISTRY }}/charts/peerpods
+          subject-digest: ${{ steps.push_chart.outputs.digest }}
+          push-to-registry: true

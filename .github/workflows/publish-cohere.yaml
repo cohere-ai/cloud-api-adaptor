@@ -145,7 +145,7 @@ jobs:
           for t in ${IMAGE_TAGS//,/ }; do
             tags_csv+="${REGISTRY}/peerpod-ctrl:${t},"
           done
-          echo "tags=${tags_csv}" >> "$GITHUB_OUTPUT"
+          echo "tags=${tags_csv%,}" >> "$GITHUB_OUTPUT"
 
       - name: Build and push
         uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7.0.0
