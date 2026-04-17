@@ -59,9 +59,11 @@ jobs:
         run: |
           # Image tags keep the v prefix verbatim; chart strips it (OCI SemVer).
           chart_version="${RAW_TAG#v}"
-          echo "git_ref=${RAW_TAG}" >> "$GITHUB_OUTPUT"
-          echo "image_tag=${RAW_TAG}" >> "$GITHUB_OUTPUT"
-          echo "chart_version=${chart_version}" >> "$GITHUB_OUTPUT"
+          {
+            echo "git_ref=${RAW_TAG}"
+            echo "image_tag=${RAW_TAG}"
+            echo "chart_version=${chart_version}"
+          } >> "$GITHUB_OUTPUT"
 
   caa:
     name: Build CAA image (release, amd64)
