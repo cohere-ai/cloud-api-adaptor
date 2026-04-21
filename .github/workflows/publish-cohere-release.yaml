@@ -259,6 +259,12 @@ jobs:
           CHART_PACKAGE=".cr-release-packages/peerpods-${VERSION}.tgz"
           helm push "${CHART_PACKAGE}" "oci://${REGISTRY}"
           DIGEST=$(helm show chart "oci://${REGISTRY}/peerpods" --version "${VERSION}" 2>&1 | awk '/Digest:/ {print $2}')
+
+          if [ -z "${DIGEST}" ]; then
+            echo "ERROR: Failed to extract digest"
+            exit 1
+          fi
+
           echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
           echo "Pushed: oci://${REGISTRY}/peerpods:${VERSION} (digest: ${DIGEST})"
 
