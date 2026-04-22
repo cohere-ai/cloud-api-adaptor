@@ -343,7 +343,11 @@ jobs:
     uses: ./.github/workflows/deploy-gcp-cohere.yaml
     with:
       image_tag: ${{ needs.meta.outputs.tag }}-${{ needs.meta.outputs.distro }}-${{ matrix.profile }}
-      replace_existing_image: ${{ needs.meta.outputs.replace_image == 'true' || inputs.replace_existing_image || false }}
+      replace_existing_image: >-
+        ${{
+          (github.event_name == 'push' && needs.meta.outputs.replace_image == 'true') ||
+          (github.event_name == 'workflow_dispatch' && inputs.replace_existing_image)
+        }}
     secrets:
       GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
       GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
