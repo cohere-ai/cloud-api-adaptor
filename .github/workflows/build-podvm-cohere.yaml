@@ -327,36 +327,22 @@ jobs:
           push-to-registry: true
 
   # ---------------------------------------------------------------------------
-  # Deploy to GCP — release image
+  # Deploy to GCP — release & debug images
   # ---------------------------------------------------------------------------
-  deploy-gcp-release:
-    name: Deploy release to GCP
+  deploy-gcp:
+    name: Deploy ${{ matrix.profile }} to GCP
     needs: [meta, build]
     if: |
-      always() && needs.build.result == 'success' &&
+      needs.build.result == 'success' &&
       (github.event_name == 'push' ||
-       github.event_name == 'workflow_dispatch' && inputs.deploy_gcp)
+       (github.event_name == 'workflow_dispatch' && inputs.deploy_gcp))
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [release, debug]
     uses: ./.github/workflows/deploy-gcp-cohere.yaml
     with:
-      image_tag: ${{ needs.meta.outputs.image_tag_release }}
-      replace_existing_image: ${{ needs.meta.outputs.replace_image == 'true' || inputs.replace_existing_image || false }}
-    secrets:
-      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-      GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
-
-  # ---------------------------------------------------------------------------
-  # Deploy to GCP — debug image
-  # ---------------------------------------------------------------------------
-  deploy-gcp-debug:
-    name: Deploy debug to GCP
-    needs: [meta, build]
-    if: |
-      always() && needs.build.result == 'success' &&
-      (github.event_name == 'push' ||
-       github.event_name == 'workflow_dispatch' && inputs.deploy_gcp)
-    uses: ./.github/workflows/deploy-gcp-cohere.yaml
-    with:
-      image_tag: ${{ needs.meta.outputs.image_tag_debug }}
+      image_tag: ${{ needs.meta.outputs.tag }}-${{ needs.meta.outputs.distro }}-${{ matrix.profile }}
       replace_existing_image: ${{ needs.meta.outputs.replace_image == 'true' || inputs.replace_existing_image || false }}
     secrets:
       GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
