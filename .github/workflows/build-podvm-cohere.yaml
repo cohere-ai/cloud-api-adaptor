@@ -115,9 +115,11 @@ jobs:
           oras version
 
       - name: Install cvm-measure
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           git clone --depth 1 --branch alhassankhedr/cc-167-tdx-measurement-toolkit \
-            https://github.com/cohere-ai/cvm-measure.git /tmp/cvm-measure
+            https://x-access-token:${GH_TOKEN}@github.com/cohere-ai/cvm-measure.git /tmp/cvm-measure
           pip install /tmp/cvm-measure
           rm -rf /tmp/cvm-measure
           cvm-measure --version
