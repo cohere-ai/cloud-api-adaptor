@@ -71,6 +71,7 @@ jobs:
     outputs:
       image_name: ${{ steps.meta.outputs.image_name }}
       image_tag: ${{ steps.meta.outputs.image_tag }}
+      replace_image: ${{ steps.meta.outputs.replace_image }}
       oci_ref: ${{ steps.push.outputs.oci_ref }}
       oci_digest: ${{ steps.push.outputs.digest }}
     steps:
@@ -132,8 +133,10 @@ jobs:
         run: |
           if [[ "$GITHUB_REF" == refs/tags/podvm-v* ]]; then
             TAG="${GITHUB_REF#refs/tags/podvm-}"
+            REPLACE_IMAGE="false"
           else
-            TAG="dev-$(date +%Y%m%d)-${GITHUB_SHA::8}"
+            TAG="cohere-latest"
+            REPLACE_IMAGE="true"
           fi
           TAG="${TAG//./-}"
           IMAGE_NAME="podvm-${DISTRO}-${TEE_PLATFORM}-${PROFILE}-${TAG}"
@@ -146,6 +149,7 @@ jobs:
             echo "caa_commit=$GITHUB_SHA"
             echo "caa_commit_short=${GITHUB_SHA::7}"
             echo "caa_ref=${GITHUB_REF_NAME}"
+            echo "replace_image=$REPLACE_IMAGE"
           } >> "$GITHUB_OUTPUT"
           echo "Building: $IMAGE_NAME (tag: $TAG)"
 
@@ -325,12 +329,12 @@ jobs:
     needs: build
     if: |
       always() && needs.build.result == 'success' &&
-      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/podvm-v') ||
+      (github.event_name == 'push' ||
        github.event_name == 'workflow_dispatch' && inputs.deploy_gcp)
     uses: ./.github/workflows/deploy-gcp-cohere.yaml
     with:
       image_tag: ${{ needs.build.outputs.image_tag }}
-      replace_existing_image: ${{ inputs.replace_existing_image || false }}
+      replace_existing_image: ${{ needs.build.outputs.replace_image == 'true' || inputs.replace_existing_image || false }}
     secrets:
       GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
       GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
