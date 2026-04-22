@@ -3,7 +3,7 @@ name: Build PodVM Image (Cohere)
 on:
   push:
     tags: ["podvm-v*"]
-    branches: ["cohere"]
+    branches: ["cohere", "alhassankhedr/cc-192-cloud-api-adaptor-port-podvm-builddeploy-workflows-from"]
   workflow_dispatch:
     inputs:
       image_profile:
