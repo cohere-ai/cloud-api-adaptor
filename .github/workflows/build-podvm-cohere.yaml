@@ -116,7 +116,7 @@ jobs:
 
       - name: Install cvm-measure
         run: |
-          git clone --depth 1 --branch main \
+          git clone --depth 1 --branch alhassankhedr/cc-167-tdx-measurement-toolkit \
             https://github.com/cohere-ai/cvm-measure.git /tmp/cvm-measure
           pip install /tmp/cvm-measure
           rm -rf /tmp/cvm-measure
