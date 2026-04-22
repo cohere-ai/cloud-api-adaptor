@@ -6,12 +6,6 @@ on:
     branches: ["cohere", "alhassankhedr/cc-192-cloud-api-adaptor-port-podvm-builddeploy-workflows-from"]
   workflow_dispatch:
     inputs:
-      image_profile:
-        description: "Image profile"
-        required: false
-        type: choice
-        options: [release, debug]
-        default: release
       distro:
         description: "PodVM distro"
         required: false
@@ -65,15 +59,49 @@ env:
   VERSIONS_YAML: src/cloud-api-adaptor/versions.yaml
 
 jobs:
-  build:
-    name: Build PodVM OS Image
+  meta:
+    name: Compute metadata
     runs-on: ubuntu-latest
     outputs:
-      image_name: ${{ steps.meta.outputs.image_name }}
-      image_tag: ${{ steps.meta.outputs.image_tag }}
-      replace_image: ${{ steps.meta.outputs.replace_image }}
-      oci_ref: ${{ steps.push.outputs.oci_ref }}
-      oci_digest: ${{ steps.push.outputs.digest }}
+      tag: ${{ steps.compute.outputs.tag }}
+      distro: ${{ steps.compute.outputs.distro }}
+      replace_image: ${{ steps.compute.outputs.replace_image }}
+      image_name_release: ${{ steps.compute.outputs.image_name_release }}
+      image_name_debug: ${{ steps.compute.outputs.image_name_debug }}
+      image_tag_release: ${{ steps.compute.outputs.image_tag_release }}
+      image_tag_debug: ${{ steps.compute.outputs.image_tag_debug }}
+    steps:
+      - name: Compute tags and image names
+        id: compute
+        env:
+          DISTRO: ${{ inputs.distro || 'ubuntu' }}
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/podvm-v* ]]; then
+            TAG="${GITHUB_REF#refs/tags/podvm-}"
+            REPLACE_IMAGE="false"
+          else
+            TAG="cohere-latest"
+            REPLACE_IMAGE="true"
+          fi
+          TAG="${TAG//./-}"
+          {
+            echo "tag=$TAG"
+            echo "distro=$DISTRO"
+            echo "replace_image=$REPLACE_IMAGE"
+            echo "image_name_release=podvm-${DISTRO}-${TEE_PLATFORM}-release-${TAG}"
+            echo "image_name_debug=podvm-${DISTRO}-${TEE_PLATFORM}-debug-${TAG}"
+            echo "image_tag_release=${TAG}-${DISTRO}-release"
+            echo "image_tag_debug=${TAG}-${DISTRO}-debug"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build PodVM (${{ matrix.profile }})
+    needs: meta
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [release, debug]
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
@@ -125,40 +153,16 @@ jobs:
           rm -rf /tmp/cvm-measure
           cvm-measure --version
 
-      - name: Compute image metadata
-        id: meta
-        env:
-          PROFILE: ${{ inputs.image_profile || 'release' }}
-          DISTRO: ${{ inputs.distro || 'ubuntu' }}
-        run: |
-          if [[ "$GITHUB_REF" == refs/tags/podvm-v* ]]; then
-            TAG="${GITHUB_REF#refs/tags/podvm-}"
-            REPLACE_IMAGE="false"
-          else
-            TAG="cohere-latest"
-            REPLACE_IMAGE="true"
-          fi
-          TAG="${TAG//./-}"
-          IMAGE_NAME="podvm-${DISTRO}-${TEE_PLATFORM}-${PROFILE}-${TAG}"
-          OCI_TAG="${TAG}-${DISTRO}-${PROFILE}"
-          {
-            echo "image_name=$IMAGE_NAME"
-            echo "image_tag=$OCI_TAG"
-            echo "profile=$PROFILE"
-            echo "distro=$DISTRO"
-            echo "caa_commit=$GITHUB_SHA"
-            echo "caa_commit_short=${GITHUB_SHA::7}"
-            echo "caa_ref=${GITHUB_REF_NAME}"
-            echo "replace_image=$REPLACE_IMAGE"
-          } >> "$GITHUB_OUTPUT"
-          echo "Building: $IMAGE_NAME (tag: $TAG)"
-
       - name: Inject SSH key for debug image
-        if: inputs.image_profile == 'debug' && inputs.ssh_public_key != ''
+        if: matrix.profile == 'debug'
         working-directory: src/cloud-api-adaptor/podvm-mkosi
         env:
-          SSH_PUBLIC_KEY: ${{ inputs.ssh_public_key }}
+          SSH_PUBLIC_KEY: ${{ inputs.ssh_public_key || vars.DEBUG_SSH_PUBLIC_KEY }}
         run: |
+          if [ -z "$SSH_PUBLIC_KEY" ]; then
+            echo "No SSH public key configured, skipping"
+            exit 0
+          fi
           mkdir -p resources
           printf '%s\n' "$SSH_PUBLIC_KEY" > resources/authorized_keys
           chmod 0400 resources/authorized_keys
@@ -168,7 +172,7 @@ jobs:
         working-directory: src/cloud-api-adaptor/podvm-mkosi
         env:
           GH_TOKEN: ${{ github.token }}
-          PODVM_DISTRO: ${{ steps.meta.outputs.distro }}
+          PODVM_DISTRO: ${{ needs.meta.outputs.distro }}
           AA_FEATURES: ${{ inputs.aa_features || 'bin,ttrpc,kbs,coco_as,rust-crypto,tdx-attester,nvidia-attester' }}
           GC_REPO: ${{ inputs.guest_components_repo || 'https://github.com/cohere-ai/guest-components.git' }}
           GC_REF: ${{ inputs.guest_components_ref || 'cohere' }}
@@ -193,8 +197,8 @@ jobs:
       - name: Build OS image
         working-directory: src/cloud-api-adaptor/podvm-mkosi
         env:
-          PROFILE: ${{ steps.meta.outputs.profile }}
-          PODVM_DISTRO: ${{ steps.meta.outputs.distro }}
+          PROFILE: ${{ matrix.profile }}
+          PODVM_DISTRO: ${{ needs.meta.outputs.distro }}
         run: |
           TARGET="image"
           if [ "$PROFILE" = "debug" ]; then
@@ -218,11 +222,11 @@ jobs:
       - name: Extract UKI and predict RTMR2
         id: measure
         env:
-          IMAGE_NAME: ${{ steps.meta.outputs.image_name }}
-          CAA_COMMIT: ${{ steps.meta.outputs.caa_commit }}
-          CAA_REF: ${{ steps.meta.outputs.caa_ref }}
-          DISTRO: ${{ steps.meta.outputs.distro }}
-          PROFILE: ${{ steps.meta.outputs.profile }}
+          IMAGE_NAME: ${{ matrix.profile == 'release' && needs.meta.outputs.image_name_release || needs.meta.outputs.image_name_debug }}
+          CAA_COMMIT: ${{ github.sha }}
+          CAA_REF: ${{ github.ref_name }}
+          DISTRO: ${{ needs.meta.outputs.distro }}
+          PROFILE: ${{ matrix.profile }}
         run: |
           cvm-measure extract-uki --disk /tmp/disk.raw --output /tmp/BOOTX64.EFI
 
@@ -281,11 +285,11 @@ jobs:
       - name: Push artifact to GHCR
         id: push
         env:
-          OCI_TAG: ${{ steps.meta.outputs.image_tag }}
-          IMAGE_TITLE: ${{ steps.meta.outputs.image_name }}
-          DISTRO: ${{ steps.meta.outputs.distro }}
-          PROFILE: ${{ steps.meta.outputs.profile }}
-          CAA_COMMIT: ${{ steps.meta.outputs.caa_commit }}
+          OCI_TAG: ${{ matrix.profile == 'release' && needs.meta.outputs.image_tag_release || needs.meta.outputs.image_tag_debug }}
+          IMAGE_TITLE: ${{ matrix.profile == 'release' && needs.meta.outputs.image_name_release || needs.meta.outputs.image_name_debug }}
+          DISTRO: ${{ needs.meta.outputs.distro }}
+          PROFILE: ${{ matrix.profile }}
+          CAA_COMMIT: ${{ github.sha }}
         run: |
           OCI_REF="${OCI_IMAGE}:${OCI_TAG}"
           RTMR2=$(jq -r '.rtmr2_sha384' /tmp/measurements.json)
@@ -322,19 +326,37 @@ jobs:
           push-to-registry: true
 
   # ---------------------------------------------------------------------------
-  # Deploy to GCP (reusable workflow) — runs on tag pushes or when requested
+  # Deploy to GCP — release image
   # ---------------------------------------------------------------------------
-  deploy-gcp:
-    name: Create image
-    needs: build
+  deploy-gcp-release:
+    name: Deploy release to GCP
+    needs: [meta, build]
     if: |
       always() && needs.build.result == 'success' &&
       (github.event_name == 'push' ||
        github.event_name == 'workflow_dispatch' && inputs.deploy_gcp)
     uses: ./.github/workflows/deploy-gcp-cohere.yaml
     with:
-      image_tag: ${{ needs.build.outputs.image_tag }}
-      replace_existing_image: ${{ needs.build.outputs.replace_image == 'true' || inputs.replace_existing_image || false }}
+      image_tag: ${{ needs.meta.outputs.image_tag_release }}
+      replace_existing_image: ${{ needs.meta.outputs.replace_image == 'true' || inputs.replace_existing_image || false }}
+    secrets:
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+  # ---------------------------------------------------------------------------
+  # Deploy to GCP — debug image
+  # ---------------------------------------------------------------------------
+  deploy-gcp-debug:
+    name: Deploy debug to GCP
+    needs: [meta, build]
+    if: |
+      always() && needs.build.result == 'success' &&
+      (github.event_name == 'push' ||
+       github.event_name == 'workflow_dispatch' && inputs.deploy_gcp)
+    uses: ./.github/workflows/deploy-gcp-cohere.yaml
+    with:
+      image_tag: ${{ needs.meta.outputs.image_tag_debug }}
+      replace_existing_image: ${{ needs.meta.outputs.replace_image == 'true' || inputs.replace_existing_image || false }}
     secrets:
       GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
       GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
