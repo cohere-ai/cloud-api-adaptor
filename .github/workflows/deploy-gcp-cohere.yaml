@@ -1,0 +1,197 @@
+name: Deploy PodVM to GCP (Cohere)
+
+on:
+  workflow_call:
+    inputs:
+      image_tag:
+        description: "OCI artifact tag in GHCR (e.g. v1-0-0-ubuntu-release)"
+        required: true
+        type: string
+      replace_existing_image:
+        description: "Replace existing GCP image if it exists"
+        required: false
+        type: boolean
+        default: false
+
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "OCI artifact tag in GHCR to deploy"
+        required: true
+        type: string
+      replace_existing_image:
+        description: "Replace existing GCP image if it exists"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  id-token: write
+  contents: read
+  packages: read
+  attestations: read
+
+env:
+  TEE_PLATFORM: tdx
+  OCI_IMAGE: ghcr.io/${{ github.repository }}/podvm
+  VERSIONS_YAML: src/cloud-api-adaptor/versions.yaml
+
+jobs:
+  deploy:
+    name: GCP
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Install ORAS
+        run: |
+          command -v yq || sudo snap install yq
+          ORAS_VERSION=$(yq '.tools.oras' "$VERSIONS_YAML")
+          curl -fsSLO "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_amd64.tar.gz"
+          tar -xzf "oras_${ORAS_VERSION}_linux_amd64.tar.gz" oras
+          sudo mv oras /usr/local/bin/
+          oras version
+
+      - name: Login to GHCR
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify attestation
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+        run: |
+          gh attestation verify \
+            "oci://${OCI_IMAGE}:${IMAGE_TAG}" \
+            --repo "${{ github.repository }}"
+          echo "Attestation verified for ${IMAGE_TAG}"
+
+      - name: Pull artifact and read measurements
+        id: pull
+        env:
+          IMAGE_TAG: ${{ inputs.image_tag }}
+        run: |
+          mkdir -p /tmp/podvm
+          cd /tmp/podvm
+          oras pull "${OCI_IMAGE}:${IMAGE_TAG}"
+          ls -lh
+
+          if [ ! -f measurements.json ]; then
+            echo "ERROR: measurements.json not found in artifact — build is broken"
+            exit 1
+          fi
+
+          cat measurements.json
+
+          IMAGE_NAME=$(jq -r '.image_name' measurements.json)
+          if [ -z "$IMAGE_NAME" ] || [ "$IMAGE_NAME" = "null" ]; then
+            echo "ERROR: image_name is missing or empty in measurements.json"
+            exit 1
+          fi
+
+          echo "image_name=$IMAGE_NAME" >> "$GITHUB_OUTPUT"
+          echo "distro=$(jq -r '.distro' measurements.json)" >> "$GITHUB_OUTPUT"
+          echo "profile=$(jq -r '.profile' measurements.json)" >> "$GITHUB_OUTPUT"
+          echo "caa_commit=$(jq -r '.caa_commit' measurements.json)" >> "$GITHUB_OUTPUT"
+          echo "caa_commit_short=$(jq -r '.caa_commit[:7]' measurements.json)" >> "$GITHUB_OUTPUT"
+          echo "caa_version=$(jq -r '.caa_version' measurements.json)" >> "$GITHUB_OUTPUT"
+          echo "caa_ref=$(jq -r '.caa_ref' measurements.json)" >> "$GITHUB_OUTPUT"
+          echo "rtmr2=$(jq -r '.rtmr2_sha384 // ""' measurements.json)" >> "$GITHUB_OUTPUT"
+          echo "kernel=$(jq -r '.kernel // ""' measurements.json)" >> "$GITHUB_OUTPUT"
+          echo "build_date=$(jq -r '.build_date // ""' measurements.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
+
+      - name: Upload to GCS
+        id: upload
+        env:
+          IMAGE_NAME: ${{ steps.pull.outputs.image_name }}
+          GCS_BUCKET: ${{ vars.PODVM_GCS_BUCKET }}
+        run: |
+          GCS_URI="gs://${GCS_BUCKET}/${IMAGE_NAME}/disk.tar.gz"
+          gsutil -o GSUtil:parallel_composite_upload_threshold=150M \
+            cp /tmp/podvm/disk.tar.gz "$GCS_URI"
+          gsutil -q cp /tmp/podvm/measurements.json \
+            "gs://${GCS_BUCKET}/${IMAGE_NAME}/measurements.json"
+          echo "gcs_uri=$GCS_URI" >> "$GITHUB_OUTPUT"
+
+      - name: Create GCP compute image
+        env:
+          IMAGE_NAME: ${{ steps.pull.outputs.image_name }}
+          DISTRO: ${{ steps.pull.outputs.distro }}
+          CAA_VERSION: ${{ steps.pull.outputs.caa_version }}
+          CAA_COMMIT: ${{ steps.pull.outputs.caa_commit }}
+          CAA_COMMIT_SHORT: ${{ steps.pull.outputs.caa_commit_short }}
+          CAA_REF: ${{ steps.pull.outputs.caa_ref }}
+          PROFILE: ${{ steps.pull.outputs.profile }}
+          RTMR2: ${{ steps.pull.outputs.rtmr2 }}
+          KERNEL: ${{ steps.pull.outputs.kernel }}
+          BUILD_DATE: ${{ steps.pull.outputs.build_date }}
+          GCS_URI: ${{ steps.upload.outputs.gcs_uri }}
+          GCP_PROJECT: ${{ vars.GCP_PROJECT }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          REPLACE_EXISTING: ${{ inputs.replace_existing_image }}
+        run: |
+          RAW_IMAGE="${IMAGE_NAME}-import"
+
+          if gcloud compute images describe "$RAW_IMAGE" --project="$GCP_PROJECT" &>/dev/null; then
+            echo "Deleting stale intermediate image $RAW_IMAGE"
+            gcloud compute images delete "$RAW_IMAGE" \
+              --project="$GCP_PROJECT" --quiet
+          fi
+
+          if [ "$REPLACE_EXISTING" = "true" ]; then
+            if gcloud compute images describe "$IMAGE_NAME" --project="$GCP_PROJECT" &>/dev/null; then
+              echo "Deleting existing image $IMAGE_NAME"
+              gcloud compute images delete "$IMAGE_NAME" \
+                --project="$GCP_PROJECT" --quiet
+            fi
+          fi
+
+          gcloud compute images create "$RAW_IMAGE" \
+            --source-uri="$GCS_URI" \
+            --project="$GCP_PROJECT" \
+            --description="podvm import (intermediate): distro=${DISTRO} tee=${TEE_PLATFORM} caa=${CAA_VERSION} commit=${CAA_COMMIT}"
+
+          sanitize_label() { echo "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9_-]/-/g' | cut -c1-63; }
+          LABELS="caa-commit=$(sanitize_label "$CAA_COMMIT_SHORT")"
+          LABELS="${LABELS},caa-branch=$(sanitize_label "$CAA_REF")"
+          LABELS="${LABELS},profile=$(sanitize_label "$PROFILE")"
+          LABELS="${LABELS},distro=$(sanitize_label "$DISTRO")"
+          LABELS="${LABELS},tee=${TEE_PLATFORM}"
+          [ -n "$KERNEL" ] && LABELS="${LABELS},kernel=$(sanitize_label "$KERNEL")"
+          [ -n "$BUILD_DATE" ] && LABELS="${LABELS},build-date=$(sanitize_label "$BUILD_DATE")"
+
+          gcloud compute images create "$IMAGE_NAME" \
+            --source-image="$RAW_IMAGE" \
+            --source-image-project="$GCP_PROJECT" \
+            --project="$GCP_PROJECT" \
+            --description="podvm: distro=${DISTRO} tee=${TEE_PLATFORM} profile=${PROFILE} caa=${CAA_VERSION} commit=${CAA_COMMIT} rtmr2=${RTMR2} oci=${OCI_IMAGE}:${IMAGE_TAG}" \
+            --labels="$LABELS" \
+            --guest-os-features=TDX_CAPABLE,UEFI_COMPATIBLE,GVNIC
+
+          gcloud compute images delete "$RAW_IMAGE" \
+            --project="$GCP_PROJECT" --quiet
+
+          gcloud compute images describe "$IMAGE_NAME" \
+            --project="$GCP_PROJECT" \
+            --format="yaml(name,status,diskSizeGb,guestOsFeatures,description,labels)"
+
+      - name: Clean up GCS staging files
+        if: success()
+        env:
+          GCS_BUCKET: ${{ vars.PODVM_GCS_BUCKET }}
+          IMAGE_NAME: ${{ steps.pull.outputs.image_name }}
+        run: |
+          gsutil -m rm -r "gs://${GCS_BUCKET}/${IMAGE_NAME}/"
+          echo "Cleaned up GCS staging files"
