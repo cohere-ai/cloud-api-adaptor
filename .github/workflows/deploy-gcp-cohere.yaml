@@ -99,16 +99,18 @@ jobs:
             exit 1
           fi
 
-          echo "image_name=$IMAGE_NAME" >> "$GITHUB_OUTPUT"
-          echo "distro=$(jq -r '.distro' measurements.json)" >> "$GITHUB_OUTPUT"
-          echo "profile=$(jq -r '.profile' measurements.json)" >> "$GITHUB_OUTPUT"
-          echo "caa_commit=$(jq -r '.caa_commit' measurements.json)" >> "$GITHUB_OUTPUT"
-          echo "caa_commit_short=$(jq -r '.caa_commit[:7]' measurements.json)" >> "$GITHUB_OUTPUT"
-          echo "caa_version=$(jq -r '.caa_version' measurements.json)" >> "$GITHUB_OUTPUT"
-          echo "caa_ref=$(jq -r '.caa_ref' measurements.json)" >> "$GITHUB_OUTPUT"
-          echo "rtmr2=$(jq -r '.rtmr2_sha384 // ""' measurements.json)" >> "$GITHUB_OUTPUT"
-          echo "kernel=$(jq -r '.kernel // ""' measurements.json)" >> "$GITHUB_OUTPUT"
-          echo "build_date=$(jq -r '.build_date // ""' measurements.json)" >> "$GITHUB_OUTPUT"
+          {
+            echo "image_name=$IMAGE_NAME"
+            echo "distro=$(jq -r '.distro' measurements.json)"
+            echo "profile=$(jq -r '.profile' measurements.json)"
+            echo "caa_commit=$(jq -r '.caa_commit' measurements.json)"
+            echo "caa_commit_short=$(jq -r '.caa_commit[:7]' measurements.json)"
+            echo "caa_version=$(jq -r '.caa_version' measurements.json)"
+            echo "caa_ref=$(jq -r '.caa_ref' measurements.json)"
+            echo "rtmr2=$(jq -r '.rtmr2_sha384 // ""' measurements.json)"
+            echo "kernel=$(jq -r '.kernel // ""' measurements.json)"
+            echo "build_date=$(jq -r '.build_date // ""' measurements.json)"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Authenticate to GCP
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3

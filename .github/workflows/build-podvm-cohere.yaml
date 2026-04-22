@@ -136,13 +136,15 @@ jobs:
           TAG="${TAG//./-}"
           IMAGE_NAME="podvm-${DISTRO}-${TEE_PLATFORM}-${PROFILE}-${TAG}"
           OCI_TAG="${TAG}-${DISTRO}-${PROFILE}"
-          echo "image_name=$IMAGE_NAME" >> "$GITHUB_OUTPUT"
-          echo "image_tag=$OCI_TAG" >> "$GITHUB_OUTPUT"
-          echo "profile=$PROFILE" >> "$GITHUB_OUTPUT"
-          echo "distro=$DISTRO" >> "$GITHUB_OUTPUT"
-          echo "caa_commit=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
-          echo "caa_commit_short=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
-          echo "caa_ref=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          {
+            echo "image_name=$IMAGE_NAME"
+            echo "image_tag=$OCI_TAG"
+            echo "profile=$PROFILE"
+            echo "distro=$DISTRO"
+            echo "caa_commit=$GITHUB_SHA"
+            echo "caa_commit_short=${GITHUB_SHA::7}"
+            echo "caa_ref=${GITHUB_REF_NAME}"
+          } >> "$GITHUB_OUTPUT"
           echo "Building: $IMAGE_NAME (tag: $TAG)"
 
       - name: Inject SSH key for debug image
@@ -299,9 +301,11 @@ jobs:
           cat oras-output.json
           DIGEST=$(jq -r '.digest' oras-output.json)
 
-          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
-          echo "oci_ref=${OCI_REF}@${DIGEST}" >> "$GITHUB_OUTPUT"
-          echo "oci_tag=$OCI_TAG" >> "$GITHUB_OUTPUT"
+          {
+            echo "digest=$DIGEST"
+            echo "oci_ref=${OCI_REF}@${DIGEST}"
+            echo "oci_tag=$OCI_TAG"
+          } >> "$GITHUB_OUTPUT"
           echo "Pushed: $OCI_REF @ $DIGEST"
 
       - name: Attest build provenance
