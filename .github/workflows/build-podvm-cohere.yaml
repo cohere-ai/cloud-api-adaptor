@@ -1,0 +1,353 @@
+name: Build PodVM Image (Cohere)
+
+on:
+  push:
+    tags: ["podvm-v*"]
+    branches: ["cohere", "alhassankhedr/cc-192-cloud-api-adaptor-port-podvm-builddeploy-workflows-from"] # TODO: remove feature branch before merging
+  workflow_dispatch:
+    inputs:
+      distro:
+        description: "PodVM distro"
+        required: false
+        type: choice
+        options: [ubuntu, fedora]
+        default: ubuntu
+      ssh_public_key:
+        description: "SSH public key for debug images (optional)"
+        required: false
+        type: string
+      guest_components_repo:
+        description: "guest-components repo (default: cohere-ai/guest-components)"
+        required: false
+        type: string
+        default: "https://github.com/cohere-ai/guest-components.git"
+      guest_components_ref:
+        description: "guest-components ref (default: cohere)"
+        required: false
+        type: string
+        default: "cohere"
+      custom_gc_binaries:
+        description: "guest-components binaries to build from source"
+        required: false
+        type: string
+        default: "attestation-agent,api-server-rest"
+      aa_features:
+        description: "attestation-agent cargo features"
+        required: false
+        type: string
+        default: "bin,ttrpc,kbs,coco_as,rust-crypto,tdx-attester,nvidia-attester"
+      deploy_gcp:
+        description: "Deploy to GCP after build"
+        required: false
+        type: boolean
+        default: true
+      replace_existing_image:
+        description: "Replace existing GCP image if it exists"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  id-token: write      # OIDC token for build provenance attestation
+  attestations: write  # actions/attest-build-provenance
+  contents: read       # actions/checkout
+  packages: write      # push OCI artifact to GHCR
+
+env:
+  TEE_PLATFORM: tdx
+  OCI_IMAGE: ghcr.io/${{ github.repository }}/podvm
+  VERSIONS_YAML: src/cloud-api-adaptor/versions.yaml
+
+jobs:
+  meta:
+    name: Compute metadata
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.compute.outputs.tag }}
+      distro: ${{ steps.compute.outputs.distro }}
+      replace_image: ${{ steps.compute.outputs.replace_image }}
+      image_name_release: ${{ steps.compute.outputs.image_name_release }}
+      image_name_debug: ${{ steps.compute.outputs.image_name_debug }}
+      image_tag_release: ${{ steps.compute.outputs.image_tag_release }}
+      image_tag_debug: ${{ steps.compute.outputs.image_tag_debug }}
+    steps:
+      - name: Compute tags and image names
+        id: compute
+        env:
+          DISTRO: ${{ inputs.distro || 'ubuntu' }}
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/podvm-v* ]]; then
+            TAG="${GITHUB_REF#refs/tags/podvm-}"
+            REPLACE_IMAGE="false"
+          else
+            TAG="cohere-latest"
+            REPLACE_IMAGE="true"
+          fi
+          TAG="${TAG//./-}"
+          {
+            echo "tag=$TAG"
+            echo "distro=$DISTRO"
+            echo "replace_image=$REPLACE_IMAGE"
+            echo "image_name_release=podvm-${DISTRO}-${TEE_PLATFORM}-release-${TAG}"
+            echo "image_name_debug=podvm-${DISTRO}-${TEE_PLATFORM}-debug-${TAG}"
+            echo "image_tag_release=${TAG}-${DISTRO}-release"
+            echo "image_tag_debug=${TAG}-${DISTRO}-debug"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build PodVM (${{ matrix.profile }})
+    needs: meta
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [release, debug]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - name: Free up runner disk space
+        run: |
+          echo "=== Before cleanup ==="
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/share/boost /opt/hostedtoolcache/CodeQL
+          sudo apt-get purge -y google-cloud-cli azure-cli microsoft-edge-stable \
+            dotnet-* aspnetcore-* 2>/dev/null || true
+          sudo apt-get autoremove -y
+          echo "=== After cleanup ==="
+          df -h /
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            alien binutils bubblewrap dnf git make mtools qemu-utils uidmap
+          sudo apt-get clean
+          sudo rm -rf /var/lib/apt/lists/*
+
+          command -v yq || sudo snap install yq
+          yq --version
+
+      - name: Tune kernel for mkosi
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+
+      - name: Install ORAS
+        run: |
+          ORAS_VERSION=$(yq '.tools.oras' "$VERSIONS_YAML")
+          curl -fsSLO "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_amd64.tar.gz"
+          tar -xzf "oras_${ORAS_VERSION}_linux_amd64.tar.gz" oras
+          rm -f "oras_${ORAS_VERSION}_linux_amd64.tar.gz"
+          sudo mv oras /usr/local/bin/
+          oras version
+
+      - name: Install cvm-measure
+        env:
+          CVM_TOKEN: ${{ secrets.CVM_MEASURE_TOKEN }}
+        run: |
+          # TODO: switch to main (or pin to a release tag/SHA) after cvm-measure PR merges
+          git clone --depth 1 --branch alhassankhedr/cc-167-tdx-measurement-toolkit \
+            "https://x-access-token:${CVM_TOKEN}@github.com/cohere-ai/cvm-measure.git" /tmp/cvm-measure
+          pip install --break-system-packages /tmp/cvm-measure
+          rm -rf /tmp/cvm-measure
+          cvm-measure --version
+
+      - name: Inject SSH key for debug image
+        if: matrix.profile == 'debug'
+        working-directory: src/cloud-api-adaptor/podvm-mkosi
+        env:
+          SSH_PUBLIC_KEY: ${{ inputs.ssh_public_key || vars.DEBUG_SSH_PUBLIC_KEY }}
+        run: |
+          if [ -z "$SSH_PUBLIC_KEY" ]; then
+            echo "No SSH public key configured, skipping"
+            exit 0
+          fi
+          mkdir -p resources
+          printf '%s\n' "$SSH_PUBLIC_KEY" > resources/authorized_keys
+          chmod 0400 resources/authorized_keys
+          echo "SSH key injected for debug image"
+
+      - name: Build binaries
+        working-directory: src/cloud-api-adaptor/podvm-mkosi
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PODVM_DISTRO: ${{ needs.meta.outputs.distro }}
+          AA_FEATURES: ${{ inputs.aa_features || 'bin,ttrpc,kbs,coco_as,rust-crypto,tdx-attester,nvidia-attester' }}
+          GC_REPO: ${{ inputs.guest_components_repo || 'https://github.com/cohere-ai/guest-components.git' }}
+          GC_REF: ${{ inputs.guest_components_ref || 'cohere' }}
+          GC_CUSTOM_BINARIES: ${{ inputs.custom_gc_binaries || 'attestation-agent,api-server-rest' }}
+        run: |
+          MAKE_ARGS=(
+            "VERIFY_PROVENANCE=yes"
+            "TEE_PLATFORM=$TEE_PLATFORM"
+            "PODVM_DISTRO=$PODVM_DISTRO"
+          )
+          if [ -n "$GC_CUSTOM_BINARIES" ]; then
+            MAKE_ARGS+=("CUSTOM_GC_BINARIES=$GC_CUSTOM_BINARIES")
+            MAKE_ARGS+=("GUEST_COMPONENTS_REPO=$GC_REPO")
+            MAKE_ARGS+=("GUEST_COMPONENTS_REF=$GC_REF")
+            [ -n "$AA_FEATURES" ] && MAKE_ARGS+=("AA_FEATURES=$AA_FEATURES")
+          fi
+          make "${MAKE_ARGS[@]}" binaries
+          docker system prune -af --volumes 2>/dev/null || true
+          echo "Disk after binaries build:"
+          df -h /
+
+      - name: Build OS image
+        working-directory: src/cloud-api-adaptor/podvm-mkosi
+        env:
+          PROFILE: ${{ matrix.profile }}
+          PODVM_DISTRO: ${{ needs.meta.outputs.distro }}
+        run: |
+          TARGET="image"
+          if [ "$PROFILE" = "debug" ]; then
+            TARGET="image-debug"
+          fi
+          TEE_PLATFORM="$TEE_PLATFORM" \
+          PODVM_DISTRO="$PODVM_DISTRO" \
+          make "$TARGET"
+
+          ls -lh build/
+
+      - name: Free disk space
+        run: |
+          echo "=== Before cleanup ==="
+          df -h /
+          mv src/cloud-api-adaptor/podvm-mkosi/build/system.raw /tmp/disk.raw
+          docker system prune -af --volumes 2>/dev/null || true
+          echo "=== After cleanup ==="
+          df -h /
+
+      - name: Extract UKI and predict RTMR2
+        id: measure
+        env:
+          IMAGE_NAME: ${{ matrix.profile == 'release' && needs.meta.outputs.image_name_release || needs.meta.outputs.image_name_debug }}
+          CAA_COMMIT: ${{ github.sha }}
+          CAA_REF: ${{ github.ref_name }}
+          DISTRO: ${{ needs.meta.outputs.distro }}
+          PROFILE: ${{ matrix.profile }}
+        run: |
+          cvm-measure extract-uki --disk /tmp/disk.raw --output /tmp/BOOTX64.EFI
+
+          RTMR2=$(python3 -c "
+          import hashlib
+          from cvm_measure.tdx.pe import pe_extract_section
+          from cvm_measure.tdx.rtmr import extend_rtmr, SHA384_SIZE
+          uki = open('/tmp/BOOTX64.EFI', 'rb').read()
+          sections = ['linux', 'osrel', 'cmdline', 'initrd', 'ucode', 'uname', 'sbat', 'pcrpkey']
+          rtmr2 = bytes(SHA384_SIZE)
+          for name in sections:
+              data = pe_extract_section(uki, f'.{name}', use_virtual_size=True)
+              if data is None:
+                  continue
+              name_hash = hashlib.sha384(f'.{name}\0'.encode('ascii')).digest()
+              rtmr2 = extend_rtmr(rtmr2, name_hash)
+              content_hash = hashlib.sha384(data).digest()
+              rtmr2 = extend_rtmr(rtmr2, content_hash)
+          print(rtmr2.hex())
+          ")
+
+          KERNEL=$(python3 -c "
+          from cvm_measure.tdx.pe import pe_extract_section
+          data = pe_extract_section(open('/tmp/BOOTX64.EFI','rb').read(), '.uname', use_virtual_size=True)
+          print(data.decode(errors='replace').strip('\x00') if data else 'unknown')
+          ")
+
+          jq -n \
+            --arg image_name "$IMAGE_NAME" \
+            --arg rtmr2_sha384 "$RTMR2" \
+            --arg kernel "$KERNEL" \
+            --arg caa_commit "$CAA_COMMIT" \
+            --arg caa_ref "$CAA_REF" \
+            --arg caa_version "$CAA_REF" \
+            --arg distro "$DISTRO" \
+            --arg profile "$PROFILE" \
+            --arg tee_platform "$TEE_PLATFORM" \
+            --arg build_date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '$ARGS.named' > /tmp/measurements.json
+
+          cat /tmp/measurements.json
+
+      - name: Prepare artifacts
+        run: |
+          tar -czf /tmp/disk.tar.gz -C /tmp disk.raw
+          rm /tmp/disk.raw
+          echo "Compressed size: $(du -sh /tmp/disk.tar.gz | cut -f1)"
+
+      - name: Login to GHCR
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push artifact to GHCR
+        id: push
+        env:
+          OCI_TAG: ${{ matrix.profile == 'release' && needs.meta.outputs.image_tag_release || needs.meta.outputs.image_tag_debug }}
+          IMAGE_TITLE: ${{ matrix.profile == 'release' && needs.meta.outputs.image_name_release || needs.meta.outputs.image_name_debug }}
+          DISTRO: ${{ needs.meta.outputs.distro }}
+          PROFILE: ${{ matrix.profile }}
+          CAA_COMMIT: ${{ github.sha }}
+        run: |
+          OCI_REF="${OCI_IMAGE}:${OCI_TAG}"
+          RTMR2=$(jq -r '.rtmr2_sha384' /tmp/measurements.json)
+
+          cd /tmp
+          oras push "$OCI_REF" \
+            disk.tar.gz:application/vnd.cohere.podvm.disk.tar+gzip \
+            measurements.json:application/vnd.cohere.podvm.measurements+json \
+            --annotation "org.opencontainers.image.title=${IMAGE_TITLE}" \
+            --annotation "org.opencontainers.image.description=PodVM OS image (${DISTRO}/${TEE_PLATFORM}/${PROFILE})" \
+            --annotation "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            --annotation "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --annotation "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --annotation "com.cohere.caa.commit=${CAA_COMMIT}" \
+            --annotation "com.cohere.caa.version=${GITHUB_REF_NAME}" \
+            --annotation "com.cohere.rtmr2=${RTMR2}" \
+            --format json > oras-output.json
+
+          cat oras-output.json
+          DIGEST=$(jq -r '.digest' oras-output.json)
+
+          {
+            echo "digest=$DIGEST"
+            echo "oci_ref=${OCI_REF}@${DIGEST}"
+            echo "oci_tag=$OCI_TAG"
+          } >> "$GITHUB_OUTPUT"
+          echo "Pushed: $OCI_REF @ $DIGEST"
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4
+        with:
+          subject-name: ${{ env.OCI_IMAGE }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+  # ---------------------------------------------------------------------------
+  # Deploy to GCP — release & debug images
+  # ---------------------------------------------------------------------------
+  deploy-gcp:
+    name: Deploy ${{ matrix.profile }} to GCP
+    needs: [meta, build]
+    if: |
+      needs.build.result == 'success' &&
+      (github.event_name == 'push' ||
+       (github.event_name == 'workflow_dispatch' && inputs.deploy_gcp))
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [release, debug]
+    uses: ./.github/workflows/deploy-gcp-cohere.yaml
+    with:
+      image_tag: ${{ needs.meta.outputs.tag }}-${{ needs.meta.outputs.distro }}-${{ matrix.profile }}
+      replace_existing_image: >-
+        ${{
+          (github.event_name == 'push' && needs.meta.outputs.replace_image == 'true') ||
+          (github.event_name == 'workflow_dispatch' && inputs.replace_existing_image)
+        }}
+    secrets:
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
