@@ -23,7 +23,7 @@ name: Publish (cohere)
 
 on:
   push:
-    branches: [cohere, cohere-release] # TODO: remove cohere-release before merge
+    branches: [cohere]
   workflow_dispatch:
 
 concurrency:
