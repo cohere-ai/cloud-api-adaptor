@@ -3,7 +3,7 @@ name: Build PodVM Image (Cohere)
 on:
   push:
     tags: ["podvm-v*"]
-    branches: ["cohere", "alhassankhedr/cc-192-cloud-api-adaptor-port-podvm-builddeploy-workflows-from"]
+    branches: ["cohere", "alhassankhedr/cc-192-cloud-api-adaptor-port-podvm-builddeploy-workflows-from"] # TODO: remove feature branch before merging
   workflow_dispatch:
     inputs:
       distro:
@@ -147,6 +147,7 @@ jobs:
         env:
           CVM_TOKEN: ${{ secrets.CVM_MEASURE_TOKEN }}
         run: |
+          # TODO: switch to main (or pin to a release tag/SHA) after cvm-measure PR merges
           git clone --depth 1 --branch alhassankhedr/cc-167-tdx-measurement-toolkit \
             "https://x-access-token:${CVM_TOKEN}@github.com/cohere-ai/cvm-measure.git" /tmp/cvm-measure
           pip install --break-system-packages /tmp/cvm-measure
