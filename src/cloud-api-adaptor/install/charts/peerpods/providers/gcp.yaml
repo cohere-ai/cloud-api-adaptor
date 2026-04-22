@@ -58,6 +58,10 @@ providerConfigs:
     # (required)
     GCP_NETWORK: ""
 
+    # Network tags for firewall rule targeting on peer pod VMs, comma separated
+    # (default: "")
+    # GCP_NETWORK_TAGS: ""
+
     # GCP Project ID
     # (required)
     GCP_PROJECT_ID: ""

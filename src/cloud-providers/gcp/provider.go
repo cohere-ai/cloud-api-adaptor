@@ -340,6 +340,12 @@ func (p *gcpProvider) CreateInstance(ctx context.Context, podName, sandboxID str
 		NetworkInterfaces: []*computepb.NetworkInterface{networkInterface},
 	}
 
+	if len(p.serviceConfig.NetworkTags) > 0 {
+		items := make([]string, len(p.serviceConfig.NetworkTags))
+		copy(items, p.serviceConfig.NetworkTags)
+		instanceResource.Tags = &computepb.Tags{Items: items}
+	}
+
 	// Check if OnHostMaintenance needs to be set to TERMINATE
 	// This is required for:
 	// 1. Confidential VMs
