@@ -12,6 +12,11 @@ on:
         required: false
         type: boolean
         default: false
+    secrets:
+      GCP_WORKLOAD_IDENTITY_PROVIDER:
+        required: true
+      GCP_SERVICE_ACCOUNT:
+        required: true
 
   workflow_dispatch:
     inputs:
@@ -26,10 +31,10 @@ on:
         default: false
 
 permissions:
-  id-token: write
-  contents: read
-  packages: read
-  attestations: read
+  id-token: write      # GCP Workload Identity Federation via OIDC
+  contents: read       # actions/checkout
+  packages: read       # pull OCI artifact from GHCR
+  attestations: read   # gh attestation verify
 
 env:
   TEE_PLATFORM: tdx
@@ -42,6 +47,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
 
       - name: Install ORAS
         run: |
@@ -66,7 +73,7 @@ jobs:
         run: |
           gh attestation verify \
             "oci://${OCI_IMAGE}:${IMAGE_TAG}" \
-            --repo "${{ github.repository }}"
+            --repo "${GITHUB_REPOSITORY}"
           echo "Attestation verified for ${IMAGE_TAG}"
 
       - name: Pull artifact and read measurements

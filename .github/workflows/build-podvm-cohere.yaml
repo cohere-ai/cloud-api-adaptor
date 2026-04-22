@@ -54,10 +54,10 @@ on:
         default: false
 
 permissions:
-  id-token: write
-  attestations: write
-  contents: read
-  packages: write
+  id-token: write      # OIDC token for build provenance attestation
+  attestations: write  # actions/attest-build-provenance
+  contents: read       # actions/checkout
+  packages: write      # push OCI artifact to GHCR
 
 env:
   TEE_PLATFORM: tdx
@@ -75,6 +75,8 @@ jobs:
       oci_digest: ${{ steps.push.outputs.digest }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
 
       - name: Free up runner disk space
         run: |
@@ -286,8 +288,8 @@ jobs:
             measurements.json:application/vnd.cohere.podvm.measurements+json \
             --annotation "org.opencontainers.image.title=${IMAGE_TITLE}" \
             --annotation "org.opencontainers.image.description=PodVM OS image (${DISTRO}/${TEE_PLATFORM}/${PROFILE})" \
-            --annotation "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
-            --annotation "org.opencontainers.image.revision=${{ github.sha }}" \
+            --annotation "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            --annotation "org.opencontainers.image.revision=${GITHUB_SHA}" \
             --annotation "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --annotation "com.cohere.caa.commit=${CAA_COMMIT}" \
             --annotation "com.cohere.caa.version=${GITHUB_REF_NAME}" \
@@ -323,4 +325,6 @@ jobs:
     with:
       image_tag: ${{ needs.build.outputs.image_tag }}
       replace_existing_image: ${{ inputs.replace_existing_image || false }}
-    secrets: inherit
+    secrets:
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
