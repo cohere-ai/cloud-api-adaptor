@@ -60,10 +60,15 @@ jobs:
           fetch-depth: 0
 
       - name: Install yq
+        # Keep in sync with the pin in publish-cohere-release.yaml.
+        env:
+          YQ_VERSION: v4.44.3
+          YQ_SHA256: a2c097180dd884a8d50c956ee16a9cec070f30a7947cf4ebf87d5f36213e9ed7
         run: |
-          echo "Installing yq..."
-          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
-          sudo chmod +x /usr/local/bin/yq
+          curl -fsSLo /tmp/yq "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
+          echo "${YQ_SHA256}  /tmp/yq" | sha256sum --check --strict
+          sudo install -m 0755 /tmp/yq /usr/local/bin/yq
+          rm /tmp/yq
           yq --version
 
       - name: Read versions from Chart.yaml and versions.yaml
@@ -154,25 +159,6 @@ jobs:
             --username "${GITHUB_ACTOR}" \
             --password-stdin
           echo "Helm authenticated with ghcr.io"
-
-      - name: Authenticate to GCP
-        if: ${{ contains(steps.registry.outputs.registry, 'docker.pkg.dev') }}
-        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2.1.13
-        with:
-          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
-
-      - name: Authenticate Helm with Artifact Registry
-        if: ${{ contains(steps.registry.outputs.registry, 'docker.pkg.dev') }}
-        env:
-          REGISTRY: ${{ steps.registry.outputs.registry }}
-        run: |
-          AR_HOST=$(echo "${REGISTRY}" | cut -d'/' -f1)
-          echo "Authenticating Helm with ${AR_HOST}..."
-          gcloud auth print-access-token | helm registry login "${AR_HOST}" \
-            --username oauth2accesstoken \
-            --password-stdin
-          echo "Helm authenticated with ${AR_HOST}"
 
       - name: Update Helm dependencies
         run: |

@@ -1,0 +1,283 @@
+---
+# Publish semver-tagged Cohere-fork release artifacts to GHCR.
+#
+# Triggered by GitHub Releases targeting the `cohere` branch. The release tag
+# becomes the image/chart tag verbatim, with one normalisation: a leading "v"
+# is stripped for the chart (Helm/OCI requires SemVer with no prefix).
+#
+# Release process:
+#   1. Bump src/cloud-api-adaptor/install/charts/peerpods/Chart.yaml `version`
+#      to the new SemVer (e.g. 0.1.4-cohere.2). Merge to cohere.
+#   2. Create a GitHub Release on the cohere branch with tag `v0.1.4-cohere.2`
+#      (or `0.1.4-cohere.2` — both work). Publishing the release fires this.
+#
+# Tags produced (release `v0.1.4-cohere.2`):
+#   ghcr.io/cohere-ai/cloud-api-adaptor/cloud-api-adaptor:v0.1.4-cohere.2
+#   ghcr.io/cohere-ai/cloud-api-adaptor/peerpod-ctrl:v0.1.4-cohere.2
+#   ghcr.io/cohere-ai/cloud-api-adaptor/charts/peerpods:0.1.4-cohere.2
+#
+# The chart is self-contained: values.yaml is patched at package time so
+# image.tag and resourceCtrl.image.tag default to the release tag. A bare
+# `helm install` without overrides gets matching images.
+#
+# `latest-cohere` is NOT touched — that floats with the cohere branch tip via
+# publish-cohere.yaml. Consumers pin to the semver tag for stable releases.
+name: Publish (cohere release)
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to (re)publish (e.g. v0.1.4-cohere.2). Must already exist as a git tag on cohere.'
+        required: true
+        type: string
+
+concurrency:
+  group: publish-cohere-release-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+permissions: {}
+
+env:
+  REGISTRY: ghcr.io/cohere-ai/cloud-api-adaptor
+
+jobs:
+  tags:
+    name: Compute tags
+    runs-on: ubuntu-24.04
+    # Only fire for releases cut from the cohere branch. Manual dispatch always runs.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.release.target_commitish == 'cohere'
+    outputs:
+      git_ref: ${{ steps.t.outputs.git_ref }}
+      image_tag: ${{ steps.t.outputs.image_tag }}
+      chart_version: ${{ steps.t.outputs.chart_version }}
+    steps:
+      - name: Derive tags from release
+        id: t
+        env:
+          RAW_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          # Image tags keep the v prefix verbatim; chart strips it (OCI SemVer).
+          chart_version="${RAW_TAG#v}"
+          {
+            echo "git_ref=${RAW_TAG}"
+            echo "image_tag=${RAW_TAG}"
+            echo "chart_version=${chart_version}"
+          } >> "$GITHUB_OUTPUT"
+
+  caa:
+    name: Build CAA image (release, amd64)
+    needs: tags
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read   # checkout the release tag
+      packages: write  # push image manifests to GHCR
+    defaults:
+      run:
+        working-directory: src/cloud-api-adaptor
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ needs.tags.outputs.git_ref }}
+
+      - name: Read Go version from versions.yaml
+        run: |
+          command -v yq || sudo snap install yq
+          go_version="$(yq '.tools.golang' versions.yaml)"
+          [ -n "$go_version" ]
+          echo "GO_VERSION=${go_version}" >> "$GITHUB_ENV"
+
+      - name: Setup Go ${{ env.GO_VERSION }}
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: "**/go.sum"
+          cache: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+
+      - name: Login to GHCR
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push release image
+        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+          RELEASE_TAGS: ${{ needs.tags.outputs.image_tag }}
+        with:
+          timeout_minutes: 60
+          retry_wait_seconds: 120
+          max_attempts: 3
+          command: |
+            cd src/cloud-api-adaptor && \
+              ARCHES=linux/amd64 \
+              RELEASE_BUILD=true \
+              RELEASE_TAGS="${RELEASE_TAGS}" \
+              make image registry="${REGISTRY}"
+
+  peerpod-ctrl:
+    name: Build peerpod-ctrl image (amd64)
+    needs: tags
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read   # checkout the release tag
+      packages: write  # push image manifests to GHCR
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ needs.tags.outputs.git_ref }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+
+      - name: Login to GHCR
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7.0.0
+        with:
+          tags: ${{ env.REGISTRY }}/peerpod-ctrl:${{ needs.tags.outputs.image_tag }}
+          push: true
+          context: src
+          file: src/peerpod-ctrl/Dockerfile
+          platforms: linux/amd64
+          build-args: |
+            GOFLAGS=-tags=gcp
+
+  chart:
+    name: Publish peerpods Helm chart
+    needs: tags
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read           # checkout the release tag
+      packages: write          # push chart artifact to GHCR
+      id-token: write          # OIDC token for actions/attest sigstore signing
+      attestations: write      # write build provenance attestations
+      artifact-metadata: write # actions/attest writes attestation metadata
+    defaults:
+      run:
+        working-directory: src/cloud-api-adaptor/install/charts/peerpods
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ needs.tags.outputs.git_ref }}
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Install yq
+        # Keep in sync with the pin in peerpods-chart_image.yaml.
+        env:
+          YQ_VERSION: v4.44.3
+          YQ_SHA256: a2c097180dd884a8d50c956ee16a9cec070f30a7947cf4ebf87d5f36213e9ed7
+        run: |
+          curl -fsSLo /tmp/yq "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
+          echo "${YQ_SHA256}  /tmp/yq" | sha256sum --check --strict
+          sudo install -m 0755 /tmp/yq /usr/local/bin/yq
+          rm /tmp/yq
+          yq --version
+
+      - name: Patch values.yaml with release image tags
+        env:
+          IMAGE_TAG: ${{ needs.tags.outputs.image_tag }}
+        run: |
+          yq -i ".image.tag = \"${IMAGE_TAG}\"" values.yaml
+          yq -i ".resourceCtrl.image.tag = \"${IMAGE_TAG}\"" values.yaml
+          echo "Patched values.yaml default image tags to ${IMAGE_TAG}"
+          echo "  image.tag: $(yq '.image.tag' values.yaml)"
+          echo "  resourceCtrl.image.tag: $(yq '.resourceCtrl.image.tag' values.yaml)"
+
+      - name: Read versions
+        id: read_version
+        working-directory: .
+        env:
+          CHART_VERSION: ${{ needs.tags.outputs.chart_version }}
+        run: |
+          HELM_VERSION="$(yq -e '.tools.helm.version' src/cloud-api-adaptor/versions.yaml)"
+          HELM_CHECKSUM="$(yq -e '.tools.helm.sha256' src/cloud-api-adaptor/versions.yaml)"
+          {
+            echo "helm_version=${HELM_VERSION}"
+            echo "helm_checksum=${HELM_CHECKSUM}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Install Helm
+        env:
+          HELM_VERSION: ${{ steps.read_version.outputs.helm_version }}
+          HELM_CHECKSUM: ${{ steps.read_version.outputs.helm_checksum }}
+        run: |
+          curl -fsSL -o helm.tar.gz "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz"
+          echo "${HELM_CHECKSUM}  helm.tar.gz" | sha256sum --check --strict
+          tar -xzf helm.tar.gz
+          sudo mv linux-amd64/helm /usr/local/bin/helm
+          rm -rf helm.tar.gz linux-amd64
+
+      - name: Login to GHCR
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Authenticate Helm with GHCR
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_ACTOR: ${{ github.actor }}
+        run: |
+          echo "${GITHUB_TOKEN}" | helm registry login ghcr.io \
+            --username "${GITHUB_ACTOR}" \
+            --password-stdin
+
+      - name: Update Helm dependencies
+        run: helm dependency update
+
+      - name: Package Helm chart
+        env:
+          VERSION: ${{ needs.tags.outputs.chart_version }}
+        run: |
+          mkdir -p .cr-release-packages
+          helm package . --version "${VERSION}" --destination .cr-release-packages
+          ls -lh .cr-release-packages/
+
+      - name: Push Helm chart to OCI registry
+        id: push_chart
+        env:
+          VERSION: ${{ needs.tags.outputs.chart_version }}
+          REGISTRY: ${{ env.REGISTRY }}/charts
+        run: |
+          CHART_PACKAGE=".cr-release-packages/peerpods-${VERSION}.tgz"
+          helm push "${CHART_PACKAGE}" "oci://${REGISTRY}"
+          DIGEST=$(helm show chart "oci://${REGISTRY}/peerpods" --version "${VERSION}" 2>&1 | awk '/Digest:/ {print $2}')
+
+          if [ -z "${DIGEST}" ]; then
+            echo "ERROR: Failed to extract digest"
+            exit 1
+          fi
+
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "Pushed: oci://${REGISTRY}/peerpods:${VERSION} (digest: ${DIGEST})"
+
+      - name: Generate attestation
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        with:
+          subject-name: ${{ env.REGISTRY }}/charts/peerpods
+          subject-digest: ${{ steps.push_chart.outputs.digest }}
+          push-to-registry: true
