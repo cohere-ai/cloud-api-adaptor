@@ -54,13 +54,13 @@ providerConfigs:
     # (default: "e2-medium")
     # GCP_MACHINE_TYPE: "e2-medium"
 
-    # Network tags for firewall rule targeting on peer pod VMs, comma separated
-    # (default: "")
-    # GCP_NETWORK_TAGS: ""
-
     # Network ID to be used for the Pod VMs
     # (required)
     GCP_NETWORK: ""
+
+    # Network tags for firewall rule targeting on peer pod VMs, comma separated
+    # (default: "")
+    # GCP_NETWORK_TAGS: ""
 
     # GCP Project ID
     # (required)
