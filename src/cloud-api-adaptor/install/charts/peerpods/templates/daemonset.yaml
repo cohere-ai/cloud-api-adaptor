@@ -116,6 +116,10 @@ spec:
       dnsPolicy: ClusterFirstWithHostNet
       nodeSelector:
         {{- toYaml .Values.nodeSelector | nindent 8 }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       volumes:
 {{- if and (or (eq .Values.provider "libvirt") (eq .Values.provider "byom")) (include "peerpods.sshKeySecretName" .) }}
       - name: ssh

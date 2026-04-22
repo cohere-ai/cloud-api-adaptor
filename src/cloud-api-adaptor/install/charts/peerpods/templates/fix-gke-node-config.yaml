@@ -15,11 +15,13 @@ spec:
       labels:
         app: fix-gke-node-config
     spec:
-      tolerations:
-      - operator: Exists
       hostPID: true
       nodeSelector:
         {{- toYaml .Values.nodeSelector | nindent 8 }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       initContainers:
       - name: fix-containerd
         image: alpine:3.21

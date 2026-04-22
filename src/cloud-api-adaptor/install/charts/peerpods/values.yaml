@@ -79,8 +79,12 @@ secrets:
 #
 # Note: libvirt/docker provider files override this with the dev image.
 image:
-  name: us-central1-docker.pkg.dev/cohere-confidential-computing/cloud-api-adaptor/cloud-api-adaptor
-  tag: "44d97551e74d3d835e6ab17d37475f1033b2011a"
+  # Cohere fork default. Published by .github/workflows/publish-cohere.yaml on
+  # every push to the cohere branch. Override with a short SHA (e.g. "a4a1c915")
+  # for immutable pins in production — `latest-cohere` is a floating tag and
+  # follows the tip of the cohere branch.
+  name: ghcr.io/cohere-ai/cloud-api-adaptor/cloud-api-adaptor
+  tag: latest-cohere
 
 # Cloud provider: libvirt, aws, azure, gcp, ibmcloud, vsphere
 provider: gcp
@@ -89,9 +93,11 @@ provider: gcp
 # using Workload Identity (no GCP_CREDENTIALS file needed).
 command: ["/bin/sh", "-c", "exec cloud-api-adaptor gcp"]
 
-# DaemonSet nodeSelector. GKE nodes are labeled by the node pool config.
-nodeSelector:
-  fortress.cohere.com/caa-worker: "true"
+# nodeSelector / tolerations applied to the cloud-api-adaptor and
+# fix-gke-node-config DaemonSets. Empty by default; consumers set these
+# to fence the DaemonSets onto their CAA worker pool.
+nodeSelector: {}
+tolerations: []
 
 # ServiceAccount annotations (e.g. Workload Identity binding)
 serviceAccount:
@@ -149,16 +155,12 @@ limit: "10"
 
 # DaemonSet configuration
 daemonset:
-  # Update strategy controls how the CAA DaemonSet performs rolling updates
+  # Update strategy controls how the CAA DaemonSet performs rolling updates.
+  # CAA uses hostNetwork, so two pods on the same node cause a port conflict.
+  # maxSurge must be 0; roll one node at a time by killing old before starting new.
   updateStrategy:
-    # maxUnavailable: Maximum number of pods that can be unavailable during update
-    # maxSurge: Maximum number of extra pods that can be created during update
-    #
-    # Default (maxUnavailable: 0, maxSurge: 1) provides zero downtime updates
-    # and works on both small (1 node) and large clusters.
-    # Override with custom values for specific deployment needs.
-    maxUnavailable: 0
-    maxSurge: 1
+    maxUnavailable: 1
+    maxSurge: 0
   # A free-form map which can be used to inject provider-specific or platform-specific labels.
   #
   # Example (Azure Workload Identity):
@@ -175,8 +177,11 @@ daemonset:
 resourceCtrl:
   enabled: true
   image:
-    repository: us-central1-docker.pkg.dev/cohere-confidential-computing/cloud-api-adaptor/peerpod-ctrl
-    tag: "bfd5b9847b2fb44c843f6a3b6209092d0a217d83"
+    # Cohere fork default. Published by .github/workflows/publish-cohere.yaml on
+    # every push to the cohere branch. Override with a short SHA for immutable
+    # pins in production.
+    repository: ghcr.io/cohere-ai/cloud-api-adaptor/peerpod-ctrl
+    tag: latest-cohere
 
 # peerpods-webhook subchart configuration
 # Mutating webhook that modifies pod specs to use peer pods runtime and resources
@@ -191,8 +196,15 @@ kata-deploy:
   # Set to false if kata is already installed (e.g., via another chart or operator).
   # If disabled, ensure kata-remote shim is enabled otherwise CAA will not work.
   enabled: true
+  # Fence the kata-deploy DaemonSet to the CAA worker pool. Empty by default;
+  # consumers must supply matching nodeSelector / tolerations via --set.
+  nodeSelector: {}
+  tolerations: []
+  # No external snapshotter needed. The kata-remote shim uses
+  # experimental_force_guest_pull (set in configuration-remote.toml)
+  # to pull images inside the guest VM without nydus-snapshotter.
   snapshotter:
-    setup: ["nydus"]
+    setup: []
   defaultShim:
     amd64: remote
     arm64: remote
@@ -233,3 +245,18 @@ kata-deploy:
       enabled: false
     remote:
       enabled: true
+      containerd:
+        # Override kata-deploy's default of "nydus". nydus is not installed
+        # (snapshotter.setup: [] above), so routing kata-remote to it would
+        # break pod sandbox creation with
+        #   "dial unix:///run/nydus-snapshotter/...: connection refused".
+        # Empty string causes kata-deploy to omit the snapshotter line from
+        # the containerd drop-in, letting containerd fall back to overlayfs.
+        snapshotter: ""
+        # Required for peer pods: sets runtime.experimental_force_guest_pull
+        # = true in configuration-remote.toml so the kata-agent pulls images
+        # inside the guest VM. Without this, the kata-agent tries to bind-
+        # mount /run/kata-containers/shared/containers/<id>/rootfs (populated
+        # by virtiofs for local kata) which doesn't exist on peer-pod VMs,
+        # failing CreateContainer with ENOENT.
+        forceGuestPull: true
