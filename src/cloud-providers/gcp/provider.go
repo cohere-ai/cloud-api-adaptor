@@ -297,14 +297,20 @@ func (p *gcpProvider) CreateInstance(ctx context.Context, podName, sandboxID str
 	}
 
 	networkInterface := &computepb.NetworkInterface{
-		Network: proto.String(p.serviceConfig.Network),
-		AccessConfigs: []*computepb.AccessConfig{
+		Network:   proto.String(p.serviceConfig.Network),
+		StackType: proto.String("IPV4_Only"),
+	}
+	// Only attach an ephemeral public IP (1:1 External NAT) when the operator
+	// explicitly opts in via USE_PUBLIC_IP. With the default (false), peer pod
+	// VMs are private-only and egress via Cloud NAT, matching the behavior of
+	// the Azure and AWS providers.
+	if p.serviceConfig.UsePublicIP {
+		networkInterface.AccessConfigs = []*computepb.AccessConfig{
 			{
 				Name:        proto.String("External NAT"),
 				NetworkTier: proto.String("STANDARD"),
 			},
-		},
-		StackType: proto.String("IPV4_Only"),
+		}
 	}
 	if subnetworkValue != nil {
 		networkInterface.Subnetwork = subnetworkValue
