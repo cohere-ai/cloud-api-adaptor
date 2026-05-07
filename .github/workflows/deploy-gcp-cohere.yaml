@@ -39,6 +39,7 @@ permissions:
 env:
   TEE_PLATFORM: tdx
   OCI_IMAGE: ghcr.io/${{ github.repository }}/podvm
+  PODVM_GCP_IMAGE_PROJECT: cohere-artifacts
   VERSIONS_YAML: src/cloud-api-adaptor/versions.yaml
 
 jobs:
@@ -128,9 +129,8 @@ jobs:
           GCS_BUCKET: ${{ vars.PODVM_GCS_BUCKET }}
         run: |
           GCS_URI="gs://${GCS_BUCKET}/${IMAGE_NAME}/disk.tar.gz"
-          gsutil -o GSUtil:parallel_composite_upload_threshold=150M \
-            cp /tmp/podvm/disk.tar.gz "$GCS_URI"
-          gsutil -q cp /tmp/podvm/measurements.json \
+          gcloud storage cp /tmp/podvm/disk.tar.gz "$GCS_URI"
+          gcloud storage cp /tmp/podvm/measurements.json \
             "gs://${GCS_BUCKET}/${IMAGE_NAME}/measurements.json"
           echo "gcs_uri=$GCS_URI" >> "$GITHUB_OUTPUT"
 
@@ -147,7 +147,7 @@ jobs:
           KERNEL: ${{ steps.pull.outputs.kernel }}
           BUILD_DATE: ${{ steps.pull.outputs.build_date }}
           GCS_URI: ${{ steps.upload.outputs.gcs_uri }}
-          GCP_PROJECT: ${{ vars.GCP_PROJECT }}
+          GCP_PROJECT: ${{ env.PODVM_GCP_IMAGE_PROJECT }}
           IMAGE_TAG: ${{ inputs.image_tag }}
           REPLACE_EXISTING: ${{ inputs.replace_existing_image }}
         run: |
@@ -202,5 +202,5 @@ jobs:
           GCS_BUCKET: ${{ vars.PODVM_GCS_BUCKET }}
           IMAGE_NAME: ${{ steps.pull.outputs.image_name }}
         run: |
-          gsutil -m rm -r "gs://${GCS_BUCKET}/${IMAGE_NAME}/"
+          gcloud storage rm --recursive "gs://${GCS_BUCKET}/${IMAGE_NAME}/"
           echo "Cleaned up GCS staging files"
