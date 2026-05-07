@@ -39,6 +39,7 @@ permissions:
 env:
   TEE_PLATFORM: tdx
   OCI_IMAGE: ghcr.io/${{ github.repository }}/podvm
+  PODVM_GCP_IMAGE_PROJECT: cohere-artifacts
   VERSIONS_YAML: src/cloud-api-adaptor/versions.yaml
 
 jobs:
@@ -147,7 +148,7 @@ jobs:
           KERNEL: ${{ steps.pull.outputs.kernel }}
           BUILD_DATE: ${{ steps.pull.outputs.build_date }}
           GCS_URI: ${{ steps.upload.outputs.gcs_uri }}
-          GCP_PROJECT: ${{ vars.GCP_PROJECT }}
+          GCP_PROJECT: ${{ env.PODVM_GCP_IMAGE_PROJECT }}
           IMAGE_TAG: ${{ inputs.image_tag }}
           REPLACE_EXISTING: ${{ inputs.replace_existing_image }}
         run: |
