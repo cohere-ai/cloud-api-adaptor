@@ -17,6 +17,10 @@ webhooks:
       namespace: {{ .Values.namespaceOverride | default .Release.Namespace }}
       path: /mutate-v1-pod
   failurePolicy: {{ .Values.webhook.failurePolicy }}
+  matchConditions:
+  - name: only-target-runtime
+    expression: >-
+      has(object.spec.runtimeClassName) && object.spec.runtimeClassName == '{{ .Values.webhook.targetRuntimeClass }}'
   name: mwebhook.peerpods.io
   namespaceSelector:
     matchExpressions:
