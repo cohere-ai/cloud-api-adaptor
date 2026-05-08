@@ -46,6 +46,11 @@ on:
         required: false
         type: boolean
         default: false
+      b200_cc_drivers:
+        description: "Install NVIDIA 595.71.05 open driver (enables Confidential Computing on multi-GPU B200). EXPERIMENTAL"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   id-token: write      # OIDC token for build provenance attestation
@@ -70,11 +75,13 @@ jobs:
       image_name_debug: ${{ steps.compute.outputs.image_name_debug }}
       image_tag_release: ${{ steps.compute.outputs.image_tag_release }}
       image_tag_debug: ${{ steps.compute.outputs.image_tag_debug }}
+      b200_cc_drivers: ${{ steps.compute.outputs.b200_cc_drivers }}
     steps:
       - name: Compute tags and image names
         id: compute
         env:
           DISTRO: ${{ inputs.distro || 'ubuntu' }}
+          B200_CC_DRIVERS: ${{ inputs.b200_cc_drivers && 'true' || 'false' }}
         run: |
           if [[ "$GITHUB_REF" == refs/tags/podvm-v* ]]; then
             TAG="${GITHUB_REF#refs/tags/podvm-}"
@@ -84,10 +91,15 @@ jobs:
             REPLACE_IMAGE="true"
           fi
           TAG="${TAG//./-}"
+          # Suffix CC-driver builds so they never collide with standard images
+          if [ "$B200_CC_DRIVERS" = "true" ]; then
+            TAG="${TAG}-cc595"
+          fi
           {
             echo "tag=$TAG"
             echo "distro=$DISTRO"
             echo "replace_image=$REPLACE_IMAGE"
+            echo "b200_cc_drivers=$B200_CC_DRIVERS"
             echo "image_name_release=podvm-${DISTRO}-${TEE_PLATFORM}-release-${TAG}"
             echo "image_name_debug=podvm-${DISTRO}-${TEE_PLATFORM}-debug-${TAG}"
             echo "image_tag_release=${TAG}-${DISTRO}-release"
@@ -195,6 +207,34 @@ jobs:
           echo "Disk after binaries build:"
           df -h /
 
+      - name: Override NVIDIA driver to 595.71.05 (B200 multi-GPU CC)
+        if: needs.meta.outputs.b200_cc_drivers == 'true'
+        working-directory: src/cloud-api-adaptor/podvm-mkosi
+        run: |
+          set -euo pipefail
+          CONF=mkosi.presets/system/mkosi.conf.d/ubuntu.conf
+          # The 595 branch only ships the unversioned `nvidia-driver-open`
+          # metapackage in NVIDIA's CUDA repo (no `nvidia-driver-595-open`).
+          # Match by package name only so this survives future 580.x.y bumps.
+          sed -i -E \
+            -e 's|^([[:space:]]*)nvidia-driver-580-open=.*|\1nvidia-driver-open=595.71.05-1ubuntu1|' \
+            -e 's|^([[:space:]]*)nvidia-persistenced=.*|\1nvidia-persistenced=595.71.05-1ubuntu1|' \
+            -e 's|^([[:space:]]*)nvidia-fabricmanager=.*|\1nvidia-fabricmanager=595.71.05-1ubuntu1|' \
+            -e 's|^([[:space:]]*)libnvidia-nscq=.*|\1libnvidia-nscq=595.71.05-1ubuntu1|' \
+            "$CONF"
+          echo "----- Updated NVIDIA package pins -----"
+          grep -E '^[[:space:]]*(nvidia|libnvidia)' "$CONF"
+
+      - name: Resolve installed NVIDIA driver version
+        working-directory: src/cloud-api-adaptor/podvm-mkosi
+        run: |
+          set -euo pipefail
+          CONF=mkosi.presets/system/mkosi.conf.d/ubuntu.conf
+          DRIVER_LINE=$(grep -E '^[[:space:]]*nvidia-driver(-580)?-open=' "$CONF" | head -n1)
+          DRIVER_VER=$(printf '%s' "$DRIVER_LINE" | sed -E 's|.*=([0-9]+\.[0-9]+\.[0-9]+).*|\1|')
+          echo "Resolved NVIDIA driver version: $DRIVER_VER"
+          echo "NVIDIA_DRIVER=$DRIVER_VER" >> "$GITHUB_ENV"
+
       - name: Build OS image
         working-directory: src/cloud-api-adaptor/podvm-mkosi
         env:
@@ -265,6 +305,7 @@ jobs:
             --arg distro "$DISTRO" \
             --arg profile "$PROFILE" \
             --arg tee_platform "$TEE_PLATFORM" \
+            --arg nvidia_driver "$NVIDIA_DRIVER" \
             --arg build_date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             '$ARGS.named' > /tmp/measurements.json
 
@@ -307,6 +348,7 @@ jobs:
             --annotation "com.cohere.caa.commit=${CAA_COMMIT}" \
             --annotation "com.cohere.caa.version=${GITHUB_REF_NAME}" \
             --annotation "com.cohere.rtmr2=${RTMR2}" \
+            --annotation "com.cohere.nvidia.driver=${NVIDIA_DRIVER}" \
             --format json > oras-output.json
 
           cat oras-output.json
