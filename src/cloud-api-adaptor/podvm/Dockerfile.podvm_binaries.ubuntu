@@ -17,6 +17,8 @@ ARG CUSTOM_GC_BINARIES=""
 ARG AA_FEATURES=""
 ARG GUEST_COMPONENTS_REF=""
 ARG GUEST_COMPONENTS_REPO="https://github.com/confidential-containers/guest-components.git"
+ARG NVAT_REPO="https://github.com/NVIDIA/attestation-sdk.git"
+ARG NVAT_TAG="2026.03.02"
 ARG DEBIAN_FRONTEND=noninteractive
 RUN set -e; \
     if [ -n "${CUSTOM_GC_BINARIES}" ] && [ -z "${GUEST_COMPONENTS_REF}" ]; then \
@@ -26,7 +28,8 @@ RUN set -e; \
     if [ -n "${CUSTOM_GC_BINARIES}" ] && [ -n "${GUEST_COMPONENTS_REF}" ]; then \
       apt-get update && \
       apt-get install -y --no-install-recommends \
-        protobuf-compiler pkg-config clang libssl-dev libtss2-dev && \
+        protobuf-compiler pkg-config clang libclang-dev libssl-dev libtss2-dev \
+        cmake libcurl4-openssl-dev libxml2-dev libxmlsec1-dev libxmlsec1-openssl && \
       apt-get clean && rm -rf /var/lib/apt/lists/* && \
       mkdir -p /build/gc && cd /build/gc && \
       git init && \
@@ -34,7 +37,20 @@ RUN set -e; \
       git fetch --depth=1 origin "${GUEST_COMPONENTS_REF}" && \
       git reset --hard FETCH_HEAD; \
     fi
+# Build NVIDIA Attestation SDK (libnvat) from source so the nvidia-attester
+# feature can link against it. The AA binary will dynamically link libnvat.so,
+# which must also be present in the final PodVM image at runtime.
+RUN set -e; \
+    if echo "${AA_FEATURES}" | grep -q "nvidia-attester"; then \
+      git clone --depth 1 --branch "${NVAT_TAG}" "${NVAT_REPO}" /build/nvat && \
+      cd /build/nvat/nv-attestation-sdk-cpp && \
+      cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && \
+      cmake --build build && \
+      cmake --install build && \
+      ldconfig; \
+    fi
 COPY cloud-api-adaptor/podvm/build-guest-components.sh /build/
+ENV NVAT_USE_SYSTEM_LIB=1
 RUN /build/build-guest-components.sh "${CUSTOM_GC_BINARIES}" "${AA_FEATURES}"
 
 # ubuntu:24.04
@@ -145,6 +161,14 @@ RUN for bin in /tmp/gc-overrides/*; do \
       [ -f "$bin" ] && [ -s "$bin" ] && \
       install -m0755 "$bin" /src/cloud-api-adaptor/podvm/files/usr/local/bin/"$(basename "$bin")"; \
     done; true
+
+# Copy libnvat shared library if it was built (needed at runtime by attestation-agent
+# when compiled with nvidia-attester feature).
+COPY --from=gc_builder /usr/local/lib/libnvat* /tmp/libnvat/
+RUN if ls /tmp/libnvat/libnvat* 1>/dev/null 2>&1; then \
+      mkdir -p /src/cloud-api-adaptor/podvm/files/usr/local/lib/ && \
+      cp /tmp/libnvat/libnvat* /src/cloud-api-adaptor/podvm/files/usr/local/lib/; \
+    fi; true
 
 FROM scratch
 COPY --from=podvm_binaries_builder /src/cloud-api-adaptor/podvm/files /
