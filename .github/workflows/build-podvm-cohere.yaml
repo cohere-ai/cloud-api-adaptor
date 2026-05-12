@@ -225,6 +225,19 @@ jobs:
           echo "----- Updated NVIDIA package pins -----"
           grep -E '^[[:space:]]*(nvidia|libnvidia)' "$CONF"
 
+      - name: Increase debug root partition for CC595 drivers
+        if: needs.meta.outputs.b200_cc_drivers == 'true' && matrix.profile == 'debug'
+        working-directory: src/cloud-api-adaptor/podvm-mkosi
+        run: |
+          set -euo pipefail
+          CONF=mkosi.presets/system/mkosi.repart-debug/10-root.conf
+          # NVIDIA 595 drivers make the root filesystem too large for
+          # systemd-repart's Minimize=guess estimation, causing mkfs.ext4
+          # "No space left on device" during the build.
+          printf '[Partition]\nType=root\nFormat=ext4\nCopyFiles=/\nMinimize=off\nSizeMinBytes=12G\nSizeMaxBytes=12G\n' > "$CONF"
+          echo "----- Updated repart config -----"
+          cat "$CONF"
+
       - name: Resolve installed NVIDIA driver version
         working-directory: src/cloud-api-adaptor/podvm-mkosi
         run: |
