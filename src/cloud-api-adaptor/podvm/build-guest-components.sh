@@ -30,6 +30,10 @@ for bin in "${BINS[@]}"; do
         exit 1
       fi
       cd /build/gc/attestation-agent/attestation-agent
+      # Refresh lockfile so optional feature deps (e.g. nv-attestation-sdk
+      # for nvidia-attester) are resolved even if the checked-in Cargo.lock
+      # was generated without them.
+      cargo update --workspace
       cargo build --release --locked --no-default-features \
         --features "$AA_FEATURES" --bin ttrpc-aa
       cp /build/gc/target/release/ttrpc-aa "$OUTDIR/attestation-agent"
