@@ -44,7 +44,7 @@ RUN set -e; \
     if echo "${AA_FEATURES}" | grep -q "nvidia-attester"; then \
       git clone --depth 1 --branch "${NVAT_TAG}" "${NVAT_REPO}" /build/nvat && \
       cd /build/nvat/nv-attestation-sdk-cpp && \
-      cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr && \
+      cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib && \
       cmake --build build && \
       cmake --install build && \
       ldconfig; \
