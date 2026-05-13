@@ -164,10 +164,10 @@ RUN for bin in /tmp/gc-overrides/*; do \
 
 # Copy libnvat shared library if it was built (needed at runtime by attestation-agent
 # when compiled with nvidia-attester feature).
-COPY --from=gc_builder /usr/local/lib/libnvat* /tmp/libnvat/
+COPY --from=gc_builder /usr/lib/libnvat* /tmp/libnvat/
 RUN if ls /tmp/libnvat/libnvat* 1>/dev/null 2>&1; then \
-      mkdir -p /src/cloud-api-adaptor/podvm/files/usr/local/lib/ && \
-      cp /tmp/libnvat/libnvat* /src/cloud-api-adaptor/podvm/files/usr/local/lib/; \
+      mkdir -p /src/cloud-api-adaptor/podvm/files/usr/lib/ && \
+      cp /tmp/libnvat/libnvat* /src/cloud-api-adaptor/podvm/files/usr/lib/; \
     fi; true
 
 FROM scratch
