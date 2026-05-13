@@ -152,3 +152,154 @@ func TestCreateDomainXMLaarch64(t *testing.T) {
 		t.Error(err)
 	}
 }
+
+func TestGetDeletableDiskPaths(t *testing.T) {
+	tests := []struct {
+		name     string
+		domain   *libvirtxml.Domain
+		expected []string
+	}{
+		{
+			name: "returns file-backed disks only",
+			domain: &libvirtxml.Domain{
+				Devices: &libvirtxml.DomainDeviceList{
+					Disks: []libvirtxml.DomainDisk{
+						{
+							Source: &libvirtxml.DomainDiskSource{
+								File: &libvirtxml.DomainDiskSourceFile{File: "/var/lib/libvirt/images/root.qcow2"},
+							},
+						},
+						{
+							Source: &libvirtxml.DomainDiskSource{
+								File: &libvirtxml.DomainDiskSourceFile{File: "/var/lib/libvirt/images/cloudinit.iso"},
+							},
+						},
+						{
+							Source: &libvirtxml.DomainDiskSource{},
+						},
+						{},
+					},
+				},
+			},
+			expected: []string{
+				"/var/lib/libvirt/images/root.qcow2",
+				"/var/lib/libvirt/images/cloudinit.iso",
+			},
+		},
+		{
+			name:     "nil domain returns nil",
+			domain:   nil,
+			expected: nil,
+		},
+		{
+			name: "empty disk list returns empty slice",
+			domain: &libvirtxml.Domain{
+				Devices: &libvirtxml.DomainDeviceList{},
+			},
+			expected: []string{},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			paths := getDeletableDiskPaths(tc.domain)
+			assert.Equal(t, tc.expected, paths)
+		})
+	}
+}
+
+func TestConfigVerifier(t *testing.T) {
+	newConfig := func(overrides func(*Config)) *Config {
+		cfg := &Config{
+			URI:         "qemu:///system",
+			PoolName:    "default",
+			NetworkName: "default",
+			VolName:     "podvm-base.qcow2",
+			CPU:         1,
+			Memory:      512,
+		}
+		if overrides != nil {
+			overrides(cfg)
+		}
+		return cfg
+	}
+
+	tests := []struct {
+		name          string
+		provider      *libvirtProvider
+		expectedError string
+	}{
+		{
+			name: "empty URI fails",
+			provider: &libvirtProvider{
+				serviceConfig: newConfig(func(c *Config) {
+					c.URI = ""
+				}),
+			},
+			expectedError: "URI is empty",
+		},
+		{
+			name: "empty pool name fails",
+			provider: &libvirtProvider{
+				serviceConfig: newConfig(func(c *Config) {
+					c.PoolName = ""
+				}),
+			},
+			expectedError: "PoolName is empty",
+		},
+		{
+			name: "empty network name fails",
+			provider: &libvirtProvider{
+				serviceConfig: newConfig(func(c *Config) {
+					c.NetworkName = ""
+				}),
+			},
+			expectedError: "NetworkName is empty",
+		},
+		{
+			name: "empty volume name fails",
+			provider: &libvirtProvider{
+				serviceConfig: newConfig(func(c *Config) {
+					c.VolName = ""
+				}),
+			},
+			expectedError: "VolName is empty",
+		},
+		{
+			name: "zero CPU fails",
+			provider: &libvirtProvider{
+				serviceConfig: newConfig(func(c *Config) {
+					c.CPU = 0
+				}),
+			},
+			expectedError: "CPU must be greater than zero",
+		},
+		{
+			name: "zero memory fails",
+			provider: &libvirtProvider{
+				serviceConfig: newConfig(func(c *Config) {
+					c.Memory = 0
+				}),
+			},
+			expectedError: "Memory must be greater than zero",
+		},
+		{
+			name: "valid config passes",
+			provider: &libvirtProvider{
+				serviceConfig: newConfig(nil),
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.provider.ConfigVerifier()
+			if tc.expectedError == "" {
+				assert.NoError(t, err)
+				return
+			}
+
+			assert.EqualError(t, err, tc.expectedError)
+		})
+	}
+}

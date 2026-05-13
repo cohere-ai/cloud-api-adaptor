@@ -2,7 +2,7 @@
 # ubuntu:24.10 (Oracular) — provides systemd 256 EFI stub with TDX RTMR support
 FROM ubuntu@sha256:cdf755952ed117f6126ff4e65810bf93767d4c38f5c7185b50ec1f1078b464cc AS builder
 
-ARG MKOSI_VERSION="v22"
+ARG MKOSI_VERSION="v26"
 ARG PROFILE="debug"
 ARG IMAGE_VERSION="0.0.0"
 
@@ -28,6 +28,7 @@ RUN apt-get update && \
 	dosfstools \
 	mtools \
 	python3 \
+	debian-archive-keyring \
 	zstd
 
 RUN mkdir -p /build
@@ -38,10 +39,7 @@ RUN mkosi --version
 
 RUN mkdir /image
 WORKDIR /image
-COPY mkosi.postinst /image/mkosi.postinst
-COPY mkosi.presets /image/mkosi.presets
-COPY mkosi.profiles /image/mkosi.profiles
-COPY mkosi.skeleton /image/mkosi.skeleton
+COPY mkosi.images /image/mkosi.images
 COPY mkosi.skeleton-debug /image/mkosi.skeleton-debug
 COPY mkosi.skeleton-debug-ubuntu /image/mkosi.skeleton-debug-ubuntu
 COPY mkosi.skeleton-sftp /image/mkosi.skeleton-sftp

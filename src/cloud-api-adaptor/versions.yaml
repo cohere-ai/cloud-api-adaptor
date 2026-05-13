@@ -11,7 +11,7 @@ cloudimg:
         checksum: "sha256:367eef35e239ebd123bd00a1fb66cd048604b70bca362eccad1f95b0021d7458"
       arm64:
         url: https://cloud-images.ubuntu.com/releases/noble/release-20250115/ubuntu-24.04-server-cloudimg-arm64.img
-        checksum: "f11282a728ad42f8bfe0b646a6807674d79a019bfc229d80032345dd3228a2db"
+        checksum: "sha256:f11282a728ad42f8bfe0b646a6807674d79a019bfc229d80032345dd3228a2db"
   rhel:
     9: # dummy links, get trial image from: https://www.redhat.com/en/technologies/linux-platforms/enterprise-linux/server/trial
       amd64:
@@ -29,10 +29,10 @@ cloudimg:
 tools:
   cert-manager: v1.15.3
   bats: 1.10.0
-  iptables-wrapper: v0.0.0-20240819165702-06cad2ec6cb5
-  golang: 1.25.9
+  iptables-wrapper: bfef9e5087a198b50a4124bb9ce9d2c7c99025dd
+  golang: 1.25.10
   kcli: 99.0.202507200957
-  mkosi: v22
+  mkosi: v26
   protoc: 3.16.0
   packer: v1.9.4
   oras: 1.2.0
@@ -49,20 +49,20 @@ git:
     reference: v1.5.0
   kbs:
     url: https://github.com/confidential-containers/trustee
-    reference: f5cb8fc1b51b652fc24e2d6b8742cf417805352e
+    reference: 22788122660d6e9be3e4bf52704282de5fcc0a2a
 # If a tag is given it will attempt to pull the oci image by tag. if a
 # reference is specified the corresponding tag will be constructed using
 # the reference and suffixes like architecture or tee.
 oci:
   pause:
     registry: registry.k8s.io/pause
-    tag: 3.9
+    tag: "3.9"
   kata-containers:
     registry: ghcr.io/kata-containers/cached-artefacts
-    reference: 660e3bb6535b141c84430acb25b159857278d596 # v3.28.0
+    reference: 8dccf4cf37aeea4b6c2caacf3e61510d6eef2f71 # v3.29.0
   guest-components:
     registry: ghcr.io/confidential-containers/guest-components
-    reference: ab95914ac84c32a43102463cc0ae330710af47be
+    reference: de3f6ff62aa736619b80d99dfca5bc3d2c9a799d
   kata-agent-ctl:
     registry: ghcr.io/kata-containers/cached-artefacts
-    reference: 3.28.0
+    reference: 3.29.0

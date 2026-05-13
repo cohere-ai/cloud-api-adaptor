@@ -90,6 +90,10 @@ test: ## Run tests.
 	# parse build errors.
 	go test -v $(GOFLAGS) -cover $(PACKAGES) 2>&1
 
+.PHONY: versions-check
+versions-check: ## Validate versions.yaml against the JSON schema
+	./hack/versions.py -c versions.schema.json
+
 .PHONY: test-e2e
 test-e2e: ## Run end-to-end tests for single provider.
 ifneq ($(CLOUD_PROVIDER),)
@@ -119,10 +123,6 @@ clean: ## Remove binaries.
 .PHONY: image
 image: .git-commit ## Build and push docker image to $registry
 	COMMIT=$(COMMIT) VERSION=$(VERSION) YQ_VERSION=$(YQ_VERSION) hack/build.sh -i
-
-.PHONY: image-with-arch
-image-with-arch: .git-commit ## Build the per arch image
-	COMMIT=$(COMMIT) VERSION=$(VERSION) YQ_VERSION=$(YQ_VERSION) hack/build.sh -a
 
 ##@ Deployment
 
