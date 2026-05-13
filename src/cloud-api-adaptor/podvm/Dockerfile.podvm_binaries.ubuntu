@@ -36,10 +36,6 @@ RUN set -e; \
       git remote add origin "${GUEST_COMPONENTS_REPO}" && \
       git fetch --depth=1 origin "${GUEST_COMPONENTS_REF}" && \
       git reset --hard FETCH_HEAD; \
-      # Temporary: fix nvidia-attester detect_platform() for multi-GPU systems.
-      # Remove once cohere-ai/guest-components#7 is merged into the cohere branch.
-      sed -i 's/count == 1/count >= 1/' \
-        /build/gc/attestation-agent/attester/src/nvidia/mod.rs 2>/dev/null || true; \
     fi
 # Build NVIDIA Attestation SDK (libnvat) from source so the nvidia-attester
 # feature can link against it. The AA binary will dynamically link libnvat.so,
