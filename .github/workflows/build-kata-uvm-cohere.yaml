@@ -2,8 +2,8 @@ name: Build Kata UVM Image (Cohere NVIDIA GPU Confidential)
 
 # Build the Kata Containers NVIDIA-GPU-confidential UVM image with our
 # attestation-agent + api-server-rest baked in *from source*, instead of
-# post-hoc patching the stock NVIDIA image (which is what
-# fortress/scratch/oci-b200/k8s/06-patch-uvm.sh does).
+# post-hoc patching the stock NVIDIA image (which is what the legacy
+# fortress/scratch/oci-b200/k8s/08-patch-uvm.sh does).
 #
 # How:
 #   1. Check out kata-containers @ ${kata_ref}.
@@ -25,7 +25,7 @@ name: Build Kata UVM Image (Cohere NVIDIA GPU Confidential)
 #   ghcr.io/${{ github.repository }}/kata-uvm-nvidia-gpu-confidential:<tag>
 #
 # Companion install script (consumes this artifact on a B200 host):
-#   fortress/scratch/oci-b200/k8s/08-install-uvm.sh
+#   fortress/scratch/oci-b200/k8s/05-install-uvm.sh
 
 on:
   push:
@@ -377,6 +377,6 @@ jobs:
             echo ""
             echo '```bash'
             echo "ORAS_REF=${OCI_IMAGE}:${{ needs.meta.outputs.tag }} \\"
-            echo "  bash fortress/scratch/oci-b200/k8s/08-install-uvm.sh"
+            echo "  bash fortress/scratch/oci-b200/k8s/05-install-uvm.sh"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
