@@ -1,0 +1,382 @@
+name: Build Kata UVM Image (Cohere NVIDIA GPU Confidential)
+
+# Build the Kata Containers NVIDIA-GPU-confidential UVM image with our
+# attestation-agent + api-server-rest baked in *from source*, instead of
+# post-hoc patching the stock NVIDIA image (which is what
+# fortress/scratch/oci-b200/k8s/06-patch-uvm.sh does).
+#
+# How:
+#   1. Check out kata-containers @ ${kata_ref}.
+#   2. Rewrite versions.yaml: point externals.coco-guest-components.url /
+#      .version at our cohere-ai/guest-components fork. The kata build
+#      driver clones that and statically builds AA + api-server-rest +
+#      CDH. nvidia_rootfs.sh's coco_guest_components() step then copies
+#      those binaries into the final UVM rootfs at /usr/local/bin/.
+#   3. Run `make rootfs-image-nvidia-gpu-confidential-tarball` (which also
+#      builds agent, busybox, pause-image, coco-guest-components, and
+#      kernel-nvidia-gpu under the hood — every dep is containerised by
+#      kata-deploy-binaries-in-docker.sh, so the runner just needs Docker).
+#   4. Extract the .image + root_hash file from the tarball.
+#   5. Push to GHCR as an OCI artifact with the dm-verity params surfaced
+#      as annotations so the host install script can wire kata config
+#      without re-running `veritysetup format`.
+#
+# Output OCI ref:
+#   ghcr.io/${{ github.repository }}/kata-uvm-nvidia-gpu-confidential:<tag>
+#
+# Companion install script (consumes this artifact on a B200 host):
+#   fortress/scratch/oci-b200/k8s/08-install-uvm.sh
+
+on:
+  push:
+    tags: ["kata-uvm-v*"]
+    branches:
+      - "cohere"
+      # TEMPORARY: enable end-to-end validation of the workflow on the
+      # feature branch before merge. Remove this entry as part of the
+      # final review; only `cohere` should remain.
+      - "alhassankhedr/build-kata-uvm-cohere"
+    paths:
+      - ".github/workflows/build-kata-uvm-cohere.yaml"
+  workflow_dispatch:
+    inputs:
+      kata_ref:
+        description: "kata-containers ref to build from (tag, branch, or SHA)"
+        required: false
+        type: string
+        default: "3.30.0"
+      kata_repo:
+        description: "kata-containers repo URL"
+        required: false
+        type: string
+        default: "https://github.com/kata-containers/kata-containers.git"
+      gc_repo:
+        description: "guest-components repo URL"
+        required: false
+        type: string
+        default: "https://github.com/cohere-ai/guest-components.git"
+      gc_ref:
+        description: "guest-components ref (branch, tag, or SHA)"
+        required: false
+        type: string
+        default: "cohere"
+      nvidia_gpu_stack:
+        description: "NVIDIA GPU stack components (driver= is added from versions.yaml)"
+        required: false
+        type: string
+        default: "compute,dcgm,nvswitch"
+      tag_suffix:
+        description: "Optional suffix appended to the OCI tag (e.g. for ad-hoc test builds)"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  id-token: write
+  attestations: write
+  contents: read
+  packages: write
+
+env:
+  OCI_IMAGE: ghcr.io/${{ github.repository }}/kata-uvm-nvidia-gpu-confidential
+
+jobs:
+  meta:
+    name: Compute metadata
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.compute.outputs.tag }}
+      kata_ref: ${{ steps.compute.outputs.kata_ref }}
+      gc_repo: ${{ steps.compute.outputs.gc_repo }}
+      gc_ref: ${{ steps.compute.outputs.gc_ref }}
+      nvidia_gpu_stack: ${{ steps.compute.outputs.nvidia_gpu_stack }}
+    steps:
+      - name: Compute tag and inputs
+        id: compute
+        env:
+          KATA_REF: ${{ inputs.kata_ref || '3.30.0' }}
+          GC_REPO:  ${{ inputs.gc_repo  || 'https://github.com/cohere-ai/guest-components.git' }}
+          GC_REF:   ${{ inputs.gc_ref   || 'cohere' }}
+          STACK:    ${{ inputs.nvidia_gpu_stack || 'compute,dcgm,nvswitch' }}
+          SUFFIX:   ${{ inputs.tag_suffix || '' }}
+        run: |
+          # Tag pattern:
+          #   kata-uvm-v* push  -> use the tag literal (after stripping `kata-uvm-`)
+          #   workflow_dispatch -> kata-${KATA_REF}-gc-${GC_REF_SHORT}[suffix]
+          #   branch push       -> cohere-latest
+          if [[ "$GITHUB_REF" == refs/tags/kata-uvm-v* ]]; then
+            TAG="${GITHUB_REF#refs/tags/kata-uvm-}"
+          elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            GC_SHORT="${GC_REF//\//-}"
+            GC_SHORT="${GC_SHORT:0:12}"
+            TAG="kata-${KATA_REF//\//-}-gc-${GC_SHORT}"
+          else
+            TAG="cohere-latest"
+          fi
+          [ -n "$SUFFIX" ] && TAG="${TAG}-${SUFFIX}"
+          # OCI tags can't have '+' or unbounded length; sanitize.
+          TAG="${TAG//+/-}"
+          {
+            echo "tag=$TAG"
+            echo "kata_ref=$KATA_REF"
+            echo "gc_repo=$GC_REPO"
+            echo "gc_ref=$GC_REF"
+            echo "nvidia_gpu_stack=$STACK"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build kata UVM (nvidia-gpu-confidential)
+    needs: meta
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Free up runner disk space
+        # The kata build pulls a CUDA repo + NVIDIA drivers into a chroot
+        # and a kernel build alongside. Default ubuntu-latest leaves ~14G;
+        # we need ~40G or the rootfs build OOMs the disk.
+        run: |
+          set -eux
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+                      /usr/local/share/boost /opt/hostedtoolcache/CodeQL \
+                      /usr/local/share/powershell /usr/local/share/chromium
+          sudo apt-get purge -y google-cloud-cli azure-cli microsoft-edge-stable \
+                                dotnet-* aspnetcore-* mongodb-* mysql-* 2>/dev/null || true
+          sudo apt-get autoremove -y
+          sudo apt-get clean
+          docker system prune -af --volumes 2>/dev/null || true
+          df -h /
+
+      - name: Install host build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            git make curl ca-certificates jq python3 python3-pip
+          # Ensure yq is present (kata's build scripts rely on it).
+          if ! command -v yq >/dev/null 2>&1; then
+            sudo curl -fsSL -o /usr/local/bin/yq \
+              https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+            sudo chmod +x /usr/local/bin/yq
+          fi
+          yq --version
+
+      - name: Install ORAS
+        # Pin via fortress/CAA convention: read from caa's versions.yaml so
+        # we stay in lockstep. Fallback to a known-good version if the file
+        # is unavailable for some reason.
+        run: |
+          ORAS_VERSION=1.2.0
+          curl -fsSLO "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_amd64.tar.gz"
+          tar -xzf "oras_${ORAS_VERSION}_linux_amd64.tar.gz" oras
+          sudo mv oras /usr/local/bin/
+          rm -f "oras_${ORAS_VERSION}_linux_amd64.tar.gz"
+          oras version
+
+      - name: Checkout kata-containers @ ${{ needs.meta.outputs.kata_ref }}
+        run: |
+          set -eux
+          git clone --depth 1 --branch "${{ needs.meta.outputs.kata_ref }}" \
+            "${{ inputs.kata_repo || 'https://github.com/kata-containers/kata-containers.git' }}" \
+            /tmp/kata
+          ( cd /tmp/kata && git rev-parse HEAD )
+
+      - name: Override coco-guest-components in versions.yaml
+        # This is the key step: tell kata's coco-guest-components builder
+        # to clone our cohere-ai fork at our chosen ref. Everything
+        # downstream (rootfs assembly, dm-verity, root_hash) is unchanged
+        # and uses these binaries as if they had come from upstream.
+        env:
+          GC_REPO: ${{ needs.meta.outputs.gc_repo }}
+          GC_REF:  ${{ needs.meta.outputs.gc_ref }}
+        run: |
+          set -eux
+          cd /tmp/kata
+          # Resolve gc_ref to a SHA so the build is reproducible. We do
+          # this with `git ls-remote` rather than cloning the whole tree.
+          GC_SHA=$(git ls-remote "${GC_REPO}" "${GC_REF}" | awk '{print $1}' | head -n1)
+          if [[ -z "$GC_SHA" ]]; then
+            # Maybe gc_ref already IS a SHA; let downstream fail loudly if not.
+            GC_SHA="${GC_REF}"
+          fi
+          echo "Resolved guest-components ref ${GC_REF} -> ${GC_SHA}"
+
+          yq -i \
+            ".externals.\"coco-guest-components\".url = \"${GC_REPO}\" |
+             .externals.\"coco-guest-components\".version = \"${GC_SHA}\"" \
+            versions.yaml
+
+          echo "----- updated versions.yaml (coco-guest-components) -----"
+          yq '.externals."coco-guest-components"' versions.yaml
+
+      - name: Build rootfs-image-nvidia-gpu-confidential
+        env:
+          NVIDIA_GPU_STACK: ${{ needs.meta.outputs.nvidia_gpu_stack }}
+        run: |
+          set -eux
+          cd /tmp/kata/tools/packaging/kata-deploy/local-build
+          # `make <variant>-tarball` chains all the Docker-isolated builds
+          # (agent, busybox, pause-image, coco-guest-components,
+          # kernel-nvidia-gpu) before running the rootfs assembly. Each
+          # sub-build runs in its own ephemeral container, so we don't
+          # need to install rust/go/etc on the host.
+          NVIDIA_GPU_STACK="$NVIDIA_GPU_STACK" \
+            make rootfs-image-nvidia-gpu-confidential-tarball
+
+          ls -lh build/
+
+      - name: Extract .image and root_hash from the tarball
+        run: |
+          set -eux
+          cd /tmp/kata/tools/packaging/kata-deploy/local-build/build
+          TARBALL=kata-static-rootfs-image-nvidia-gpu-confidential.tar.zst
+          [[ -f "$TARBALL" ]] || { echo "FATAL: $TARBALL missing"; exit 1; }
+
+          mkdir -p /tmp/uvm-out
+          # Tarball layout:
+          #   ./opt/kata/share/kata-containers/kata-containers-nvidia-gpu-confidential.img
+          #   ./opt/kata/share/kata-containers/root_hash_nvidia-gpu-confidential.txt
+          tar --zstd -xvf "$TARBALL" -C /tmp/uvm-out
+          mv /tmp/uvm-out/opt/kata/share/kata-containers/kata-containers-nvidia-gpu-confidential.img \
+             /tmp/uvm-out/kata-containers-nvidia-gpu-confidential.img
+          mv /tmp/uvm-out/opt/kata/share/kata-containers/root_hash_nvidia-gpu-confidential.txt \
+             /tmp/uvm-out/root_hash.txt
+          rm -rf /tmp/uvm-out/opt
+          ls -lh /tmp/uvm-out/
+          echo "----- root_hash.txt -----"
+          cat /tmp/uvm-out/root_hash.txt
+
+      - name: Surface verity params as JSON metadata
+        id: measure
+        # The root_hash.txt file is the source of truth for kata's
+        # `kernel_verity_params` (root_hash, salt, data_blocks, etc).
+        # We re-emit those values as a flat JSON file so the host install
+        # script can parse them without invoking veritysetup.
+        run: |
+          set -eux
+          ROOT_HASH=$(awk -F'=' '/^root_hash=/ {print $2}' /tmp/uvm-out/root_hash.txt)
+          SALT=$(awk -F'=' '/^salt=/ {print $2}' /tmp/uvm-out/root_hash.txt)
+          DATA_BLOCKS=$(awk -F'=' '/^data_blocks=/ {print $2}' /tmp/uvm-out/root_hash.txt)
+          DATA_BLOCK_SIZE=$(awk -F'=' '/^data_block_size=/ {print $2}' /tmp/uvm-out/root_hash.txt)
+          HASH_BLOCK_SIZE=$(awk -F'=' '/^hash_block_size=/ {print $2}' /tmp/uvm-out/root_hash.txt)
+          IMG_SHA256=$(sha256sum /tmp/uvm-out/kata-containers-nvidia-gpu-confidential.img | awk '{print $1}')
+          IMG_BYTES=$(stat -c %s /tmp/uvm-out/kata-containers-nvidia-gpu-confidential.img)
+
+          jq -n \
+            --arg kata_ref       "${{ needs.meta.outputs.kata_ref }}" \
+            --arg gc_repo        "${{ needs.meta.outputs.gc_repo }}" \
+            --arg gc_ref         "${{ needs.meta.outputs.gc_ref }}" \
+            --arg nvidia_stack   "${{ needs.meta.outputs.nvidia_gpu_stack }}" \
+            --arg root_hash      "$ROOT_HASH" \
+            --arg salt           "$SALT" \
+            --arg data_blocks    "$DATA_BLOCKS" \
+            --arg data_block_sz  "$DATA_BLOCK_SIZE" \
+            --arg hash_block_sz  "$HASH_BLOCK_SIZE" \
+            --arg img_sha256     "$IMG_SHA256" \
+            --arg img_bytes      "$IMG_BYTES" \
+            --arg caa_commit     "$GITHUB_SHA" \
+            --arg build_date     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{
+              kata_ref: $kata_ref,
+              guest_components: {repo: $gc_repo, ref: $gc_ref},
+              nvidia_gpu_stack: $nvidia_stack,
+              dm_verity: {
+                root_hash:       $root_hash,
+                salt:            $salt,
+                data_blocks:     ($data_blocks    | tonumber),
+                data_block_size: ($data_block_sz  | tonumber),
+                hash_block_size: ($hash_block_sz  | tonumber)
+              },
+              image: {
+                filename: "kata-containers-nvidia-gpu-confidential.img",
+                sha256:   $img_sha256,
+                bytes:    ($img_bytes | tonumber)
+              },
+              source: {caa_commit: $caa_commit, build_date: $build_date}
+            }' > /tmp/uvm-out/measurements.json
+
+          cat /tmp/uvm-out/measurements.json
+          echo "root_hash=$ROOT_HASH" >> "$GITHUB_OUTPUT"
+          echo "img_sha256=$IMG_SHA256" >> "$GITHUB_OUTPUT"
+
+      - name: Compress .image for transport
+        run: |
+          set -eux
+          cd /tmp/uvm-out
+          # The raw .image is ~250 MiB; zstd brings it under 100 MiB which
+          # makes oras push fast on cold registries.
+          zstd -19 --long -T0 --rm kata-containers-nvidia-gpu-confidential.img \
+                                   -o kata-containers-nvidia-gpu-confidential.img.zst
+          ls -lh
+
+      - name: Login to GHCR
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push artifact to GHCR
+        id: push
+        env:
+          OCI_TAG:    ${{ needs.meta.outputs.tag }}
+          ROOT_HASH:  ${{ steps.measure.outputs.root_hash }}
+          IMG_SHA256: ${{ steps.measure.outputs.img_sha256 }}
+        run: |
+          set -eux
+          OCI_REF="${OCI_IMAGE}:${OCI_TAG}"
+          cd /tmp/uvm-out
+          oras push "$OCI_REF" \
+            kata-containers-nvidia-gpu-confidential.img.zst:application/vnd.cohere.kata-uvm.image+zstd \
+            root_hash.txt:application/vnd.cohere.kata-uvm.verity+plain \
+            measurements.json:application/vnd.cohere.kata-uvm.measurements+json \
+            --annotation "org.opencontainers.image.title=kata-uvm-nvidia-gpu-confidential" \
+            --annotation "org.opencontainers.image.description=Kata Containers NVIDIA GPU confidential UVM image, built from source with cohere-ai/guest-components" \
+            --annotation "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            --annotation "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --annotation "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --annotation "com.cohere.caa.commit=${GITHUB_SHA}" \
+            --annotation "com.cohere.kata.ref=${{ needs.meta.outputs.kata_ref }}" \
+            --annotation "com.cohere.guest-components.repo=${{ needs.meta.outputs.gc_repo }}" \
+            --annotation "com.cohere.guest-components.ref=${{ needs.meta.outputs.gc_ref }}" \
+            --annotation "com.cohere.kata-uvm.image-sha256=${IMG_SHA256}" \
+            --annotation "com.cohere.kata-uvm.root-hash=${ROOT_HASH}" \
+            --format json > oras-output.json
+
+          cat oras-output.json
+          DIGEST=$(jq -r '.digest' oras-output.json)
+          {
+            echo "digest=$DIGEST"
+            echo "oci_ref=${OCI_REF}@${DIGEST}"
+            echo "oci_tag=$OCI_TAG"
+          } >> "$GITHUB_OUTPUT"
+          echo "Pushed: $OCI_REF @ $DIGEST"
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4
+        with:
+          subject-name: ${{ env.OCI_IMAGE }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+      - name: Job summary
+        run: |
+          {
+            echo "### Kata UVM image built"
+            echo ""
+            echo "| Field | Value |"
+            echo "| --- | --- |"
+            echo "| OCI ref | \`${OCI_IMAGE}:${{ needs.meta.outputs.tag }}\` |"
+            echo "| Digest | \`${{ steps.push.outputs.digest }}\` |"
+            echo "| kata-containers ref | \`${{ needs.meta.outputs.kata_ref }}\` |"
+            echo "| guest-components | \`${{ needs.meta.outputs.gc_repo }}@${{ needs.meta.outputs.gc_ref }}\` |"
+            echo "| NVIDIA stack | \`${{ needs.meta.outputs.nvidia_gpu_stack }}\` |"
+            echo "| root_hash | \`${{ steps.measure.outputs.root_hash }}\` |"
+            echo "| image sha256 | \`${{ steps.measure.outputs.img_sha256 }}\` |"
+            echo ""
+            echo "Install on a B200 host with:"
+            echo ""
+            echo '```bash'
+            echo "ORAS_REF=${OCI_IMAGE}:${{ needs.meta.outputs.tag }} \\"
+            echo "  bash fortress/scratch/oci-b200/k8s/08-install-uvm.sh"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
