@@ -214,6 +214,22 @@ jobs:
         run: |
           set -eux
           cd /tmp/kata/tools/packaging/kata-deploy/local-build
+          # kata 3.30+ nvidia_chroot.sh runs with `set -u` and only assigns
+          # driver_version when NVIDIA_GPU_STACK contains a literal
+          # `driver=<ver>` (tools/osbuilder/rootfs-builder/nvidia/
+          # nvidia_chroot.sh::install_userspace_components). Without it,
+          # the rootfs-assembly stage dies at the very end with
+          # `driver_version: unbound variable`. Derive the canonical pin
+          # from kata's own versions.yaml so this auto-tracks KATA_REF.
+          if [[ ",${NVIDIA_GPU_STACK}," != *",driver="* ]]; then
+            DRIVER_VER=$(yq '.externals.nvidia.driver.version' /tmp/kata/versions.yaml 2>/dev/null | tr -d '"')
+            if [[ -n "$DRIVER_VER" && "$DRIVER_VER" != "null" ]]; then
+              NVIDIA_GPU_STACK="driver=${DRIVER_VER},${NVIDIA_GPU_STACK}"
+              echo "Prepended driver=${DRIVER_VER} (from versions.yaml) -> ${NVIDIA_GPU_STACK}"
+            else
+              echo "WARN: could not resolve .externals.nvidia.driver.version from /tmp/kata/versions.yaml" >&2
+            fi
+          fi
           # `make <variant>-tarball` chains all the Docker-isolated builds
           # (agent, busybox, pause-image, coco-guest-components,
           # kernel-nvidia-gpu) before running the rootfs assembly. Each
