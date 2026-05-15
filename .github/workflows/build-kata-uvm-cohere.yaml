@@ -60,6 +60,17 @@ on:
         required: false
         type: string
         default: "cohere"
+      kata_nvidia_driver_ver:
+        description: |
+          Override .externals.nvidia.driver.version in kata's versions.yaml
+          (e.g. 595.71.05). Leave empty to use kata's default. The tag must
+          exist at https://github.com/NVIDIA/open-gpu-kernel-modules and a
+          matching nvidia-driver-pinning-<ver> package must exist in the
+          NVIDIA CUDA apt repo. Required to fix the 8x B200 fabric-probe
+          race in kata 3.30.0's default 595.58.03 driver pin.
+        required: false
+        type: string
+        default: ""
       nvidia_gpu_stack:
         description: "NVIDIA GPU stack components (driver= is added from versions.yaml)"
         required: false
@@ -89,20 +100,22 @@ jobs:
       kata_ref: ${{ steps.compute.outputs.kata_ref }}
       gc_repo: ${{ steps.compute.outputs.gc_repo }}
       gc_ref: ${{ steps.compute.outputs.gc_ref }}
+      kata_nvidia_driver_ver: ${{ steps.compute.outputs.kata_nvidia_driver_ver }}
       nvidia_gpu_stack: ${{ steps.compute.outputs.nvidia_gpu_stack }}
     steps:
       - name: Compute tag and inputs
         id: compute
         env:
-          KATA_REF: ${{ inputs.kata_ref || '3.30.0' }}
-          GC_REPO:  ${{ inputs.gc_repo  || 'https://github.com/cohere-ai/guest-components.git' }}
-          GC_REF:   ${{ inputs.gc_ref   || 'cohere' }}
-          STACK:    ${{ inputs.nvidia_gpu_stack || 'compute,dcgm,nvswitch' }}
-          SUFFIX:   ${{ inputs.tag_suffix || '' }}
+          KATA_REF:       ${{ inputs.kata_ref || '3.30.0' }}
+          GC_REPO:        ${{ inputs.gc_repo  || 'https://github.com/cohere-ai/guest-components.git' }}
+          GC_REF:         ${{ inputs.gc_ref   || 'cohere' }}
+          DRIVER_VER:     ${{ inputs.kata_nvidia_driver_ver || '' }}
+          STACK:          ${{ inputs.nvidia_gpu_stack || 'compute,dcgm,nvswitch' }}
+          SUFFIX:         ${{ inputs.tag_suffix || '' }}
         run: |
           # Tag pattern:
           #   kata-uvm-v* push  -> use the tag literal (after stripping `kata-uvm-`)
-          #   workflow_dispatch -> kata-${KATA_REF}-gc-${GC_REF_SHORT}[suffix]
+          #   workflow_dispatch -> kata-${KATA_REF}-gc-${GC_REF_SHORT}[-drv-<ver>][suffix]
           #   branch push       -> cohere-latest
           if [[ "$GITHUB_REF" == refs/tags/kata-uvm-v* ]]; then
             TAG="${GITHUB_REF#refs/tags/kata-uvm-}"
@@ -110,6 +123,10 @@ jobs:
             GC_SHORT="${GC_REF//\//-}"
             GC_SHORT="${GC_SHORT:0:12}"
             TAG="kata-${KATA_REF//\//-}-gc-${GC_SHORT}"
+            # If the caller overrode the NVIDIA driver pin, surface it in the
+            # OCI tag so the artifact name unambiguously identifies which
+            # driver is baked in.
+            [ -n "$DRIVER_VER" ] && TAG="${TAG}-drv-${DRIVER_VER}"
           else
             TAG="cohere-latest"
           fi
@@ -121,6 +138,7 @@ jobs:
             echo "kata_ref=$KATA_REF"
             echo "gc_repo=$GC_REPO"
             echo "gc_ref=$GC_REF"
+            echo "kata_nvidia_driver_ver=$DRIVER_VER"
             echo "nvidia_gpu_stack=$STACK"
           } >> "$GITHUB_OUTPUT"
 
@@ -207,6 +225,27 @@ jobs:
 
           echo "----- updated versions.yaml (coco-guest-components) -----"
           yq '.externals."coco-guest-components"' versions.yaml
+
+      - name: Override NVIDIA driver pin in versions.yaml
+        # kata 3.30.0's versions.yaml pins driver=595.58.03, but on 8x B200
+        # OCI hosts that driver hits a fabric-probe race (kernel timeout in
+        # RmGpuFabricProbe -> fail-stop). The fix landed in 595.71.05. The
+        # build pulls open kernel modules from
+        # https://github.com/NVIDIA/open-gpu-kernel-modules tags, and the
+        # userspace via nvidia-driver-pinning-<ver> from the NVIDIA CUDA
+        # apt repo, so any version that exists in both places is a valid
+        # override. Skipped when input is empty.
+        if: needs.meta.outputs.kata_nvidia_driver_ver != ''
+        env:
+          DRIVER_VER: ${{ needs.meta.outputs.kata_nvidia_driver_ver }}
+        run: |
+          set -eux
+          cd /tmp/kata
+          OLD_VER=$(yq '.externals.nvidia.driver.version' versions.yaml | tr -d '"')
+          yq -i ".externals.nvidia.driver.version = \"${DRIVER_VER}\"" versions.yaml
+          echo "NVIDIA driver pin: ${OLD_VER} -> ${DRIVER_VER}"
+          echo "----- updated versions.yaml (nvidia.driver) -----"
+          yq '.externals.nvidia.driver' versions.yaml
 
       - name: Build rootfs-image-nvidia-gpu-confidential
         env:
@@ -314,10 +353,17 @@ jobs:
           # a dangling symlink or an empty file.
           [[ "$IMG_BYTES" -gt 104857600 ]] || { echo "image suspiciously small: $IMG_BYTES bytes"; exit 1; }
 
+          # Resolve the *actual* baked-in driver pin from versions.yaml so
+          # the artifact reports what is really installed, not just what
+          # was requested. (When kata_nvidia_driver_ver is empty we want
+          # kata's default to be reflected here.)
+          DRIVER_VER=$(yq '.externals.nvidia.driver.version' /tmp/kata/versions.yaml | tr -d '"')
+
           jq -n \
             --arg kata_ref       "${{ needs.meta.outputs.kata_ref }}" \
             --arg gc_repo        "${{ needs.meta.outputs.gc_repo }}" \
             --arg gc_ref         "${{ needs.meta.outputs.gc_ref }}" \
+            --arg driver_ver     "$DRIVER_VER" \
             --arg nvidia_stack   "${{ needs.meta.outputs.nvidia_gpu_stack }}" \
             --arg root_hash      "$ROOT_HASH" \
             --arg salt           "$SALT" \
@@ -331,6 +377,7 @@ jobs:
             '{
               kata_ref: $kata_ref,
               guest_components: {repo: $gc_repo, ref: $gc_ref},
+              nvidia_driver: {version: $driver_ver},
               nvidia_gpu_stack: $nvidia_stack,
               dm_verity: {
                 root_hash:       $root_hash,
@@ -351,6 +398,7 @@ jobs:
           cat /tmp/uvm-out/measurements.json
           echo "root_hash=$ROOT_HASH" >> "$GITHUB_OUTPUT"
           echo "img_sha256=$IMG_SHA256" >> "$GITHUB_OUTPUT"
+          echo "driver_ver=$DRIVER_VER" >> "$GITHUB_OUTPUT"
 
       - name: Compress .image for transport
         run: |
@@ -375,6 +423,7 @@ jobs:
           OCI_TAG:    ${{ needs.meta.outputs.tag }}
           ROOT_HASH:  ${{ steps.measure.outputs.root_hash }}
           IMG_SHA256: ${{ steps.measure.outputs.img_sha256 }}
+          DRIVER_VER: ${{ steps.measure.outputs.driver_ver }}
         run: |
           set -eux
           OCI_REF="${OCI_IMAGE}:${OCI_TAG}"
@@ -392,6 +441,7 @@ jobs:
             --annotation "com.cohere.kata.ref=${{ needs.meta.outputs.kata_ref }}" \
             --annotation "com.cohere.guest-components.repo=${{ needs.meta.outputs.gc_repo }}" \
             --annotation "com.cohere.guest-components.ref=${{ needs.meta.outputs.gc_ref }}" \
+            --annotation "com.cohere.kata-uvm.nvidia-driver=${DRIVER_VER}" \
             --annotation "com.cohere.kata-uvm.image-sha256=${IMG_SHA256}" \
             --annotation "com.cohere.kata-uvm.root-hash=${ROOT_HASH}" \
             --format json > oras-output.json
@@ -423,6 +473,7 @@ jobs:
             echo "| Digest | \`${{ steps.push.outputs.digest }}\` |"
             echo "| kata-containers ref | \`${{ needs.meta.outputs.kata_ref }}\` |"
             echo "| guest-components | \`${{ needs.meta.outputs.gc_repo }}@${{ needs.meta.outputs.gc_ref }}\` |"
+            echo "| NVIDIA driver | \`${{ steps.measure.outputs.driver_ver }}\` |"
             echo "| NVIDIA stack | \`${{ needs.meta.outputs.nvidia_gpu_stack }}\` |"
             echo "| root_hash | \`${{ steps.measure.outputs.root_hash }}\` |"
             echo "| image sha256 | \`${{ steps.measure.outputs.img_sha256 }}\` |"
