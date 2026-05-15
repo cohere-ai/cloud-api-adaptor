@@ -56,10 +56,20 @@ on:
         type: string
         default: "https://github.com/cohere-ai/guest-components.git"
       gc_ref:
-        description: "guest-components ref (branch, tag, or SHA)"
+        description: |
+          guest-components ref (branch, tag, or SHA).
+
+          Default: alhassankhedr/sync-main-to-cohere (head of PR #9).
+          That branch carries upstream main's nvidia-attester rewrite
+          (NVAT SDK based, no `count == 1` guard) and is required for
+          multi-GPU evidence to work end-to-end on 8x B200 hosts. The
+          plain `cohere` branch still has the old NVML-based attester
+          which silently produces empty evidence on 2+ GPU systems
+          (mod a sed `s/count == 1/count >= 1/` patch the podvm-mkosi
+          Dockerfile applies). Switch back to `cohere` after PR #9 merges.
         required: false
         type: string
-        default: "cohere"
+        default: "alhassankhedr/sync-main-to-cohere"
       kata_nvidia_driver_ver:
         description: |
           Override .externals.nvidia.driver.version in kata's versions.yaml
@@ -108,7 +118,7 @@ jobs:
         env:
           KATA_REF:       ${{ inputs.kata_ref || '3.30.0' }}
           GC_REPO:        ${{ inputs.gc_repo  || 'https://github.com/cohere-ai/guest-components.git' }}
-          GC_REF:         ${{ inputs.gc_ref   || 'cohere' }}
+          GC_REF:         ${{ inputs.gc_ref   || 'alhassankhedr/sync-main-to-cohere' }}
           DRIVER_VER:     ${{ inputs.kata_nvidia_driver_ver || '' }}
           STACK:          ${{ inputs.nvidia_gpu_stack || 'compute,dcgm,nvswitch' }}
           SUFFIX:         ${{ inputs.tag_suffix || '' }}
