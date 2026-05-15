@@ -81,6 +81,24 @@ on:
         required: false
         type: string
         default: ""
+      kata_nvat_ver:
+        description: |
+          Pin .externals.nvidia.nvat.version in kata's versions.yaml. Default
+          2026.03.02 (a real tag in https://github.com/NVIDIA/attestation-sdk).
+
+          Without this pin, kata's coco-guest-components builder Dockerfile
+          skips the libnvat build (its `if [ -n "${NVAT_VERSION}" ]` guard
+          short-circuits), which makes the second AA build pass — the one
+          that links the nvidia-attester cargo feature against
+          /usr/local/lib/libnvat.so and installs the result as
+          /usr/local/bin/attestation-agent-nv — silently no-op. Net effect:
+          the AA baked into the rootfs has no GPU evidence support
+          regardless of gc_ref, and /aa/additional_evidence on multi-GPU
+          pods returns empty. Set "" to leave nvat unpinned (matches
+          upstream kata 3.30.0 behaviour).
+        required: false
+        type: string
+        default: "2026.03.02"
       nvidia_gpu_stack:
         description: "NVIDIA GPU stack components (driver= is added from versions.yaml)"
         required: false
@@ -111,6 +129,7 @@ jobs:
       gc_repo: ${{ steps.compute.outputs.gc_repo }}
       gc_ref: ${{ steps.compute.outputs.gc_ref }}
       kata_nvidia_driver_ver: ${{ steps.compute.outputs.kata_nvidia_driver_ver }}
+      kata_nvat_ver: ${{ steps.compute.outputs.kata_nvat_ver }}
       nvidia_gpu_stack: ${{ steps.compute.outputs.nvidia_gpu_stack }}
     steps:
       - name: Compute tag and inputs
@@ -120,12 +139,13 @@ jobs:
           GC_REPO:        ${{ inputs.gc_repo  || 'https://github.com/cohere-ai/guest-components.git' }}
           GC_REF:         ${{ inputs.gc_ref   || 'alhassankhedr/sync-main-to-cohere' }}
           DRIVER_VER:     ${{ inputs.kata_nvidia_driver_ver || '' }}
+          NVAT_VER:       ${{ inputs.kata_nvat_ver || '2026.03.02' }}
           STACK:          ${{ inputs.nvidia_gpu_stack || 'compute,dcgm,nvswitch' }}
           SUFFIX:         ${{ inputs.tag_suffix || '' }}
         run: |
           # Tag pattern:
           #   kata-uvm-v* push  -> use the tag literal (after stripping `kata-uvm-`)
-          #   workflow_dispatch -> kata-${KATA_REF}-gc-${GC_REF_SHORT}[-drv-<ver>][suffix]
+          #   workflow_dispatch -> kata-${KATA_REF}-gc-${GC_REF_SHORT}[-drv-<ver>][-nvat-<ver>][suffix]
           #   branch push       -> cohere-latest
           if [[ "$GITHUB_REF" == refs/tags/kata-uvm-v* ]]; then
             TAG="${GITHUB_REF#refs/tags/kata-uvm-}"
@@ -137,6 +157,10 @@ jobs:
             # OCI tag so the artifact name unambiguously identifies which
             # driver is baked in.
             [ -n "$DRIVER_VER" ] && TAG="${TAG}-drv-${DRIVER_VER}"
+            # Same for the NVAT SDK pin: the artifact ABI changes meaningfully
+            # between NVAT releases (libnvat soname + GpuEvidenceSource API),
+            # so make this visible too.
+            [ -n "$NVAT_VER" ]   && TAG="${TAG}-nvat-${NVAT_VER}"
           else
             TAG="cohere-latest"
           fi
@@ -149,6 +173,7 @@ jobs:
             echo "gc_repo=$GC_REPO"
             echo "gc_ref=$GC_REF"
             echo "kata_nvidia_driver_ver=$DRIVER_VER"
+            echo "kata_nvat_ver=$NVAT_VER"
             echo "nvidia_gpu_stack=$STACK"
           } >> "$GITHUB_OUTPUT"
 
@@ -257,6 +282,40 @@ jobs:
           echo "----- updated versions.yaml (nvidia.driver) -----"
           yq '.externals.nvidia.driver' versions.yaml
 
+      - name: Pin NVIDIA Attestation SDK (libnvat) in versions.yaml
+        # kata's tools/packaging/static-build/coco-guest-components/build.sh
+        # reads `.externals.nvidia.nvat.version` and forwards it to the GC
+        # builder Dockerfile as NVAT_VERSION. The Dockerfile gates the entire
+        # libnvat clone+cmake+install behind `if [ -n "${NVAT_VERSION}" ]`,
+        # so an unset key (the default in upstream kata 3.30.0) means no
+        # libnvat in the builder image. Without libnvat,
+        # build-static-coco-guest-components.sh's second build pass — the one
+        # that compiles AA with `nvidia-attester` against
+        # /usr/local/lib/libnvat.so and installs the result as
+        # /usr/local/bin/attestation-agent-nv — silently no-ops, and the
+        # rootfs ends up with only the no-NVIDIA AA. /aa/additional_evidence
+        # then returns empty regardless of which guest-components we baked.
+        # Pin a real attestation-sdk tag here so libnvat actually gets built.
+        if: needs.meta.outputs.kata_nvat_ver != ''
+        env:
+          NVAT_VER: ${{ needs.meta.outputs.kata_nvat_ver }}
+        run: |
+          set -eux
+          cd /tmp/kata
+          OLD_VER=$(yq '.externals.nvidia.nvat.version // ""' versions.yaml | tr -d '"')
+          yq -i \
+            ".externals.nvidia.nvat.version = \"${NVAT_VER}\" |
+             .externals.nvidia.nvat.url     = \"https://github.com/NVIDIA/attestation-sdk\" |
+             .externals.nvidia.nvat.desc    = \"NVIDIA Attestation SDK (libnvat); enables attestation-agent-nv\"" \
+            versions.yaml
+          if [[ -z "$OLD_VER" || "$OLD_VER" == "null" ]]; then
+            echo "NVAT SDK pin: (unset) -> ${NVAT_VER}"
+          else
+            echo "NVAT SDK pin: ${OLD_VER} -> ${NVAT_VER}"
+          fi
+          echo "----- updated versions.yaml (nvidia.nvat) -----"
+          yq '.externals.nvidia.nvat' versions.yaml
+
       - name: Build rootfs-image-nvidia-gpu-confidential
         env:
           NVIDIA_GPU_STACK: ${{ needs.meta.outputs.nvidia_gpu_stack }}
@@ -363,17 +422,19 @@ jobs:
           # a dangling symlink or an empty file.
           [[ "$IMG_BYTES" -gt 104857600 ]] || { echo "image suspiciously small: $IMG_BYTES bytes"; exit 1; }
 
-          # Resolve the *actual* baked-in driver pin from versions.yaml so
-          # the artifact reports what is really installed, not just what
-          # was requested. (When kata_nvidia_driver_ver is empty we want
-          # kata's default to be reflected here.)
+          # Resolve the *actual* baked-in driver / nvat pins from versions.yaml
+          # so the artifact reports what is really installed, not just what
+          # was requested. (When the kata_* inputs are empty we want kata's
+          # default to be reflected here.)
           DRIVER_VER=$(yq '.externals.nvidia.driver.version' /tmp/kata/versions.yaml | tr -d '"')
+          NVAT_VER=$(yq '.externals.nvidia.nvat.version // ""' /tmp/kata/versions.yaml | tr -d '"')
 
           jq -n \
             --arg kata_ref       "${{ needs.meta.outputs.kata_ref }}" \
             --arg gc_repo        "${{ needs.meta.outputs.gc_repo }}" \
             --arg gc_ref         "${{ needs.meta.outputs.gc_ref }}" \
             --arg driver_ver     "$DRIVER_VER" \
+            --arg nvat_ver       "$NVAT_VER" \
             --arg nvidia_stack   "${{ needs.meta.outputs.nvidia_gpu_stack }}" \
             --arg root_hash      "$ROOT_HASH" \
             --arg salt           "$SALT" \
@@ -388,6 +449,8 @@ jobs:
               kata_ref: $kata_ref,
               guest_components: {repo: $gc_repo, ref: $gc_ref},
               nvidia_driver: {version: $driver_ver},
+              nvat_sdk:      ( if $nvat_ver == "" or $nvat_ver == "null" then null
+                               else {version: $nvat_ver} end ),
               nvidia_gpu_stack: $nvidia_stack,
               dm_verity: {
                 root_hash:       $root_hash,
@@ -409,6 +472,7 @@ jobs:
           echo "root_hash=$ROOT_HASH" >> "$GITHUB_OUTPUT"
           echo "img_sha256=$IMG_SHA256" >> "$GITHUB_OUTPUT"
           echo "driver_ver=$DRIVER_VER" >> "$GITHUB_OUTPUT"
+          echo "nvat_ver=$NVAT_VER" >> "$GITHUB_OUTPUT"
 
       - name: Compress .image for transport
         run: |
@@ -434,10 +498,16 @@ jobs:
           ROOT_HASH:  ${{ steps.measure.outputs.root_hash }}
           IMG_SHA256: ${{ steps.measure.outputs.img_sha256 }}
           DRIVER_VER: ${{ steps.measure.outputs.driver_ver }}
+          NVAT_VER:   ${{ steps.measure.outputs.nvat_ver }}
         run: |
           set -eux
           OCI_REF="${OCI_IMAGE}:${OCI_TAG}"
           cd /tmp/uvm-out
+          # NVAT annotation is conditional: an empty string would push a
+          # value-less label which is misleading.
+          NVAT_ANNOTATION=()
+          [[ -n "$NVAT_VER" ]] && NVAT_ANNOTATION+=(--annotation "com.cohere.kata-uvm.nvat-sdk=${NVAT_VER}")
+
           oras push "$OCI_REF" \
             kata-containers-nvidia-gpu-confidential.img.zst:application/vnd.cohere.kata-uvm.image+zstd \
             root_hash.txt:application/vnd.cohere.kata-uvm.verity+plain \
@@ -452,6 +522,7 @@ jobs:
             --annotation "com.cohere.guest-components.repo=${{ needs.meta.outputs.gc_repo }}" \
             --annotation "com.cohere.guest-components.ref=${{ needs.meta.outputs.gc_ref }}" \
             --annotation "com.cohere.kata-uvm.nvidia-driver=${DRIVER_VER}" \
+            "${NVAT_ANNOTATION[@]}" \
             --annotation "com.cohere.kata-uvm.image-sha256=${IMG_SHA256}" \
             --annotation "com.cohere.kata-uvm.root-hash=${ROOT_HASH}" \
             --format json > oras-output.json
@@ -484,6 +555,7 @@ jobs:
             echo "| kata-containers ref | \`${{ needs.meta.outputs.kata_ref }}\` |"
             echo "| guest-components | \`${{ needs.meta.outputs.gc_repo }}@${{ needs.meta.outputs.gc_ref }}\` |"
             echo "| NVIDIA driver | \`${{ steps.measure.outputs.driver_ver }}\` |"
+            echo "| NVAT SDK | \`${{ steps.measure.outputs.nvat_ver || '(unset — attestation-agent-nv NOT built)' }}\` |"
             echo "| NVIDIA stack | \`${{ needs.meta.outputs.nvidia_gpu_stack }}\` |"
             echo "| root_hash | \`${{ steps.measure.outputs.root_hash }}\` |"
             echo "| image sha256 | \`${{ steps.measure.outputs.img_sha256 }}\` |"
