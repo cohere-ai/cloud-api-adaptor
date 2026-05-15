@@ -22,10 +22,20 @@ on:
         type: string
         default: "https://github.com/cohere-ai/guest-components.git"
       guest_components_ref:
-        description: "guest-components ref (default: cohere)"
+        description: |
+          guest-components ref (branch, tag, or SHA).
+
+          Default: alhassankhedr/sync-main-to-cohere (head of PR #9).
+          That branch carries upstream main's nvidia-attester rewrite
+          (NVAT SDK based, no `count == 1` guard) and is required for
+          multi-GPU evidence to work end-to-end on 8x B200 hosts. The
+          plain `cohere` branch still has the old NVML-based attester
+          which silently produces empty evidence on 2+ GPU systems
+          (mod a sed `s/count == 1/count >= 1/` patch the podvm-mkosi
+          Dockerfile applies). Switch back to `cohere` after PR #9 merges.
         required: false
         type: string
-        default: "cohere"
+        default: "alhassankhedr/sync-main-to-cohere"
       custom_gc_binaries:
         description: "guest-components binaries to build from source"
         required: false
@@ -188,7 +198,7 @@ jobs:
           PODVM_DISTRO: ${{ needs.meta.outputs.distro }}
           AA_FEATURES: ${{ inputs.aa_features || 'bin,ttrpc,kbs,coco_as,rust-crypto,tdx-attester,nvidia-attester' }}
           GC_REPO: ${{ inputs.guest_components_repo || 'https://github.com/cohere-ai/guest-components.git' }}
-          GC_REF: ${{ inputs.guest_components_ref || 'cohere' }}
+          GC_REF: ${{ inputs.guest_components_ref || 'alhassankhedr/sync-main-to-cohere' }}
           GC_CUSTOM_BINARIES: ${{ inputs.custom_gc_binaries || 'attestation-agent,api-server-rest' }}
         run: |
           MAKE_ARGS=(
