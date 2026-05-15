@@ -316,6 +316,33 @@ jobs:
           echo "----- updated versions.yaml (nvidia.nvat) -----"
           yq '.externals.nvidia.nvat' versions.yaml
 
+      - name: Force a clean kernel + rootfs rebuild when overriding the driver
+        # Mirrors KATA_NVIDIA_FORCE_REBUILD in
+        # fortress/scratch/oci-b200/k8s/04-build-uvm-locally.sh. Each kata
+        # kernel build generates a fresh random `certs/signing_key.pem`,
+        # and the NVIDIA modules in
+        # `kata-static-kernel-nvidia-gpu-modules.tar.zst` are signed
+        # against THAT key. If kata's make reuses any cached kernel-
+        # nvidia-gpu/ artifacts while we're trying to bump the driver
+        # version, we end up with userspace<->kernel ABI skew or, worse,
+        # NVIDIA `.ko` files signed against a different key than the
+        # one the kernel binary embeds (README "Bug F"). On a fresh CI
+        # runner this is a no-op, but if we ever start caching the
+        # kata checkout between runs (or someone re-runs a job with a
+        # different driver_ver) the wipe makes the build deterministic.
+        if: needs.meta.outputs.kata_nvidia_driver_ver != ''
+        run: |
+          set -eux
+          BUILD=/tmp/kata/tools/packaging/kata-deploy/local-build/build
+          rm -rf  "$BUILD/kernel-nvidia-gpu" \
+                  "$BUILD/kata-static-kernel-nvidia-gpu-modules.tar.zst" \
+                  "$BUILD/kata-static-kernel-nvidia-gpu.tar.zst" \
+                  "$BUILD/rootfs-image-nvidia-gpu-confidential" \
+                  "$BUILD/rootfs-nvidia-gpu-confidential-stage-one" \
+                  "$BUILD/kata-static-rootfs-image-nvidia-gpu-confidential.tar.zst" \
+                  2>/dev/null || true
+          echo "wiped kernel-nvidia-gpu/, modules tarball, and rootfs build dirs"
+
       - name: Build rootfs-image-nvidia-gpu-confidential
         env:
           NVIDIA_GPU_STACK: ${{ needs.meta.outputs.nvidia_gpu_stack }}
@@ -379,6 +406,78 @@ jobs:
           cat /tmp/uvm-out/root_hash.txt
           file /tmp/uvm-out/kata-containers-nvidia-gpu-confidential.img
 
+      - name: Stage paired kernel binary alongside the rootfs
+        # WHY: kata's kernel-nvidia-gpu build emits a fresh random
+        # `certs/signing_key.pem` per invocation and uses it to sign both
+        # the embedded NVIDIA modules and (transitively) the modules
+        # tarball that nvidia_rootfs.sh extracts into the rootfs. The
+        # rootfs we produced in the previous step therefore carries
+        # NVIDIA `.ko` files signed against THIS build's key. If the
+        # host running the resulting UVM uses a kernel from a different
+        # build (e.g. the kata-deploy-bundled one), the modules are
+        # rejected at first modprobe, NVRC panics, the guest powers
+        # down, and pods sit in Pending. Verified end-to-end on
+        # 2026-05-15 (README "Bug F"). The fix on the install side
+        # (fortress/scratch/oci-b200/k8s/05-install-uvm.sh) is to
+        # atomically install both the kernel and the rootfs from the
+        # same build. For that to work, the OCI artifact has to ship
+        # the kernel binary alongside the rootfs.
+        run: |
+          set -euxo pipefail
+          KBUILD_DESTDIR=/tmp/kata/tools/packaging/kata-deploy/local-build/build/kernel-nvidia-gpu/destdir/opt/kata/share/kata-containers
+          KVER_FILE=$(ls "${KBUILD_DESTDIR}"/vmlinuz-*-nvidia-gpu 2>/dev/null | head -n1 || true)
+          if [[ -z "$KVER_FILE" ]]; then
+            echo "FATAL: no locally-built kernel at ${KBUILD_DESTDIR}/vmlinuz-*-nvidia-gpu" >&2
+            exit 1
+          fi
+          KVER_BASENAME=$(basename "$KVER_FILE")
+          KVER_VERSION="${KVER_BASENAME#vmlinuz-}"
+          cp -p "$KVER_FILE" "/tmp/uvm-out/${KVER_BASENAME}"
+          for sib in "vmlinux-${KVER_VERSION}" "System.map-${KVER_VERSION}" "config-${KVER_VERSION}"; do
+            [[ -f "${KBUILD_DESTDIR}/${sib}" ]] && cp -p "${KBUILD_DESTDIR}/${sib}" /tmp/uvm-out/
+          done
+          # Single source of truth for which kernel pairs with this rootfs;
+          # 05-install-uvm.sh reads this on the install side.
+          echo "$KVER_BASENAME" > /tmp/uvm-out/kernel.basename
+          ls -lh /tmp/uvm-out/
+
+      - name: Verify NVIDIA modules signing key matches the kernel
+        # Defensive check that the SKID embedded in the kernel's
+        # `certs/signing_key.x509` appears (raw-bytes hex-encoded)
+        # somewhere in the trailing PKCS#7 signature of the NVIDIA
+        # modules tarball's nvidia.ko. Same gate fortress's
+        # 04-build-uvm-locally.sh applies. On a clean CI runner this
+        # should always pass; if it ever fails we catch it here, in
+        # CI, instead of via guest serial capture in production.
+        run: |
+          set -euxo pipefail
+          KBASENAME=$(cat /tmp/uvm-out/kernel.basename)
+          KVER_VERSION="${KBASENAME#vmlinuz-}"
+          SIGNING_X509=/tmp/kata/tools/packaging/kata-deploy/local-build/build/kernel-nvidia-gpu/builddir/kata-linux-${KVER_VERSION}/certs/signing_key.x509
+          MODULES_TARBALL=/tmp/kata/tools/packaging/kata-deploy/local-build/build/kata-static-kernel-nvidia-gpu-modules.tar.zst
+          if [[ ! -f "$SIGNING_X509" || ! -f "$MODULES_TARBALL" ]]; then
+            echo "WARN: skipping signing-key check (missing $SIGNING_X509 or $MODULES_TARBALL)"
+            exit 0
+          fi
+          KEY_SKID=$(openssl x509 -in "$SIGNING_X509" -noout -text \
+                       | awk '/X509v3 Subject Key Identifier/{getline; gsub(/[: ]/,""); print tolower($0); exit}')
+          if [[ -z "$KEY_SKID" ]]; then
+            echo "WARN: could not extract SKID from $SIGNING_X509"; exit 0
+          fi
+          TMP=$(mktemp -d)
+          tar --zstd -xf "$MODULES_TARBALL" -C "$TMP" --wildcards '*/kernel/drivers/video/nvidia.ko'
+          SAMPLE_KO=$(find "$TMP" -name nvidia.ko -print -quit)
+          if [[ -z "$SAMPLE_KO" ]]; then
+            echo "WARN: no nvidia.ko in $MODULES_TARBALL"; exit 0
+          fi
+          if xxd -p -c 999999 "$SAMPLE_KO" | grep -qi "$KEY_SKID"; then
+            echo "OK: nvidia.ko signed by this build's signing key (SKID=$KEY_SKID)"
+          else
+            echo "FATAL: nvidia.ko in modules tarball is NOT signed by the kernel's signing_key.x509 (SKID=$KEY_SKID)"
+            echo "       guest will reject NVIDIA modules at first modprobe; pod will sit in Pending"
+            exit 1
+          fi
+
       - name: Surface verity params as JSON metadata
         id: measure
         # The root_hash.txt file is the source of truth for kata's
@@ -422,6 +521,17 @@ jobs:
           # a dangling symlink or an empty file.
           [[ "$IMG_BYTES" -gt 104857600 ]] || { echo "image suspiciously small: $IMG_BYTES bytes"; exit 1; }
 
+          # Paired kernel binary surfaced by the "Stage paired kernel" step.
+          # The install side (fortress/scratch/oci-b200/k8s/05-install-uvm.sh)
+          # uses .kernel.{filename,sha256} from measurements.json to validate
+          # and atomically install the kernel alongside the rootfs.
+          KERNEL_BASENAME=""
+          KERNEL_SHA=""
+          if [[ -f /tmp/uvm-out/kernel.basename ]]; then
+            KERNEL_BASENAME=$(cat /tmp/uvm-out/kernel.basename)
+            KERNEL_SHA=$(sha256sum "/tmp/uvm-out/${KERNEL_BASENAME}" | awk '{print $1}')
+          fi
+
           # Resolve the *actual* baked-in driver / nvat pins from versions.yaml
           # so the artifact reports what is really installed, not just what
           # was requested. (When the kata_* inputs are empty we want kata's
@@ -443,6 +553,8 @@ jobs:
             --arg hash_block_sz  "$HASH_BLOCK_SIZE" \
             --arg img_sha256     "$IMG_SHA256" \
             --arg img_bytes      "$IMG_BYTES" \
+            --arg kernel_name    "$KERNEL_BASENAME" \
+            --arg kernel_sha     "$KERNEL_SHA" \
             --arg caa_commit     "$GITHUB_SHA" \
             --arg build_date     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             '{
@@ -464,6 +576,8 @@ jobs:
                 sha256:   $img_sha256,
                 bytes:    ($img_bytes | tonumber)
               },
+              kernel: ( if $kernel_name == "" then null
+                        else {filename: $kernel_name, sha256: $kernel_sha} end ),
               source: {caa_commit: $caa_commit, build_date: $build_date}
             }' > /tmp/uvm-out/measurements.json
 
@@ -473,6 +587,8 @@ jobs:
           echo "img_sha256=$IMG_SHA256" >> "$GITHUB_OUTPUT"
           echo "driver_ver=$DRIVER_VER" >> "$GITHUB_OUTPUT"
           echo "nvat_ver=$NVAT_VER" >> "$GITHUB_OUTPUT"
+          echo "kernel_basename=$KERNEL_BASENAME" >> "$GITHUB_OUTPUT"
+          echo "kernel_sha=$KERNEL_SHA" >> "$GITHUB_OUTPUT"
 
       - name: Compress .image for transport
         run: |
@@ -508,10 +624,30 @@ jobs:
           NVAT_ANNOTATION=()
           [[ -n "$NVAT_VER" ]] && NVAT_ANNOTATION+=(--annotation "com.cohere.kata-uvm.nvat-sdk=${NVAT_VER}")
 
+          # The paired kernel (and its sibling artifacts) MUST ride along
+          # with the rootfs in the same OCI artifact so 05-install-uvm.sh
+          # can install both atomically. See README "Bug F" for the full
+          # mechanism. We push the kernel uncompressed (~80 MiB raw); zstd
+          # would only shave ~20 MiB and complicates the install side.
+          KERNEL_FILES=()
+          if [[ -f kernel.basename ]]; then
+            KBASENAME=$(cat kernel.basename)
+            KVER_VERSION="${KBASENAME#vmlinuz-}"
+            for kf in "$KBASENAME" "kernel.basename" \
+                      "vmlinux-${KVER_VERSION}" \
+                      "System.map-${KVER_VERSION}" \
+                      "config-${KVER_VERSION}"; do
+              if [[ -f "$kf" ]]; then
+                KERNEL_FILES+=( "${kf}:application/vnd.cohere.kata-uvm.kernel+octet-stream" )
+              fi
+            done
+          fi
+
           oras push "$OCI_REF" \
             kata-containers-nvidia-gpu-confidential.img.zst:application/vnd.cohere.kata-uvm.image+zstd \
             root_hash.txt:application/vnd.cohere.kata-uvm.verity+plain \
             measurements.json:application/vnd.cohere.kata-uvm.measurements+json \
+            "${KERNEL_FILES[@]}" \
             --annotation "org.opencontainers.image.title=kata-uvm-nvidia-gpu-confidential" \
             --annotation "org.opencontainers.image.description=Kata Containers NVIDIA GPU confidential UVM image, built from source with cohere-ai/guest-components" \
             --annotation "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
@@ -525,6 +661,8 @@ jobs:
             "${NVAT_ANNOTATION[@]}" \
             --annotation "com.cohere.kata-uvm.image-sha256=${IMG_SHA256}" \
             --annotation "com.cohere.kata-uvm.root-hash=${ROOT_HASH}" \
+            --annotation "com.cohere.kata-uvm.kernel-basename=${{ steps.measure.outputs.kernel_basename }}" \
+            --annotation "com.cohere.kata-uvm.kernel-sha256=${{ steps.measure.outputs.kernel_sha }}" \
             --format json > oras-output.json
 
           cat oras-output.json
@@ -559,6 +697,8 @@ jobs:
             echo "| NVIDIA stack | \`${{ needs.meta.outputs.nvidia_gpu_stack }}\` |"
             echo "| root_hash | \`${{ steps.measure.outputs.root_hash }}\` |"
             echo "| image sha256 | \`${{ steps.measure.outputs.img_sha256 }}\` |"
+            echo "| kernel | \`${{ steps.measure.outputs.kernel_basename }}\` |"
+            echo "| kernel sha256 | \`${{ steps.measure.outputs.kernel_sha }}\` |"
             echo ""
             echo "Install on a B200 host with:"
             echo ""
