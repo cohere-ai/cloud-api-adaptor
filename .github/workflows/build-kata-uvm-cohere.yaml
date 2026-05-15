@@ -242,24 +242,34 @@ jobs:
 
       - name: Extract .image and root_hash from the tarball
         run: |
-          set -eux
+          set -euxo pipefail
           cd /tmp/kata/tools/packaging/kata-deploy/local-build/build
           TARBALL=kata-static-rootfs-image-nvidia-gpu-confidential.tar.zst
           [[ -f "$TARBALL" ]] || { echo "FATAL: $TARBALL missing"; exit 1; }
 
           mkdir -p /tmp/uvm-out
-          # Tarball layout:
+          # Tarball layout (the .img entry is a symlink to the
+          # versioned .image alongside it):
           #   ./opt/kata/share/kata-containers/kata-containers-nvidia-gpu-confidential.img
+          #     -> kata-ubuntu-noble-nvidia-gpu-confidential-<ver>.image
+          #   ./opt/kata/share/kata-containers/kata-ubuntu-noble-nvidia-gpu-confidential-<ver>.image
           #   ./opt/kata/share/kata-containers/root_hash_nvidia-gpu-confidential.txt
           tar --zstd -xvf "$TARBALL" -C /tmp/uvm-out
-          mv /tmp/uvm-out/opt/kata/share/kata-containers/kata-containers-nvidia-gpu-confidential.img \
-             /tmp/uvm-out/kata-containers-nvidia-gpu-confidential.img
+
+          # Resolve the symlink to the real image and copy it (not move),
+          # so the underlying file survives the `rm -rf opt/` below.
+          KATA_IMG_LINK=/tmp/uvm-out/opt/kata/share/kata-containers/kata-containers-nvidia-gpu-confidential.img
+          KATA_IMG_REAL=$(readlink -f "$KATA_IMG_LINK")
+          [[ -f "$KATA_IMG_REAL" ]] || { echo "FATAL: $KATA_IMG_LINK -> $KATA_IMG_REAL missing"; exit 1; }
+          cp --reflink=auto "$KATA_IMG_REAL" /tmp/uvm-out/kata-containers-nvidia-gpu-confidential.img
+
           mv /tmp/uvm-out/opt/kata/share/kata-containers/root_hash_nvidia-gpu-confidential.txt \
              /tmp/uvm-out/root_hash.txt
           rm -rf /tmp/uvm-out/opt
           ls -lh /tmp/uvm-out/
           echo "----- root_hash.txt -----"
           cat /tmp/uvm-out/root_hash.txt
+          file /tmp/uvm-out/kata-containers-nvidia-gpu-confidential.img
 
       - name: Surface verity params as JSON metadata
         id: measure
@@ -267,15 +277,42 @@ jobs:
         # `kernel_verity_params` (root_hash, salt, data_blocks, etc).
         # We re-emit those values as a flat JSON file so the host install
         # script can parse them without invoking veritysetup.
+        #
+        # NOTE: kata's osbuilder writes root_hash.txt as a single
+        # comma-separated line, e.g.
+        #   root_hash=<hex>,salt=<hex>,data_blocks=N,data_block_size=4096,hash_block_size=4096
+        # so we split on commas first, then on '=' to populate each var.
         run: |
-          set -eux
-          ROOT_HASH=$(awk -F'=' '/^root_hash=/ {print $2}' /tmp/uvm-out/root_hash.txt)
-          SALT=$(awk -F'=' '/^salt=/ {print $2}' /tmp/uvm-out/root_hash.txt)
-          DATA_BLOCKS=$(awk -F'=' '/^data_blocks=/ {print $2}' /tmp/uvm-out/root_hash.txt)
-          DATA_BLOCK_SIZE=$(awk -F'=' '/^data_block_size=/ {print $2}' /tmp/uvm-out/root_hash.txt)
-          HASH_BLOCK_SIZE=$(awk -F'=' '/^hash_block_size=/ {print $2}' /tmp/uvm-out/root_hash.txt)
+          set -euxo pipefail
+
+          ROOT_HASH=""; SALT=""; DATA_BLOCKS=""
+          DATA_BLOCK_SIZE=""; HASH_BLOCK_SIZE=""
+          while IFS='=' read -r k v; do
+            case "$k" in
+              root_hash)       ROOT_HASH=$v ;;
+              salt)            SALT=$v ;;
+              data_blocks)     DATA_BLOCKS=$v ;;
+              data_block_size) DATA_BLOCK_SIZE=$v ;;
+              hash_block_size) HASH_BLOCK_SIZE=$v ;;
+            esac
+          done < <(tr ',' '\n' < /tmp/uvm-out/root_hash.txt)
+
+          # Fail loudly on parse regressions instead of producing a junk
+          # measurements.json with empty fields.
+          : "${ROOT_HASH:?root_hash missing from root_hash.txt}"
+          : "${SALT:?salt missing from root_hash.txt}"
+          : "${DATA_BLOCKS:?data_blocks missing from root_hash.txt}"
+          : "${DATA_BLOCK_SIZE:?data_block_size missing from root_hash.txt}"
+          : "${HASH_BLOCK_SIZE:?hash_block_size missing from root_hash.txt}"
+          [[ "$ROOT_HASH" =~ ^[0-9a-f]{64}$ ]] || { echo "bad root_hash: $ROOT_HASH"; exit 1; }
+          [[ "$SALT"      =~ ^[0-9a-f]{64}$ ]] || { echo "bad salt: $SALT"; exit 1; }
+
           IMG_SHA256=$(sha256sum /tmp/uvm-out/kata-containers-nvidia-gpu-confidential.img | awk '{print $1}')
           IMG_BYTES=$(stat -c %s /tmp/uvm-out/kata-containers-nvidia-gpu-confidential.img)
+          [[ "$IMG_SHA256" =~ ^[0-9a-f]{64}$ ]] || { echo "bad image sha256: $IMG_SHA256"; exit 1; }
+          # GPU UVM is always hundreds of MB; anything tiny means we measured
+          # a dangling symlink or an empty file.
+          [[ "$IMG_BYTES" -gt 104857600 ]] || { echo "image suspiciously small: $IMG_BYTES bytes"; exit 1; }
 
           jq -n \
             --arg kata_ref       "${{ needs.meta.outputs.kata_ref }}" \
@@ -310,6 +347,7 @@ jobs:
               source: {caa_commit: $caa_commit, build_date: $build_date}
             }' > /tmp/uvm-out/measurements.json
 
+          jq -e . /tmp/uvm-out/measurements.json >/dev/null
           cat /tmp/uvm-out/measurements.json
           echo "root_hash=$ROOT_HASH" >> "$GITHUB_OUTPUT"
           echo "img_sha256=$IMG_SHA256" >> "$GITHUB_OUTPUT"
