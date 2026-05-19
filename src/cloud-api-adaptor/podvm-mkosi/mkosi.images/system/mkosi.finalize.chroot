@@ -2,11 +2,6 @@
 
 set -euxo pipefail
 
-# Set up /etc/resolv.conf symlink if not already present
-if [ ! -e /etc/resolv.conf ]; then
-    ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
-fi
-
 # Mask TPM PCR measurement units that should not run in this image
 systemctl mask systemd-pcrmachine.service
 systemctl mask systemd-pcrfs-root.service
