@@ -99,10 +99,6 @@ command: ["/bin/sh", "-c", "exec cloud-api-adaptor gcp"]
 nodeSelector: {}
 tolerations: []
 
-# ServiceAccount annotations (e.g. Workload Identity binding)
-serviceAccount:
-  annotations: {}
-
 # GCP Workload Identity Federation for CAA (hostNetwork-compatible).
 #
 # CAA runs with hostNetwork=true, which bypasses the GKE metadata proxy. Regular
