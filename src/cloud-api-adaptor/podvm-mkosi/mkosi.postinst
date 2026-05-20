@@ -42,3 +42,39 @@ if [ -f /usr/lib/systemd/boot/efi/linuxx64.efi.stub ]; then
     cp /usr/lib/systemd/boot/efi/linuxx64.efi.stub \
        "${BUILDROOT}/usr/lib/systemd/boot/efi/linuxx64.efi.stub"
 fi
+
+# ---------------------------------------------------------------------------
+# Bake fmctl-probe (NVIDIA Fabric Manager SDK client) into the SVM image.
+#
+# fmctl-probe is the small C++ utility used by the host-side
+# {activate,deactivate}-partition-by-bdfs.sh wrappers to drive
+# fmActivateFabricPartition / fmDeactivateFabricPartition / and the
+# fmGetSupportedFabricPartitions-based BDF->partition-id resolver.
+# Source is vendored at mkosi.skeleton/usr/src/fmctl-probe/fmctl-probe.cpp
+# (canonical copy lives in fortress: scratch/oci-b200/.../orchestration/scripts/
+# fmctl-probe.cpp -- keep them in sync).
+#
+# We compile inside ${BUILDROOT} via chroot so the binary links against the
+# rootfs's own libnvfm (from nvidia-fabricmanager-dev), guaranteeing ABI parity
+# with the libnvfm.so loaded at runtime. Building from the outer Oracular
+# builder would risk linking against a different libstdc++/libnvfm version.
+#
+# Removed from the image after compile: the source tree (~12 KiB) is build-time
+# only; we don't want a build artifact source dir in production qcow2s.
+# ---------------------------------------------------------------------------
+FMCTL_SRC="${BUILDROOT}/usr/src/fmctl-probe/fmctl-probe.cpp"
+FMCTL_HDR="${BUILDROOT}/usr/include/nv_fm_agent.h"
+if [ -f "${FMCTL_SRC}" ] && [ -f "${FMCTL_HDR}" ]; then
+    echo "[postinst] compiling fmctl-probe inside rootfs against libnvfm"
+    chroot "${BUILDROOT}" /usr/bin/g++ \
+        -std=c++17 -O2 -Wall -Wextra \
+        /usr/src/fmctl-probe/fmctl-probe.cpp \
+        -lnvfm \
+        -o /usr/local/bin/fmctl-probe
+    chroot "${BUILDROOT}" /usr/bin/test -x /usr/local/bin/fmctl-probe
+    rm -rf "${BUILDROOT}/usr/src/fmctl-probe"
+    echo "[postinst] fmctl-probe baked at /usr/local/bin/fmctl-probe"
+elif [ -f "${FMCTL_SRC}" ]; then
+    echo "[postinst] WARN: fmctl-probe source present but nv_fm_agent.h missing;" \
+         "is nvidia-fabricmanager-dev in Packages=? Skipping bake." >&2
+fi
