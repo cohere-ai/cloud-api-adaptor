@@ -2,6 +2,56 @@
 
 set -euxo pipefail
 
+# ---------------------------------------------------------------------------
+# Distro guard: this image MUST be Ubuntu noble.
+#
+# The Makefile default is `PODVM_DISTRO ?= fedora`, so a bare
+# `make image-debug` silently builds a Fedora qcow2. The Cohere B200 SVM
+# stack assumes Ubuntu noble end-to-end:
+#   - mkosi.presets/system/mkosi.conf.d/ubuntu.conf pins 13 NVIDIA packages
+#     (nvidia-driver-open=595.71.05-1ubuntu1, nvidia-fabricmanager*,
+#     libnvsdm, nvidia-imex, libnvidia-nscq, nvlsm, collectx-bringup, mft*,
+#     rdma-core, ibverbs-utils, libibumad3, datacenter-gpu-manager-4-cuda12,
+#     nvidia-modprobe, nvidia-container-toolkit) from the CUDA + DOCA-Host
+#     apt repos. NONE of these resolve in Fedora's package universe.
+#   - service-vm/scripts/svc-vm-bootstrap.sh runtime install workaround
+#     uses `apt-get download` + `dpkg -x` (no rpm equivalent here).
+#   - service-vm/scripts/verify-svc-vm.sh hard-fail gates use dpkg-query,
+#     ldconfig with /lib/x86_64-linux-gnu/, and apt-style version strings.
+#   - The fmctl-probe bake below links against
+#     /usr/lib/x86_64-linux-gnu/libnvfm.so from nvidia-fabricmanager-dev,
+#     which does not exist in Fedora's NVIDIA repos.
+#
+# A Fedora qcow2 produced by this pipeline would silently lack every B200
+# component and the SVM would only fail at FM startup time -- AFTER the
+# operator has copied a 5 GiB image into place and rebooted. Fail here
+# instead, before mkosi finalizes the disk image.
+# ---------------------------------------------------------------------------
+osr="${BUILDROOT}/etc/os-release"
+if [ -f "$osr" ]; then
+    distro_id=$(awk -F= '$1=="ID" {gsub(/"/,"",$2); print $2; exit}' "$osr")
+    if [ "$distro_id" != "ubuntu" ]; then
+        cat >&2 <<EOF
+[postinst] FAIL: rootfs is ID=${distro_id}, expected ID=ubuntu.
+[postinst]
+[postinst] The Makefile default is \`PODVM_DISTRO ?= fedora\`, so a bare
+[postinst] \`make image-debug\` silently builds a Fedora qcow2 that lacks
+[postinst] the entire B200 NVIDIA stack pinned in
+[postinst] mkosi.presets/system/mkosi.conf.d/ubuntu.conf. Re-invoke with:
+[postinst]
+[postinst]     PODVM_DISTRO=ubuntu make image-debug
+[postinst]
+[postinst] Or use one of the wrapper scripts that sets it for you:
+[postinst]   - /tmp/run-podvm-build.sh                  (host-side captured)
+[postinst]   - host/scripts/04-build-podvm-locally.sh   (fortress, reproducible)
+[postinst]   - host/scripts/run-podvm-build.host.sh     (fortress, verbatim capture)
+[postinst]
+[postinst] (Hit on $(date -u +%Y-%m-%dT%H:%M:%SZ).)
+EOF
+        exit 1
+    fi
+fi
+
 # move issue files away from /etc
 # to allow /run/issue and /run/issue.d to take precedence
 mv "${BUILDROOT}/etc/issue.d" "${BUILDROOT}/usr/lib/issue.d" || true
