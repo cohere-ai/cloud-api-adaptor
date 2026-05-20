@@ -26,15 +26,26 @@
 //
 // Usage
 // -----
-//     fmctl-probe list                    # dump partition catalogue (incl. isActive)
-//     fmctl-probe activate <id>           # activate partition <id>
-//     fmctl-probe deactivate <id>         # deactivate partition <id>
-//     fmctl-probe resolve <bdf,bdf,...>   # print partition id whose GPU BDF set
-//                                         # EXACTLY matches the input. Accepts
-//                                         # "c0:00.0", "0000:c0:00.0",
-//                                         # "00000000:C0:00.0" interchangeably.
-//                                         # Exits 0 with the id on stdout,
-//                                         # 2 on no match, 3 on ambiguous.
+//     fmctl-probe list                          # dump partition catalogue
+//     fmctl-probe activate <id>                 # activate partition <id>
+//     fmctl-probe deactivate <id>               # deactivate partition <id>
+//     fmctl-probe resolve <bdf,bdf,...>         # match by FM-reported pciBusId
+//     fmctl-probe resolve-by-physids <id,id,..> # match by FM-reported physicalId
+//
+// `resolve` works when FM has GPU BDF info populated (i.e. in single-host
+// non-FABRIC_MODE setups where FM and the GPUs share an OS instance and the
+// NVIDIA driver is loaded locally). In our qemu-shared-nvswitch SVM topology
+// FM runs in FABRIC_MODE=1 with NO GPUs in its OS (the GPUs live in tenant
+// VMs), so fmGetSupportedFabricPartitions().gpuInfo[].pciBusId is empty for
+// every entry and `resolve` ALWAYS returns "no match". Use
+// `resolve-by-physids` instead in that case: pass a comma-separated list of
+// physicalId integers (the host computes them from the GPU PCI BDFs sorted
+// by bus number, the canonical B200 HGX baseboard mapping) and we match
+// against fmGetSupportedFabricPartitions().gpuInfo[].physicalId, which IS
+// populated by FM regardless of who owns the GPUs.
+//
+// Both resolve flavors exit 0 with the id on stdout, 2 on no match,
+// 3 on ambiguous.
 //
 // Override target with FM_ADDR env var, e.g. FM_ADDR=127.0.0.1:6666.
 
@@ -91,7 +102,11 @@ static fmReturn_t connectFm(fmHandle_t* handle) {
     if (r != FM_ST_SUCCESS) {
         std::fprintf(stderr, "fmConnect(%s) failed: %s (%d)\n", addr, fmReturnStr(r), r);
     } else {
-        std::printf("[fmctl] connected to %s\n", addr);
+        // To stderr, not stdout: stdout is reserved for machine-readable
+        // output of subcommands (e.g. resolve-by-physids prints just the
+        // partition id on stdout, so any banner here would be parsed as
+        // part of the id by the calling shell `pid=$(fmctl-probe ...)`).
+        std::fprintf(stderr, "[fmctl] connected to %s\n", addr);
     }
     return r;
 }
@@ -252,20 +267,109 @@ static int doResolve(fmHandle_t h, const std::string& bdfsCsv) {
     return 0;
 }
 
+// Resolve a comma-separated physicalId list to the unique partition id whose
+// GPU physicalId set is exactly the input. Used in FABRIC_MODE=1 / shared
+// NVSwitch topologies where FM has no local GPUs and so pciBusId is empty
+// in fmGetSupportedFabricPartitions(); physicalId is still populated.
+//
+// Exit codes mirror doResolve():
+//   0  unique match; partition id printed on stdout
+//   1  fmGetSupportedFabricPartitions() failed (unrecoverable)
+//   2  no supported partition matches the requested physicalId set; or parse fail
+//   3  more than one partition matches (should not happen on Blackwell)
+static int doResolveByPhysIds(fmHandle_t h, const std::string& idsCsv) {
+    fmFabricPartitionList_t list{};
+    list.version = fmFabricPartitionList_version;
+    fmReturn_t r = fmGetSupportedFabricPartitions(h, &list);
+    if (r != FM_ST_SUCCESS) {
+        std::fprintf(stderr,
+            "fmGetSupportedFabricPartitions failed: %s (%d)\n",
+            fmReturnStr(r), r);
+        return 1;
+    }
+
+    // Parse the requested physicalId list into a sorted set.
+    std::set<unsigned> wanted;
+    {
+        std::stringstream ss(idsCsv);
+        std::string tok;
+        while (std::getline(ss, tok, ',')) {
+            tok.erase(std::remove_if(tok.begin(), tok.end(),
+                                     [](unsigned char c){ return std::isspace(c); }),
+                      tok.end());
+            if (tok.empty()) continue;
+            char* end = nullptr;
+            unsigned long v = std::strtoul(tok.c_str(), &end, 10);
+            if (!end || *end != '\0') {
+                std::fprintf(stderr,
+                    "resolve-by-physids: cannot parse physicalId '%s' "
+                    "(expected integer)\n",
+                    tok.c_str());
+                return 2;
+            }
+            wanted.insert(static_cast<unsigned>(v));
+        }
+    }
+    if (wanted.empty()) {
+        std::fprintf(stderr, "resolve-by-physids: empty id list\n");
+        return 2;
+    }
+
+    std::vector<unsigned> matches;
+    for (unsigned i = 0; i < list.numPartitions; ++i) {
+        const auto& p = list.partitionInfo[i];
+        if (p.numGpus != wanted.size()) continue;
+        std::set<unsigned> have;
+        for (unsigned g = 0; g < p.numGpus; ++g) {
+            have.insert(p.gpuInfo[g].physicalId);
+        }
+        if (have == wanted) {
+            matches.push_back(p.partitionId);
+        }
+    }
+
+    if (matches.empty()) {
+        std::fprintf(stderr,
+            "resolve-by-physids: no supported partition matches physicalId set {");
+        bool first = true;
+        for (unsigned id : wanted) {
+            std::fprintf(stderr, "%s%u", first ? "" : ",", id);
+            first = false;
+        }
+        std::fprintf(stderr,
+            "} -- check `fmctl-probe list` for the supported partition catalogue.\n");
+        return 2;
+    }
+    if (matches.size() > 1) {
+        std::fprintf(stderr,
+            "resolve-by-physids: AMBIGUOUS -- %zu partitions match physicalId set:",
+            matches.size());
+        for (unsigned id : matches) std::fprintf(stderr, " %u", id);
+        std::fprintf(stderr,
+            "\n(this is unexpected on a Blackwell baseboard; report to NVIDIA.)\n");
+        return 3;
+    }
+
+    std::printf("%u\n", matches[0]);
+    return 0;
+}
+
 static void usage(const char* argv0) {
     std::fprintf(stderr,
         "Usage: %s <command> [args]\n"
         "Commands:\n"
-        "  list                    enumerate supported partitions (incl. isActive flag)\n"
-        "  activate <id>           activate partition <id>\n"
-        "  deactivate <id>         deactivate partition <id>\n"
-        "  resolve <bdf,bdf,...>   print partition id whose GPU BDF set EXACTLY\n"
-        "                          matches the input.  Accepts \"c0:00.0\",\n"
-        "                          \"0000:c0:00.0\", \"00000000:C0:00.0\".\n"
-        "                          Exit 0 + id on stdout, 2 if no match,\n"
-        "                          3 if ambiguous.\n"
+        "  list                          enumerate supported partitions\n"
+        "  activate <id>                 activate partition <id>\n"
+        "  deactivate <id>               deactivate partition <id>\n"
+        "  resolve <bdf,bdf,...>         match by FM-reported pciBusId\n"
+        "                                  (works only when FM has local GPUs)\n"
+        "  resolve-by-physids <id,id,..> match by FM-reported physicalId\n"
+        "                                  (use in FABRIC_MODE=1 / shared NVSwitch\n"
+        "                                  -- pciBusId is empty in that mode)\n"
+        "Both resolve flavors: exit 0 + id on stdout, 2 if no match, 3 if ambiguous.\n"
         "Environment:\n"
-        "  FM_ADDR                 FM SDK address (default 127.0.0.1:6666)\n", argv0);
+        "  FM_ADDR                       FM SDK address (default 127.0.0.1:6666)\n",
+        argv0);
 }
 
 int main(int argc, char** argv) {
@@ -290,6 +394,8 @@ int main(int argc, char** argv) {
         rc = doDeactivate(h, static_cast<fmFabricPartitionId_t>(std::atoi(argv[2])));
     } else if (cmd == "resolve" && argc >= 3) {
         rc = doResolve(h, std::string(argv[2]));
+    } else if (cmd == "resolve-by-physids" && argc >= 3) {
+        rc = doResolveByPhysIds(h, std::string(argv[2]));
     } else {
         usage(argv[0]);
         rc = 2;
