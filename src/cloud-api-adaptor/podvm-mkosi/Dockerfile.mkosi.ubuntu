@@ -51,6 +51,25 @@ COPY mkosi.conf.ubuntu /image/mkosi.conf
 
 # Add NVIDIA APT repos to mkosi.skeleton/ so they are present in the image tree
 # *before* package installation. mkosi applies SkeletonTrees before apt-get runs.
+#
+# Three NVIDIA repos are wired in:
+#   1. CUDA repo (developer.download.nvidia.com/compute/cuda)
+#      Provides nvidia-driver-open, nvidia-fabricmanager, libnvidia-nscq,
+#      nvidia-imex, libnvsdm, nvlsm, collectx-bringup, mft, mft-oem,
+#      mft-autocomplete, etc. — the full R595 + nvlink5 stack EXCEPT for
+#      the `ucx` dependency that collectx-bringup pulls in.
+#   2. nvidia-container-toolkit repo (nvidia.github.io/libnvidia-container)
+#      Provides nvidia-container-toolkit and friends.
+#   3. NVIDIA DOCA-Host networking repo (linux.mellanox.com/public/repo/doca)
+#      Provides `ucx` (Unified Communication X) and the matching MOFED
+#      userspace stack. We need it ONLY for `ucx` (so collectx-bringup's
+#      Depends: ucx resolves) and as an alternate source for mft*/
+#      collectx-bringup. The repo is pinned at priority 100 so it acts as
+#      a fallback — packages already available from the cuda repo or from
+#      Ubuntu universe (e.g. rdma-core, ibverbs-utils, libibumad3) are
+#      NOT replaced by the MOFED variants, which would otherwise turn the
+#      image into a MOFED-userspace install. Only ucx (which exists ONLY
+#      in DOCA) and any explicitly-requested package fall through to it.
 RUN mkdir -p /image/mkosi.skeleton/etc/apt/sources.list.d \
              /image/mkosi.skeleton/etc/apt/preferences.d \
              /image/mkosi.skeleton/usr/share/keyrings \
@@ -58,10 +77,14 @@ RUN mkdir -p /image/mkosi.skeleton/etc/apt/sources.list.d \
        -o /image/mkosi.skeleton/usr/share/keyrings/cuda-archive-keyring.gpg \
     && curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
        | gpg --dearmor -o /image/mkosi.skeleton/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg \
+    && curl -fsSL https://www.mellanox.com/downloads/ofed/RPM-GPG-KEY-Mellanox \
+       | gpg --dearmor -o /image/mkosi.skeleton/usr/share/keyrings/nvidia-doca-keyring.gpg \
     && echo 'deb [signed-by=/usr/share/keyrings/cuda-archive-keyring.gpg] https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/ /' \
        > /image/mkosi.skeleton/etc/apt/sources.list.d/cuda-ubuntu2404-x86_64.list \
     && echo 'deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://nvidia.github.io/libnvidia-container/stable/deb/amd64 /' \
        > /image/mkosi.skeleton/etc/apt/sources.list.d/nvidia-container-toolkit.list \
+    && echo 'deb [signed-by=/usr/share/keyrings/nvidia-doca-keyring.gpg] https://linux.mellanox.com/public/repo/doca/latest/ubuntu24.04/x86_64/ ./' \
+       > /image/mkosi.skeleton/etc/apt/sources.list.d/nvidia-doca-ubuntu2404.list \
     && printf '%s\n' \
        'Package: nvidia-*' \
        'Pin: origin developer.download.nvidia.com' \
@@ -74,7 +97,24 @@ RUN mkdir -p /image/mkosi.skeleton/etc/apt/sources.list.d \
        'Package: cuda-*' \
        'Pin: origin developer.download.nvidia.com' \
        'Pin-Priority: 1001' \
-       > /image/mkosi.skeleton/etc/apt/preferences.d/nvidia-cuda-repo
+       > /image/mkosi.skeleton/etc/apt/preferences.d/nvidia-cuda-repo \
+    && printf '%s\n' \
+       '# Pin the NVIDIA DOCA-Host repo to priority 100. Apt rule for' \
+       '# "Pin-Priority: 100": install ONLY if explicitly requested or as' \
+       '# a dep, never auto-upgrade or replace a package available from' \
+       '# a higher-priority source. Outcome:' \
+       '#   - ucx (only in DOCA)        -> installs from DOCA  ✓ (resolves' \
+       '#                                  collectx-bringup Depends: ucx)' \
+       '#   - rdma-core, ibverbs-utils, libibumad3 (in universe @500 AND' \
+       '#     in DOCA @100)             -> installs from universe ✓' \
+       '#                                  (keeps inbox OFED, not MOFED)' \
+       '#   - collectx-bringup, mft*    -> install from cuda repo (origin' \
+       '#                                  developer.download.nvidia.com,' \
+       '#                                  default priority 500 > 100)' \
+       'Package: *' \
+       'Pin: origin linux.mellanox.com' \
+       'Pin-Priority: 100' \
+       > /image/mkosi.skeleton/etc/apt/preferences.d/nvidia-doca-repo
 
 RUN --security=insecure mkosi --profile=$PROFILE --image-version=$IMAGE_VERSION
 
