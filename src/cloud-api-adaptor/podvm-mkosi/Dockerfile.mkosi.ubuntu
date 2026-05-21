@@ -47,19 +47,24 @@ COPY mkosi.workspace /image/mkosi.workspace
 COPY resources /image/resources
 COPY mkosi.conf.ubuntu /image/mkosi.conf
 
-# Add NVIDIA APT repos to the active system-image skeleton so they are present
-# before mkosi resolves packages for the target image.
-RUN mkdir -p /image/mkosi.images/system/mkosi.skeleton/etc/apt/sources.list.d \
-             /image/mkosi.images/system/mkosi.skeleton/etc/apt/preferences.d \
-             /image/mkosi.images/system/mkosi.skeleton/usr/share/keyrings \
+# Add NVIDIA APT repos to mkosi's top-level sandbox so apt sees them while
+# resolving target image packages. Skeleton trees are copied into the image,
+# but mkosi runs apt from outside the image.
+RUN mkdir -p /image/mkosi.sandbox/etc/apt/sources.list.d \
+             /image/mkosi.sandbox/etc/apt/preferences.d \
+             /image/mkosi.sandbox/usr/share/keyrings \
+    && printf '\n%s\n%s\n' \
+       '[Build]' \
+       'SandboxTrees=mkosi.sandbox' \
+       >> /image/mkosi.conf \
     && curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-archive-keyring.gpg \
-       -o /image/mkosi.images/system/mkosi.skeleton/usr/share/keyrings/cuda-archive-keyring.gpg \
+       -o /image/mkosi.sandbox/usr/share/keyrings/cuda-archive-keyring.gpg \
     && curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
-       | gpg --dearmor -o /image/mkosi.images/system/mkosi.skeleton/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg \
+       | gpg --dearmor -o /image/mkosi.sandbox/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg \
     && echo 'deb [signed-by=/usr/share/keyrings/cuda-archive-keyring.gpg] https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/ /' \
-       > /image/mkosi.images/system/mkosi.skeleton/etc/apt/sources.list.d/cuda-ubuntu2404-x86_64.list \
+       > /image/mkosi.sandbox/etc/apt/sources.list.d/cuda-ubuntu2404-x86_64.list \
     && echo 'deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://nvidia.github.io/libnvidia-container/stable/deb/amd64 /' \
-       > /image/mkosi.images/system/mkosi.skeleton/etc/apt/sources.list.d/nvidia-container-toolkit.list \
+       > /image/mkosi.sandbox/etc/apt/sources.list.d/nvidia-container-toolkit.list \
     && printf '%s\n' \
        'Package: nvidia-*' \
        'Pin: origin developer.download.nvidia.com' \
@@ -72,7 +77,7 @@ RUN mkdir -p /image/mkosi.images/system/mkosi.skeleton/etc/apt/sources.list.d \
        'Package: cuda-*' \
        'Pin: origin developer.download.nvidia.com' \
        'Pin-Priority: 1001' \
-       > /image/mkosi.images/system/mkosi.skeleton/etc/apt/preferences.d/nvidia-cuda-repo
+       > /image/mkosi.sandbox/etc/apt/preferences.d/nvidia-cuda-repo
 
 RUN --security=insecure mkosi --profile=$PROFILE --image-version=$IMAGE_VERSION
 
