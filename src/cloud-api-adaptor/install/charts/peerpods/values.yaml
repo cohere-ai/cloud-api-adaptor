@@ -86,7 +86,7 @@ image:
   name: ghcr.io/cohere-ai/cloud-api-adaptor/cloud-api-adaptor
   tag: latest-cohere
 
-# Cloud provider: libvirt, aws, azure, gcp, ibmcloud, vsphere
+# Cloud provider: libvirt, aws, azure, byom, gcp, ibmcloud, vsphere
 provider: gcp
 
 # Override the DaemonSet container command. Set to bypass entrypoint.sh when

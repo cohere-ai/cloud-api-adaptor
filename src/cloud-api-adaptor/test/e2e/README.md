@@ -89,6 +89,13 @@ Other options are provided via environment variables if you need to further cust
 - `TEST_CAA_NAMESPACE` - This option is available, primarily for running the e2e tests on a downstream version
 of confidential containers, where the cloud-api-adaptor pod is deployed to a different namespace than the default
  `confidential-containers-system`.
+- `PEERPOD_CTRL_IMAGE` - Override the peerpod-ctrl container image used by the Helm sub-chart
+(e.g. `ghcr.io/confidential-containers/peerpod-ctrl:latest`). When set, the provisioner overrides
+the Helm values `resourceCtrl.image.repository` and `resourceCtrl.image.tag`. If unset, the sub-chart
+defaults are used.
+- `WEBHOOK_IMAGE` - Override the peer-pods-webhook container image used by the Helm sub-chart
+(e.g. `ghcr.io/confidential-containers/peer-pods-webhook:latest`). When set, the provisioner overrides
+the Helm values `webhook.image.repository` and `webhook.image.tag`. If unset, the sub-chart defaults are used.
 
 # Running end-to-end tests against pre-configured cluster
 
@@ -137,6 +144,7 @@ Use the properties on the table below for AWS:
 |pause_image|Kubernetes pause image||
 |peerpods_secret_name|Name of the Kubernetes secret for AWS credentials. When set, Helm will use reference mode (`secrets.mode=reference`) instead of direct injection. If empty, credentials are passed directly via Helm values||
 |podvm_aws_ami_id|AWS AMI ID of the podvm||
+|podvm_instance_type|AWS EC2 instance type for the podvm|t3.medium|
 |ssh_kp_name|AWS SSH key-pair name ||
 |use_public_ip|Set `true` to instantiate VMs with public IP. If `cluster_type=onprem` then this property is implictly applied||
 |tunnel_type|Tunnel type||

@@ -1,8 +1,8 @@
 # (C) Copyright Confidential Containers Contributors 2024.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Run docker e2e tests.
-name: (Callable) docker e2e tests
+# Run BYOM (Bring Your Own Machine) e2e tests.
+name: (Callable) BYOM e2e tests
 
 on:
   workflow_call:
@@ -11,18 +11,8 @@ on:
         required: true
         type: string
       caa_image:
-        description: The cloud-api-adaptor OCI image (including tag) to test
         type: string
-      git_ref:
-        default: 'main'
-        description: Git ref to checkout the cloud-api-adaptor repository. Defaults to main.
-        required: false
-        type: string
-      container_runtime:
-        default: 'containerd'
-        description: Name of the container runtime. Either containerd or crio.
-        required: false
-        type: string
+        required: true
       peerpod_ctrl_image:
         description: The peerpod-ctrl OCI image (including tag)
         required: false
@@ -33,13 +23,14 @@ on:
         required: false
         default: ''
         type: string
-    secrets:
-      QUAY_PASSWORD:
-        required: true
+      git_ref:
+        default: 'main'
+        description: Git ref to checkout the cloud-api-adaptor repository. Defaults to main.
+        required: false
+        type: string
 
 env:
-  CLOUD_PROVIDER: docker
-  CLUSTER_NAME: peer-pods
+  CLOUD_PROVIDER: byom
   DEBIAN_FRONTEND: noninteractive
 
 defaults:
@@ -49,11 +40,12 @@ defaults:
 permissions: {}
 
 jobs:
-  test-docker:
-    name: "Docker e2e tests: (${{ inputs.container_runtime }})"
-    runs-on: ubuntu-22.04
+  test-byom:
+    name: "BYOM e2e tests"
+    runs-on: ubuntu-24.04
     env:
       CAA_IMAGE: "${{ inputs.caa_image }}"
+      BYOM_PODVM_IMAGE: "${{ inputs.podvm_image }}"
       PEERPOD_CTRL_IMAGE: "${{ inputs.peerpod_ctrl_image }}"
       WEBHOOK_IMAGE: "${{ inputs.webhook_image }}"
     steps:
@@ -75,22 +67,6 @@ jobs:
         run: |
           sudo ./hack/ci-helper.sh clean-up-runner
 
-      - name: Login to quay Container Registry
-        if: ${{ startsWith(inputs.podvm_image, 'quay.io') }}
-        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
-        with:
-          registry: quay.io
-          username: ${{ vars.QUAY_USERNAME }}
-          password: ${{ secrets.QUAY_PASSWORD }}
-
-      - name: Login to the ghcr Container registry
-        if: ${{ startsWith(inputs.podvm_image, 'ghcr.io') }}
-        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Read properties from versions.yaml
         run: |
           sudo snap install yq
@@ -107,12 +83,6 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
 
-      - name: Install kustomize
-        run: |
-          command -v kustomize >/dev/null || \
-          curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | \
-            sudo bash -s /usr/local/bin
-
       - name: Install Helm
         run: |
           curl -fsSL -o helm.tar.gz "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz"
@@ -122,35 +92,42 @@ jobs:
           rm -rf helm.tar.gz linux-amd64
           helm version
 
-      - name: Config docker
+      - name: Generate SSH keys for BYOM
         run: |
-          cat <<- EOF > docker.properties
-          DOCKER_PODVM_IMAGE="${{ inputs.podvm_image }}"
-          DOCKER_HOST="unix:///var/run/docker.sock"
-          DOCKER_NETWORK_NAME="kind"
-          CONTAINER_RUNTIME="${{ inputs.container_runtime }}"
-          DOCKER_API_VERSION="1.44"
-          EOF
+          mkdir -p "${HOME}/.ssh"
+          ssh-keygen -t rsa -b 4096 -f "${HOME}/.ssh/id_rsa" -N "" -C "byom-e2e-test"
+          echo "SSH_SECRET_PRIV_KEY_PATH=${HOME}/.ssh/id_rsa" >> "$GITHUB_ENV"
+          echo "SSH_SECRET_PUB_KEY_PATH=${HOME}/.ssh/id_rsa.pub" >> "$GITHUB_ENV"
+
+      - name: Config BYOM
+        run: |
+          # Copy the default properties file
+          cp test/provisioner/byom/provision_byom.properties byom.properties
 
           # Split CAA_IMAGE into CAA_IMAGE_NAME and CAA_IMAGE_TAG
           CAA_IMAGE_TAG="${CAA_IMAGE##*:}"
           CAA_IMAGE_NAME="${CAA_IMAGE%:*}"
-          echo "CAA_IMAGE=\"${CAA_IMAGE_NAME}\"" >> docker.properties
-          echo "CAA_IMAGE_TAG=\"${CAA_IMAGE_TAG}\"" >> docker.properties
+
+          # Replace values that need to be changed
+          sed -i "s|^BYOM_PODVM_IMAGE=.*|BYOM_PODVM_IMAGE=\"${BYOM_PODVM_IMAGE}\"|" byom.properties
+          sed -i "s|^SSH_SECRET_PRIV_KEY_PATH=.*|SSH_SECRET_PRIV_KEY_PATH=\"${SSH_SECRET_PRIV_KEY_PATH}\"|" byom.properties
+          sed -i "s|^SSH_SECRET_PUB_KEY_PATH=.*|SSH_SECRET_PUB_KEY_PATH=\"${SSH_SECRET_PUB_KEY_PATH}\"|" byom.properties
+          sed -i "s|^CAA_IMAGE=.*|CAA_IMAGE=\"${CAA_IMAGE_NAME}\"|" byom.properties
+          sed -i "s|^CAA_IMAGE_TAG=.*|CAA_IMAGE_TAG=\"${CAA_IMAGE_TAG}\"|" byom.properties
 
           # For debugging
-          cat docker.properties
+          echo "::group::byom.properties"
+          cat byom.properties
+          echo "::endgroup::"
 
-      - name: run tests
+      - name: Run tests
         id: runTests
         run: |
-          export CLOUD_PROVIDER=docker
-          export CONTAINER_RUNTIME="${{ inputs.container_runtime }}"
+          export CLOUD_PROVIDER=byom
           export DEPLOY_KBS=false
           export TEST_PROVISION=yes
           export TEST_TEARDOWN=no
-          export TEST_PROVISION_FILE="$PWD/docker.properties"
-          export TEST_PODVM_IMAGE="${{ inputs.podvm_image }}"
+          export TEST_PROVISION_FILE="$PWD/byom.properties"
           export TEST_E2E_TIMEOUT="50m"
 
           make test-e2e
@@ -159,8 +136,9 @@ jobs:
         if: failure() && steps.runTests.outcome == 'failure'
         working-directory: ./
         run: |
-          export KUBECONFIG="${HOME}/kube_${CLUSTER_NAME}"
-          kind get kubeconfig -n "$CLUSTER_NAME" > "$KUBECONFIG"
+          export KUBECONFIG="${HOME}/kube_peer-pods"
+          kind get kubeconfig -n "peer-pods" > "$KUBECONFIG"
           ./hack/ci-e2e-debug-fail.sh
         # Avoid running with `set -e` as command fails should be allowed
         shell: bash {0}
+
