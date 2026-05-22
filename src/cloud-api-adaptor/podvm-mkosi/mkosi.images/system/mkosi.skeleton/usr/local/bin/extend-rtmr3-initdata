@@ -1,0 +1,30 @@
+#!/usr/bin/bash
+# Extend TDX RTMR3 with the initdata SHA-384 digest produced by
+# process-user-data. Must be invoked as ExecStartPost from
+# process-user-data.service so that /run/peerpod/initdata.digest exists.
+#
+# A previous /bin/sh+sed+printf pipeline silently mangled backslash escapes
+# (systemd unit parsing collapsed \\\\x to \\x, then dash's printf and
+# GNU sed's replacement together stripped the backslash entirely). The
+# bytes that reached the kernel were "xHHxHH..." ASCII text, not the
+# digest, so RTMR3 did not actually bind to initdata. This helper uses
+# bash arithmetic + parameter expansion + printf to convert hex to raw
+# bytes without going through sed.
+set -euo pipefail
+
+digest_file=/run/peerpod/initdata.digest
+rtmr=/sys/devices/virtual/misc/tdx_guest/measurements/rtmr3:sha384
+
+hex=$(tr -d '[:space:]' < "$digest_file")
+# Right-pad with zero hex chars to 96 (a TDX RTMR is 48 bytes / SHA-384).
+while [ "${#hex}" -lt 96 ]; do hex="${hex}0"; done
+hex="${hex:0:96}"
+
+escaped=""
+for ((i = 0; i < 96; i += 2)); do
+    escaped+="\\x${hex:i:2}"
+done
+
+# printf interprets the \xHH escapes; dd guarantees a single 48-byte
+# write(2), which the kernel TDX driver requires.
+printf -- "$escaped" | dd of="$rtmr" bs=48 count=1 status=none
