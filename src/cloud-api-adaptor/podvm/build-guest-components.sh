@@ -10,6 +10,7 @@
 #
 # Source must already be cloned at /build/gc.
 # Compiled binaries are placed in /output/.
+# Runtime libraries needed by custom binaries are placed in /output/lib/.
 
 set -euo pipefail
 
@@ -52,3 +53,13 @@ for bin in "${BINS[@]}"; do
   esac
   echo "Built: $bin"
 done
+
+if [[ "$AA_FEATURES" == *"nvidia-attester"* ]]; then
+  mkdir -p "$OUTDIR/lib"
+  find /usr/lib /usr/lib64 -maxdepth 3 -name 'libnvat.so*' \
+    -exec cp -a {} "$OUTDIR/lib/" \; 2>/dev/null || true
+  if ! compgen -G "$OUTDIR/lib/libnvat.so*" >/dev/null; then
+    echo "ERROR: nvidia-attester was built but libnvat.so was not found" >&2
+    exit 1
+  fi
+fi

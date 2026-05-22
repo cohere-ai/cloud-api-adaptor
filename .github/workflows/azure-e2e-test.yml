@@ -66,9 +66,9 @@ jobs:
       run: |
         az acr login --name "$ACR_URL"
         # This builds image in the following format:
-        # $ACR_URL/cloud-api-adaptor:dev-COMMIT
+        # $ACR_URL/cloud-api-adaptor:dev-COMMIT-<arch>
         make image "registry=${ACR_URL}"
-        echo "caa-image=${ACR_URL}/cloud-api-adaptor:dev-${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+        echo "caa-image=${ACR_URL}/cloud-api-adaptor:dev-${GITHUB_SHA}-amd64" >> "$GITHUB_OUTPUT"
 
   install-aks:
     runs-on: ubuntu-24.04
@@ -140,7 +140,7 @@ jobs:
         ! grep -E '=x$|=""$' "$TEST_PROVISION_FILE"
 
     - name: Save the configuration created here
-      uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
         path: ${{ env.TEST_PROVISION_FILE }}
         name: e2e-configuration-${{ matrix.parameters.id }}
@@ -198,7 +198,7 @@ jobs:
           echo "HELM_CHECKSUM=$(yq -e '.tools.helm.sha256' versions.yaml)"
         } >> "$GITHUB_ENV"
 
-    - uses: oras-project/setup-oras@22ce207df3b08e061f537244349aac6ae1d214f6 # v1.2.4
+    - uses: oras-project/setup-oras@38de303aac69abb66f3e6255b7198bff35f323e3 # v2.0.0
       with:
         version: ${{ env.ORAS_VERSION }}
 

@@ -2,7 +2,7 @@
 # ubuntu:24.10 (Oracular) — provides systemd 256 EFI stub with TDX RTMR support
 FROM ubuntu@sha256:cdf755952ed117f6126ff4e65810bf93767d4c38f5c7185b50ec1f1078b464cc AS builder
 
-ARG MKOSI_VERSION="v22"
+ARG MKOSI_VERSION="v26"
 ARG PROFILE="debug"
 ARG IMAGE_VERSION="0.0.0"
 
@@ -28,6 +28,7 @@ RUN apt-get update && \
 	dosfstools \
 	mtools \
 	python3 \
+	debian-archive-keyring \
 	zstd
 
 RUN mkdir -p /build
@@ -38,43 +39,22 @@ RUN mkosi --version
 
 RUN mkdir /image
 WORKDIR /image
-COPY mkosi.postinst /image/mkosi.postinst
-COPY mkosi.presets /image/mkosi.presets
-COPY mkosi.profiles /image/mkosi.profiles
-COPY mkosi.skeleton /image/mkosi.skeleton
+COPY mkosi.images /image/mkosi.images
 COPY mkosi.skeleton-debug /image/mkosi.skeleton-debug
 COPY mkosi.skeleton-debug-ubuntu /image/mkosi.skeleton-debug-ubuntu
 COPY mkosi.skeleton-sftp /image/mkosi.skeleton-sftp
+COPY mkosi.sandbox /image/mkosi.sandbox
 COPY mkosi.workspace /image/mkosi.workspace
 COPY resources /image/resources
 COPY mkosi.conf.ubuntu /image/mkosi.conf
 
-# Add NVIDIA APT repos to mkosi.skeleton/ so they are present in the image tree
-# *before* package installation. mkosi applies SkeletonTrees before apt-get runs.
-RUN mkdir -p /image/mkosi.skeleton/etc/apt/sources.list.d \
-             /image/mkosi.skeleton/etc/apt/preferences.d \
-             /image/mkosi.skeleton/usr/share/keyrings \
+# Add NVIDIA APT keyrings to mkosi's sandbox. The corresponding source and
+# preference files are checked in under mkosi.sandbox.
+RUN mkdir -p /image/mkosi.sandbox/usr/share/keyrings \
     && curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-archive-keyring.gpg \
-       -o /image/mkosi.skeleton/usr/share/keyrings/cuda-archive-keyring.gpg \
+       -o /image/mkosi.sandbox/usr/share/keyrings/cuda-archive-keyring.gpg \
     && curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
-       | gpg --dearmor -o /image/mkosi.skeleton/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg \
-    && echo 'deb [signed-by=/usr/share/keyrings/cuda-archive-keyring.gpg] https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/ /' \
-       > /image/mkosi.skeleton/etc/apt/sources.list.d/cuda-ubuntu2404-x86_64.list \
-    && echo 'deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://nvidia.github.io/libnvidia-container/stable/deb/amd64 /' \
-       > /image/mkosi.skeleton/etc/apt/sources.list.d/nvidia-container-toolkit.list \
-    && printf '%s\n' \
-       'Package: nvidia-*' \
-       'Pin: origin developer.download.nvidia.com' \
-       'Pin-Priority: 1001' \
-       '' \
-       'Package: libnvidia-*' \
-       'Pin: origin developer.download.nvidia.com' \
-       'Pin-Priority: 1001' \
-       '' \
-       'Package: cuda-*' \
-       'Pin: origin developer.download.nvidia.com' \
-       'Pin-Priority: 1001' \
-       > /image/mkosi.skeleton/etc/apt/preferences.d/nvidia-cuda-repo
+       | gpg --dearmor -o /image/mkosi.sandbox/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
 
 RUN --security=insecure mkosi --profile=$PROFILE --image-version=$IMAGE_VERSION
 

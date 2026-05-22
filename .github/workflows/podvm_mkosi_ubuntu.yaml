@@ -62,7 +62,7 @@ on:
         value: ${{ jobs.build-image.outputs.docker_oci_image }}
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-mkosi-ubuntu-${{ inputs.arch }}
   cancel-in-progress: true
 
 defaults:
@@ -140,7 +140,7 @@ jobs:
           echo "MKOSI_VERSION=$(yq -e '.tools.mkosi' versions.yaml)" >> "$GITHUB_ENV"
           echo "ORAS_VERSION=$(yq -e '.tools.oras' versions.yaml)" >> "$GITHUB_ENV"
 
-      - uses: oras-project/setup-oras@22ce207df3b08e061f537244349aac6ae1d214f6 # v1.2.4
+      - uses: oras-project/setup-oras@38de303aac69abb66f3e6255b7198bff35f323e3 # v2.0.0
         with:
           version: ${{ env.ORAS_VERSION }}
 
@@ -154,14 +154,14 @@ jobs:
           VERIFY_PROVENANCE: yes
 
       - name: Build mkosi debug image
-        if: ${{ inputs.debug == 'true' }}
+        if: ${{ inputs.debug == true }}
         working-directory: src/cloud-api-adaptor/podvm-mkosi
         run: make image-debug
         env:
           PODVM_DISTRO: ubuntu
 
       - name: Build mkosi image
-        if: ${{ inputs.debug != 'true' }}
+        if: ${{ inputs.debug == false }}
         working-directory: src/cloud-api-adaptor/podvm-mkosi
         run: make image
         env:
@@ -195,7 +195,7 @@ jobs:
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
         env:
           ARCH: ${{ inputs.arch }}
-          DEBUG: ${{ inputs.debug }}
+          DEBUG: ${{ inputs.debug == true && 'true' || 'false' }}
           IMAGE_TAG: ${{ inputs.image_tag }}
           REGISTRY: ${{ inputs.registry }}
 
