@@ -187,20 +187,42 @@ $(PAUSE_SRC): $(SKOPEO_BIN)
 $(PAUSE): | $(PAUSE_SRC) $(UMOCI_SRC)/umoci
 	$(UMOCI_SRC)/umoci unpack --rootless --image "$(PAUSE_SRC):$(PAUSE_VERSION)" "${FILES_DIR}/$(PAUSE_BUNDLE)"
 
+# Cohere fork: skip OCI prebuilt pull for components listed in
+# CUSTOM_GC_BINARIES; they are built from source by the gc_builder Docker
+# stage and copied over later. We emit a placeholder so the make target is
+# satisfied and the later COPY in Dockerfile.podvm_binaries.* overwrites it.
+GC_COMMA := ,
+GC_CUSTOM_LIST := $(subst $(GC_COMMA), ,$(CUSTOM_GC_BINARIES))
+
 $(ATTESTATION_AGENT): $(FORCE_TARGET)
+ifneq ($(filter attestation-agent,$(GC_CUSTOM_LIST)),)
+	@echo "[skip pull] attestation-agent (built from source via CUSTOM_GC_BINARIES)"
+	@install -D /dev/null "$@"
+else
 	$(call pull_gc_artifact,attestation-agent,$(TEE_PLATFORM)_$(ARCH))
 	tar xvJpf attestation-agent.tar.xz
 	install -D --compare attestation-agent "$@"
+endif
 
 $(CONFIDENTIAL_DATA_HUB): $(FORCE_TARGET)
+ifneq ($(filter confidential-data-hub,$(GC_CUSTOM_LIST)),)
+	@echo "[skip pull] confidential-data-hub (built from source via CUSTOM_GC_BINARIES)"
+	@install -D /dev/null "$@"
+else
 	$(call pull_gc_artifact,confidential-data-hub,$(ARCH))
 	tar xvJpf confidential-data-hub.tar.xz
 	install -D --compare confidential-data-hub "$@"
+endif
 
 $(API_SERVER_REST): $(FORCE_TARGET)
+ifneq ($(filter api-server-rest,$(GC_CUSTOM_LIST)),)
+	@echo "[skip pull] api-server-rest (built from source via CUSTOM_GC_BINARIES)"
+	@install -D /dev/null "$@"
+else
 	$(call pull_gc_artifact,api-server-rest,$(ARCH))
 	tar xvJpf api-server-rest.tar.xz
 	install -D --compare api-server-rest "$@"
+endif
 
 clean_sources:
 	[ -d "$(ROOT_DIR)" ] && cd "$(ROOT_DIR)" && git clean -xfd -e podvm

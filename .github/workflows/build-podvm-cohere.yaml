@@ -17,20 +17,20 @@ on:
         required: false
         type: string
       guest_components_repo:
-        description: "guest-components repo (default: cohere-ai/guest-components)"
+        description: "Override guest-components git repo (default: from versions.yaml / Makefile)"
         required: false
         type: string
-        default: "https://github.com/cohere-ai/guest-components.git"
+        default: ""
       guest_components_ref:
-        description: "guest-components ref (default: cohere)"
+        description: "Override guest-components commit SHA (default: from versions.yaml). Must be a 40-char SHA."
         required: false
         type: string
-        default: "cohere"
+        default: ""
       custom_gc_binaries:
-        description: "guest-components binaries to build from source"
+        description: "guest-components binaries to build from source (overrides upstream OCI prebuilts)"
         required: false
         type: string
-        default: "attestation-agent,api-server-rest"
+        default: "attestation-agent,api-server-rest,confidential-data-hub"
       aa_features:
         description: "attestation-agent cargo features"
         required: false
@@ -175,10 +175,23 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PODVM_DISTRO: ${{ needs.meta.outputs.distro }}
           AA_FEATURES: ${{ inputs.aa_features || 'bin,ttrpc,kbs,coco_as,rust-crypto,tdx-attester,nvidia-attester' }}
-          GC_REPO: ${{ inputs.guest_components_repo || 'https://github.com/cohere-ai/guest-components.git' }}
-          GC_REF: ${{ inputs.guest_components_ref || 'cohere' }}
-          GC_CUSTOM_BINARIES: ${{ inputs.custom_gc_binaries || 'attestation-agent,api-server-rest' }}
+          GC_REPO_OVERRIDE: ${{ inputs.guest_components_repo }}
+          GC_REF_OVERRIDE: ${{ inputs.guest_components_ref }}
+          GC_CUSTOM_BINARIES: ${{ inputs.custom_gc_binaries || 'attestation-agent,api-server-rest,confidential-data-hub' }}
         run: |
+          # Source repo/SHA for the Cohere fork (built from source and copied
+          # over the upstream OCI prebuilts pulled by the inner `make binaries`,
+          # except for components listed in CUSTOM_GC_BINARIES which skip the
+          # pull entirely — see podvm/Makefile.inc).
+          VERSIONS_YAML_PATH="$GITHUB_WORKSPACE/$VERSIONS_YAML"
+          GC_REPO="${GC_REPO_OVERRIDE:-$(yq -r '.git.guest-components-cohere.url' "$VERSIONS_YAML_PATH")}"
+          GC_REF="${GC_REF_OVERRIDE:-$(yq -r '.git.guest-components-cohere.reference' "$VERSIONS_YAML_PATH")}"
+          if ! echo "$GC_REF" | grep -qE '^[0-9a-f]{40}$'; then
+            echo "ERROR: git.guest-components-cohere.reference must be a 40-char lowercase git SHA, got: $GC_REF" >&2
+            exit 1
+          fi
+          echo "Cohere guest-components source: $GC_REPO @ $GC_REF"
+
           MAKE_ARGS=(
             "VERIFY_PROVENANCE=yes"
             "TEE_PLATFORM=$TEE_PLATFORM"
