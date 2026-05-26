@@ -68,6 +68,7 @@ type Vpc struct {
 	Client            *ec2.Client
 	ID                string
 	InternetGatewayID string
+	PodvmInstanceType string
 	Region            string
 	RouteTableID      string
 	SecurityGroupID   string
@@ -323,7 +324,7 @@ func (a *AWSProvisioner) GetProperties(ctx context.Context, cfg *envconf.Config)
 		"pause_image":          a.PauseImage,
 		"podvm_launchtemplate": "",
 		"podvm_ami":            a.Image.ID,
-		"podvm_instance_type":  "t2.medium",
+		"podvm_instance_type":  a.Vpc.PodvmInstanceType,
 		"sg_ids":               a.Vpc.SecurityGroupID, // TODO: what other SG needed?
 		"subnet_id":            a.Vpc.SubnetID,
 		"ssh_kp_name":          a.SSHKpName,
@@ -400,11 +401,17 @@ func NewVpc(client *ec2.Client, properties map[string]string) *Vpc {
 		cidrBlock = "10.0.0.0/24"
 	}
 
+	podvmInstanceType := properties["podvm_instance_type"]
+	if podvmInstanceType == "" {
+		podvmInstanceType = "t3.medium"
+	}
+
 	return &Vpc{
 		BaseName:          properties["resources_basename"],
 		CidrBlock:         cidrBlock,
 		Client:            client,
 		ID:                properties["aws_vpc_id"],
+		PodvmInstanceType: podvmInstanceType,
 		Region:            properties["aws_region"],
 		SecurityGroupID:   properties["aws_vpc_sg_id"],
 		SubnetID:          properties["aws_vpc_subnet_id"],
@@ -427,10 +434,43 @@ func (v *Vpc) createVpc() error {
 	return nil
 }
 
-// createSubnet creates the VPC subnet
+// getPodvmInstanceTypeAZs returns the availability zones where the podvm instance type is offered.
+func (v *Vpc) getPodvmInstanceTypeAZs() ([]string, error) {
+	result, err := v.Client.DescribeInstanceTypeOfferings(context.TODO(),
+		&ec2.DescribeInstanceTypeOfferingsInput{
+			LocationType: ec2types.LocationTypeAvailabilityZone,
+			Filters: []ec2types.Filter{
+				{
+					Name:   aws.String("instance-type"),
+					Values: []string{v.PodvmInstanceType},
+				},
+			},
+		})
+	if err != nil {
+		return nil, err
+	}
+
+	azs := make([]string, 0, len(result.InstanceTypeOfferings))
+	for _, offering := range result.InstanceTypeOfferings {
+		azs = append(azs, *offering.Location)
+	}
+	if len(azs) == 0 {
+		return nil, fmt.Errorf("instance type %s is not available in any AZ in region %s", v.PodvmInstanceType, v.Region)
+	}
+
+	return azs, nil
+}
+
+// createSubnet creates the VPC subnet in an AZ that supports the podvm instance type.
 func (v *Vpc) createSubnet() error {
+	azs, err := v.getPodvmInstanceTypeAZs()
+	if err != nil {
+		return fmt.Errorf("finding AZs for instance type %s: %w", v.PodvmInstanceType, err)
+	}
+
 	subnet, err := v.Client.CreateSubnet(context.TODO(),
 		&ec2.CreateSubnetInput{
+			AvailabilityZone:  aws.String(azs[0]),
 			VpcId:             aws.String(v.ID),
 			CidrBlock:         aws.String("10.0.0.0/25"),
 			TagSpecifications: defaultTagSpecifications(v.BaseName+"-subnet", ec2types.ResourceTypeSubnet),
@@ -473,9 +513,21 @@ func (v *Vpc) createSecondarySubnet() error {
 	}
 
 	primarySubnetAz := *subnets.Subnets[0].AvailabilityZone
-	secondarySubnetAz := v.Region + "a"
-	if secondarySubnetAz == primarySubnetAz {
-		secondarySubnetAz = v.Region + "b"
+
+	azs, err := v.getPodvmInstanceTypeAZs()
+	if err != nil {
+		return fmt.Errorf("finding AZs for instance type %s: %w", v.PodvmInstanceType, err)
+	}
+
+	secondarySubnetAz := ""
+	for _, az := range azs {
+		if az != primarySubnetAz {
+			secondarySubnetAz = az
+			break
+		}
+	}
+	if secondarySubnetAz == "" {
+		return fmt.Errorf("no secondary AZ available for instance type %s (primary AZ: %s)", v.PodvmInstanceType, primarySubnetAz)
 	}
 
 	subnet, err := v.Client.CreateSubnet(context.TODO(),
@@ -1017,9 +1069,11 @@ func (i *AMIImage) registerImage(imageName string) error {
 				SnapshotId:          aws.String(i.EBSSnapshotID),
 			},
 		}},
+		BootMode:           ec2types.BootModeValuesUefi,
 		Description:        aws.String(i.Description),
 		EnaSupport:         aws.Bool(true),
 		RootDeviceName:     aws.String(i.RootDeviceName),
+		TpmSupport:         ec2types.TpmSupportValuesV20,
 		VirtualizationType: aws.String("hvm"),
 		TagSpecifications:  defaultTagSpecifications(i.BaseName+"-img", ec2types.ResourceTypeImage),
 	})
@@ -1131,6 +1185,8 @@ func NewAwsInstallChart(installDir, provider string) (pv.InstallChart, error) {
 		Helm: helm,
 	}, nil
 }
+
+func (a *AwsInstallChart) GetHelm() *pv.Helm { return a.Helm }
 
 func (a *AwsInstallChart) Install(ctx context.Context, cfg *envconf.Config) error {
 	return a.Helm.Install(ctx, cfg)
