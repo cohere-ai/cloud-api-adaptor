@@ -31,7 +31,7 @@ DEFAULT_AGENT_POLICY_FILE ?= allow-all.rego
 
 # Run github artifact provenance verifications
 VERIFY_PROVENANCE ?= no
-GUEST_COMPONENTS_REPO := confidential-containers/guest-components
+GUEST_COMPONENTS_REPO := cohere-ai/guest-components
 KATA_REPO := kata-containers/kata-containers
 
 # Verify that GUEST_COMPONENTS_REF is a sha-1 commit digest
@@ -187,42 +187,30 @@ $(PAUSE_SRC): $(SKOPEO_BIN)
 $(PAUSE): | $(PAUSE_SRC) $(UMOCI_SRC)/umoci
 	$(UMOCI_SRC)/umoci unpack --rootless --image "$(PAUSE_SRC):$(PAUSE_VERSION)" "${FILES_DIR}/$(PAUSE_BUNDLE)"
 
-# Cohere fork: skip OCI prebuilt pull for components listed in
-# CUSTOM_GC_BINARIES; they are built from source by the gc_builder Docker
-# stage and copied over later. We emit a placeholder so the make target is
-# satisfied and the later COPY in Dockerfile.podvm_binaries.* overwrites it.
-GC_COMMA := ,
-GC_CUSTOM_LIST := $(subst $(GC_COMMA), ,$(CUSTOM_GC_BINARIES))
-
 $(ATTESTATION_AGENT): $(FORCE_TARGET)
-ifneq ($(filter attestation-agent,$(GC_CUSTOM_LIST)),)
-	@echo "[skip pull] attestation-agent (built from source via CUSTOM_GC_BINARIES)"
-	@install -D /dev/null "$@"
-else
 	$(call pull_gc_artifact,attestation-agent,$(TEE_PLATFORM)_$(ARCH))
 	tar xvJpf attestation-agent.tar.xz
+	# Cohere fork's tdx-nvidia AA tarball bundles libnvat.so* (NVIDIA
+	# attestation-sdk-cpp) under lib/. Install it into the podvm rootfs so
+	# the dynamically linked AA can resolve it at runtime. Other AA
+	# variants ship a binary-only tarball, in which case lib/ is absent
+	# and this block is a no-op.
 	install -D --compare attestation-agent "$@"
-endif
+	@set -- lib/libnvat.so* 2>/dev/null; \
+	if [ -d lib ] && [ -e "$$1" ]; then \
+	  install -d "$(FILES_DIR)/usr/lib"; \
+	  cp -a lib/libnvat.so* "$(FILES_DIR)/usr/lib/"; \
+	fi
 
 $(CONFIDENTIAL_DATA_HUB): $(FORCE_TARGET)
-ifneq ($(filter confidential-data-hub,$(GC_CUSTOM_LIST)),)
-	@echo "[skip pull] confidential-data-hub (built from source via CUSTOM_GC_BINARIES)"
-	@install -D /dev/null "$@"
-else
 	$(call pull_gc_artifact,confidential-data-hub,$(ARCH))
 	tar xvJpf confidential-data-hub.tar.xz
 	install -D --compare confidential-data-hub "$@"
-endif
 
 $(API_SERVER_REST): $(FORCE_TARGET)
-ifneq ($(filter api-server-rest,$(GC_CUSTOM_LIST)),)
-	@echo "[skip pull] api-server-rest (built from source via CUSTOM_GC_BINARIES)"
-	@install -D /dev/null "$@"
-else
 	$(call pull_gc_artifact,api-server-rest,$(ARCH))
 	tar xvJpf api-server-rest.tar.xz
 	install -D --compare api-server-rest "$@"
-endif
 
 clean_sources:
 	[ -d "$(ROOT_DIR)" ] && cd "$(ROOT_DIR)" && git clean -xfd -e podvm

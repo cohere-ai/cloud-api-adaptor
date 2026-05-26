@@ -129,8 +129,8 @@ if [ "$workflow_trigger" != "push" ] && [ "$workflow_trigger" != "workflow_dispa
 	verification_failed="1"
 fi
 
-if [ "$workflow_ref" != "refs/heads/main" ]; then
-	echo "Workflow ref mismatch: expected refs/heads/main, got $workflow_ref"
+if [ "$workflow_ref" != "refs/heads/main" ] && [ "$workflow_ref" != "refs/heads/cohere" ]; then
+	echo "Workflow ref mismatch: expected refs/heads/main or refs/heads/cohere, got $workflow_ref"
 	verification_failed="1"
 fi
 

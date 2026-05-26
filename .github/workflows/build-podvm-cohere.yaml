@@ -16,26 +16,6 @@ on:
         description: "SSH public key for debug images (optional)"
         required: false
         type: string
-      guest_components_repo:
-        description: "Override guest-components git repo (default: from versions.yaml / Makefile)"
-        required: false
-        type: string
-        default: ""
-      guest_components_ref:
-        description: "Override guest-components commit SHA (default: from versions.yaml). Must be a 40-char SHA."
-        required: false
-        type: string
-        default: ""
-      custom_gc_binaries:
-        description: "guest-components binaries to build from source (overrides upstream OCI prebuilts)"
-        required: false
-        type: string
-        default: "attestation-agent,api-server-rest,confidential-data-hub"
-      aa_features:
-        description: "attestation-agent cargo features"
-        required: false
-        type: string
-        default: "bin,ttrpc,kbs,coco_as,rust-crypto,tdx-attester,nvidia-attester"
       deploy_gcp:
         description: "Deploy to GCP after build"
         required: false
@@ -54,7 +34,10 @@ permissions:
   packages: write      # push OCI artifact to GHCR
 
 env:
-  TEE_PLATFORM: tdx
+  # tdx-nvidia selects the AA OCI tag suffix (<sha>-tdx-nvidia_x86_64) that
+  # bundles libnvat.so* alongside the binary. The fork's publish-artifacts
+  # workflow produces this variant; upstream guest-components does not.
+  TEE_PLATFORM: tdx-nvidia
   OCI_IMAGE: ghcr.io/${{ github.repository }}/podvm
   VERSIONS_YAML: src/cloud-api-adaptor/versions.yaml
 
@@ -174,36 +157,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PODVM_DISTRO: ${{ needs.meta.outputs.distro }}
-          AA_FEATURES: ${{ inputs.aa_features || 'bin,ttrpc,kbs,coco_as,rust-crypto,tdx-attester,nvidia-attester' }}
-          GC_REPO_OVERRIDE: ${{ inputs.guest_components_repo }}
-          GC_REF_OVERRIDE: ${{ inputs.guest_components_ref }}
-          GC_CUSTOM_BINARIES: ${{ inputs.custom_gc_binaries || 'attestation-agent,api-server-rest,confidential-data-hub' }}
         run: |
-          # Source repo/SHA for the Cohere fork (built from source and copied
-          # over the upstream OCI prebuilts pulled by the inner `make binaries`,
-          # except for components listed in CUSTOM_GC_BINARIES which skip the
-          # pull entirely — see podvm/Makefile.inc).
-          VERSIONS_YAML_PATH="$GITHUB_WORKSPACE/$VERSIONS_YAML"
-          GC_REPO="${GC_REPO_OVERRIDE:-$(yq -r '.git.guest-components-cohere.url' "$VERSIONS_YAML_PATH")}"
-          GC_REF="${GC_REF_OVERRIDE:-$(yq -r '.git.guest-components-cohere.reference' "$VERSIONS_YAML_PATH")}"
-          if ! echo "$GC_REF" | grep -qE '^[0-9a-f]{40}$'; then
-            echo "ERROR: git.guest-components-cohere.reference must be a 40-char lowercase git SHA, got: $GC_REF" >&2
-            exit 1
-          fi
-          echo "Cohere guest-components source: $GC_REPO @ $GC_REF"
-
-          MAKE_ARGS=(
-            "VERIFY_PROVENANCE=yes"
-            "TEE_PLATFORM=$TEE_PLATFORM"
-            "PODVM_DISTRO=$PODVM_DISTRO"
-          )
-          if [ -n "$GC_CUSTOM_BINARIES" ]; then
-            MAKE_ARGS+=("CUSTOM_GC_BINARIES=$GC_CUSTOM_BINARIES")
-            MAKE_ARGS+=("GUEST_COMPONENTS_REPO=$GC_REPO")
-            MAKE_ARGS+=("GUEST_COMPONENTS_REF=$GC_REF")
-            [ -n "$AA_FEATURES" ] && MAKE_ARGS+=("AA_FEATURES=$AA_FEATURES")
-          fi
-          make "${MAKE_ARGS[@]}" binaries
+          make \
+            VERIFY_PROVENANCE=yes \
+            TEE_PLATFORM="$TEE_PLATFORM" \
+            PODVM_DISTRO="$PODVM_DISTRO" \
+            binaries
           docker system prune -af --volumes 2>/dev/null || true
           echo "Disk after binaries build:"
           df -h /
