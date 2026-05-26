@@ -41,9 +41,10 @@ for bin in "${BINS[@]}"; do
       cp /build/gc/target/release/api-server-rest "$OUTDIR/api-server-rest"
       ;;
     confidential-data-hub)
-      cd /build/gc/confidential-data-hub
-      cargo build --release --locked
-      cp /build/gc/target/release/confidential-data-hub "$OUTDIR/confidential-data-hub"
+      cd /build/gc/confidential-data-hub/hub
+      cargo build --release --locked --no-default-features \
+        --features "bin,ttrpc,kbs" --bin ttrpc-cdh
+      cp /build/gc/target/release/ttrpc-cdh "$OUTDIR/confidential-data-hub"
       ;;
     *)
       echo "ERROR: Unknown guest component: $bin" >&2
