@@ -50,14 +50,6 @@ git:
   kbs:
     url: https://github.com/confidential-containers/trustee
     reference: 22788122660d6e9be3e4bf52704282de5fcc0a2a
-  # Cohere fork of guest-components. Built from source by the gc_builder
-  # stage in Dockerfile.podvm_binaries.ubuntu and copied over the prebuilt
-  # OCI artifacts pulled from `oci.guest-components` (see Makefile.inc skip
-  # for CUSTOM_GC_BINARIES). Bump `reference` to a 40-char SHA on the
-  # `cohere` branch.
-  guest-components-cohere:
-    url: https://github.com/cohere-ai/guest-components.git
-    reference: f3335ab46a13845340f3332bfe204bf8b9d66ffd
 # If a tag is given it will attempt to pull the oci image by tag. if a
 # reference is specified the corresponding tag will be constructed using
 # the reference and suffixes like architecture or tee.
@@ -68,13 +60,14 @@ oci:
   kata-containers:
     registry: ghcr.io/kata-containers/cached-artefacts
     reference: 8dccf4cf37aeea4b6c2caacf3e61510d6eef2f71 # v3.29.0
-  # Upstream OCI mirror. Kept at an upstream SHA so the upstream
-  # `Ubuntu podvm smoke test` workflow (runs on every PR) can resolve
-  # prebuilt artifacts. The Cohere PodVM build path overrides this with
-  # source-built binaries via `git.guest-components-cohere`.
+  # Cohere fork of guest-components. The fork's publish-artifacts workflow
+  # publishes attestation-agent (incl. a tdx-nvidia variant that bundles
+  # libnvat.so), confidential-data-hub, and api-server-rest to GHCR.
+  # Bump `reference` to the 40-char SHA whose publish-artifacts run has
+  # completed successfully (visible on the GHCR Packages page).
   guest-components:
-    registry: ghcr.io/confidential-containers/guest-components
-    reference: de3f6ff62aa736619b80d99dfca5bc3d2c9a799d
+    registry: ghcr.io/cohere-ai/guest-components
+    reference: df8bb89d3aac70158117984afff842a54a76150e
   kata-agent-ctl:
     registry: ghcr.io/kata-containers/cached-artefacts
     reference: 3.29.0
