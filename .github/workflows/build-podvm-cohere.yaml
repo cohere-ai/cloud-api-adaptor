@@ -255,10 +255,28 @@ jobs:
           print(data.decode(errors='replace').strip('\x00') if data else 'unknown')
           ")
 
+          # NVIDIA driver version is pinned in the mkosi ubuntu package list
+          # (e.g. `nvidia-driver-580-open=580.159.04-1ubuntu1`). Surface the
+          # `epoch:upstream-debian` portion so downstream tooling (model-integrity
+          # kata-policy) can bind attestation to a specific driver build.
+          NVIDIA_DRIVER_PKG=$(awk -F= '
+            /^[[:space:]]*nvidia-driver-[0-9]+(-open)?[[:space:]]*=/ {
+              gsub(/[[:space:]]/,"",$1); gsub(/[[:space:]]/,"",$2);
+              print $1 "=" $2; exit
+            }' src/cloud-api-adaptor/podvm-mkosi/mkosi.images/system/mkosi.conf.d/ubuntu.conf)
+          if [ -z "$NVIDIA_DRIVER_PKG" ]; then
+            echo "ERROR: could not extract nvidia-driver-* pin from ubuntu.conf" >&2
+            exit 1
+          fi
+          NVIDIA_DRIVER_VERSION="${NVIDIA_DRIVER_PKG#*=}"
+          echo "nvidia driver: $NVIDIA_DRIVER_PKG"
+
           jq -n \
             --arg image_name "$IMAGE_NAME" \
             --arg rtmr2_sha384 "$RTMR2" \
             --arg kernel "$KERNEL" \
+            --arg nvidia_driver_pkg "$NVIDIA_DRIVER_PKG" \
+            --arg nvidia_driver_version "$NVIDIA_DRIVER_VERSION" \
             --arg caa_commit "$CAA_COMMIT" \
             --arg caa_ref "$CAA_REF" \
             --arg caa_version "$CAA_REF" \
@@ -294,6 +312,7 @@ jobs:
         run: |
           OCI_REF="${OCI_IMAGE}:${OCI_TAG}"
           RTMR2=$(jq -r '.rtmr2_sha384' /tmp/measurements.json)
+          NVIDIA_DRIVER_VERSION=$(jq -r '.nvidia_driver_version' /tmp/measurements.json)
 
           cd /tmp
           oras push "$OCI_REF" \
@@ -307,6 +326,7 @@ jobs:
             --annotation "com.cohere.caa.commit=${CAA_COMMIT}" \
             --annotation "com.cohere.caa.version=${GITHUB_REF_NAME}" \
             --annotation "com.cohere.rtmr2=${RTMR2}" \
+            --annotation "com.cohere.nvidia.driver_version=${NVIDIA_DRIVER_VERSION}" \
             --format json > oras-output.json
 
           cat oras-output.json
