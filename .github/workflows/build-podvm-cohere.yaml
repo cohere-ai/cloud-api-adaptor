@@ -268,21 +268,32 @@ jobs:
           print(data.decode(errors='replace').strip('\x00') if data else 'unknown')
           ")
 
-          # NVIDIA driver version is pinned in the mkosi ubuntu package list
+          # NVIDIA driver version is pinned in the distro mkosi package list
           # (e.g. `nvidia-driver-580-open=580.159.04-1ubuntu1`). Surface the
           # `epoch:upstream-debian` portion so downstream tooling (model-integrity
           # kata-policy) can bind attestation to a specific driver build.
+          DISTRO_CONF="src/cloud-api-adaptor/podvm-mkosi/mkosi.images/system/mkosi.conf.d/${DISTRO}.conf"
+          if [ ! -f "$DISTRO_CONF" ]; then
+            echo "ERROR: mkosi distro config not found: $DISTRO_CONF" >&2
+            exit 1
+          fi
+
           NVIDIA_DRIVER_PKG=$(awk -F= '
             /^[[:space:]]*nvidia-driver-[0-9]+(-open)?[[:space:]]*=/ {
               gsub(/[[:space:]]/,"",$1); gsub(/[[:space:]]/,"",$2);
               print $1 "=" $2; exit
-            }' src/cloud-api-adaptor/podvm-mkosi/mkosi.images/system/mkosi.conf.d/ubuntu.conf)
-          if [ -z "$NVIDIA_DRIVER_PKG" ]; then
-            echo "ERROR: could not extract nvidia-driver-* pin from ubuntu.conf" >&2
+            }' "$DISTRO_CONF")
+          if [ "$DISTRO" = "ubuntu" ] && [ -z "$NVIDIA_DRIVER_PKG" ]; then
+            echo "ERROR: could not extract nvidia-driver-* pin from $DISTRO_CONF" >&2
             exit 1
           fi
-          NVIDIA_DRIVER_VERSION="${NVIDIA_DRIVER_PKG#*=}"
-          echo "nvidia driver: $NVIDIA_DRIVER_PKG"
+          NVIDIA_DRIVER_VERSION=""
+          if [ -n "$NVIDIA_DRIVER_PKG" ]; then
+            NVIDIA_DRIVER_VERSION="${NVIDIA_DRIVER_PKG#*=}"
+            echo "nvidia driver: $NVIDIA_DRIVER_PKG"
+          else
+            echo "No nvidia-driver-* pin found in $DISTRO_CONF; omitting NVIDIA driver metadata"
+          fi
 
           jq -n \
             --arg image_name "$IMAGE_NAME" \
@@ -297,7 +308,12 @@ jobs:
             --arg profile "$PROFILE" \
             --arg tee_platform "$TEE_PLATFORM" \
             --arg build_date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            '$ARGS.named' > /tmp/measurements.json
+            '$ARGS.named
+             | if .nvidia_driver_version == "" then
+                 del(.nvidia_driver_pkg, .nvidia_driver_version)
+               else
+                 .
+               end' > /tmp/measurements.json
 
           cat /tmp/measurements.json
 
@@ -325,21 +341,27 @@ jobs:
         run: |
           OCI_REF="${OCI_IMAGE}:${OCI_TAG}"
           RTMR2=$(jq -r '.rtmr2_sha384' /tmp/measurements.json)
-          NVIDIA_DRIVER_VERSION=$(jq -r '.nvidia_driver_version' /tmp/measurements.json)
+          NVIDIA_DRIVER_VERSION=$(jq -r '.nvidia_driver_version // ""' /tmp/measurements.json)
 
           cd /tmp
+          ANNOTATIONS=(
+            --annotation "org.opencontainers.image.title=${IMAGE_TITLE}"
+            --annotation "org.opencontainers.image.description=PodVM OS image (${DISTRO}/${TEE_PLATFORM}/${PROFILE})"
+            --annotation "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}"
+            --annotation "org.opencontainers.image.revision=${GITHUB_SHA}"
+            --annotation "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            --annotation "com.cohere.caa.commit=${CAA_COMMIT}"
+            --annotation "com.cohere.caa.version=${GITHUB_REF_NAME}"
+            --annotation "com.cohere.rtmr2=${RTMR2}"
+          )
+          if [ -n "$NVIDIA_DRIVER_VERSION" ]; then
+            ANNOTATIONS+=(--annotation "com.cohere.nvidia.driver_version=${NVIDIA_DRIVER_VERSION}")
+          fi
+
           oras push "$OCI_REF" \
             disk.tar.gz:application/vnd.cohere.podvm.disk.tar+gzip \
             measurements.json:application/vnd.cohere.podvm.measurements+json \
-            --annotation "org.opencontainers.image.title=${IMAGE_TITLE}" \
-            --annotation "org.opencontainers.image.description=PodVM OS image (${DISTRO}/${TEE_PLATFORM}/${PROFILE})" \
-            --annotation "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
-            --annotation "org.opencontainers.image.revision=${GITHUB_SHA}" \
-            --annotation "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            --annotation "com.cohere.caa.commit=${CAA_COMMIT}" \
-            --annotation "com.cohere.caa.version=${GITHUB_REF_NAME}" \
-            --annotation "com.cohere.rtmr2=${RTMR2}" \
-            --annotation "com.cohere.nvidia.driver_version=${NVIDIA_DRIVER_VERSION}" \
+            "${ANNOTATIONS[@]}" \
             --format json > oras-output.json
 
           cat oras-output.json
