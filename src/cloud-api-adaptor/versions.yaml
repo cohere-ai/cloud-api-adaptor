@@ -67,7 +67,7 @@ oci:
   # completed successfully (visible on the GHCR Packages page).
   guest-components:
     registry: ghcr.io/cohere-ai/guest-components
-    reference: 839b3a55fb0eca906ad8ce033425a4f79cfe8382
+    reference: f475b74f94978952804c2ce5205b3aad16076117
   kata-agent-ctl:
     registry: ghcr.io/kata-containers/cached-artefacts
     reference: 3.29.0

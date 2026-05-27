@@ -19,3 +19,14 @@ mv "${BUILDROOT}/etc/issue.d" "${BUILDROOT}/usr/lib/issue.d" || true
 # backslash to survive bash quote removal.
 rm -f "${BUILDROOT}"/etc/systemd/system/{run-image,run-kata\\x2dcontainers}.mount
 rm -f "${BUILDROOT}"/etc/systemd/system/multi-user.target.wants/{run-image,run-kata\\x2dcontainers}.mount
+
+# Override the noble (24.04) systemd-stub installed via systemd-boot-efi with
+# the builder's v256 stub from Ubuntu 24.10 (oracular). ukify reads this path
+# when assembling the UKI for Bootloader=uki; without this override the UKI
+# ships v255.x whose RTMR2 measurement format differs from what cvm-measure
+# predicts.
+if [ -f /usr/lib/systemd/boot/efi/linuxx64.efi.stub ]; then
+    mkdir -p "${BUILDROOT}/usr/lib/systemd/boot/efi"
+    cp /usr/lib/systemd/boot/efi/linuxx64.efi.stub \
+       "${BUILDROOT}/usr/lib/systemd/boot/efi/linuxx64.efi.stub"
+fi
