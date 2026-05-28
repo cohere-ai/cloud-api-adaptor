@@ -22,6 +22,19 @@ rtmr=/sys/devices/virtual/misc/tdx_guest/measurements/rtmr3:sha384
 trap 'rc=$?; log "failed with exit code ${rc} at line ${LINENO}"; ls -l "$digest_file" "$rtmr" 2>&1 || true; exit "${rc}"' ERR
 
 log "starting RTMR3 extension"
+for attempt in {1..30}; do
+    if [ -e "$rtmr" ]; then
+        break
+    fi
+    log "waiting for RTMR3 measurement node: $rtmr (attempt ${attempt}/30)"
+    sleep 1
+done
+
+if [ ! -e "$rtmr" ]; then
+    log "RTMR3 measurement node not found after waiting: $rtmr"
+    exit 1
+fi
+
 ls -l "$digest_file" "$rtmr" 2>&1 || true
 
 hex=$(tr -d '[:space:]' < "$digest_file")
