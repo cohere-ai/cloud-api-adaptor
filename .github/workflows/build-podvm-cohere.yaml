@@ -76,7 +76,7 @@ jobs:
               if [ -n "$PR_NUMBER" ]; then
                 disc="pr$PR_NUMBER-$sha"
               else
-                slug=$(echo "$GITHUB_REF_NAME" | tr 'A-Z' 'a-z' \
+                slug=$(echo "$GITHUB_REF_NAME" | tr '[:upper:]' '[:lower:]' \
                   | sed 's/[^a-z0-9-]/-/g; s/^-*//; s/-*$//' | cut -c1-20)
                 disc="${slug:-manual}-$sha"
               fi ;;
