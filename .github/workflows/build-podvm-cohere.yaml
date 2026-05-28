@@ -35,6 +35,9 @@ env:
   TEE_PLATFORM: tdx-nvidia
   OCI_IMAGE: ghcr.io/${{ github.repository }}/podvm
   VERSIONS_YAML: src/cloud-api-adaptor/versions.yaml
+  SMOKE_MACHINE_TYPE: a3-highgpu-1g
+  SMOKE_RAM_GIB: "234"
+  BASELINES_REPO: cohere-ai/cohere-cc-baselines
 
 jobs:
   meta:
@@ -215,9 +218,10 @@ jobs:
           echo "=== After cleanup ==="
           df -h /
 
-      - name: Extract UKI and predict RTMR2
+      - name: Extract UKI and predict TDX measurements
         id: measure
         env:
+          GH_TOKEN: ${{ secrets.CVM_MEASURE_TOKEN }}
           IMAGE_NAME: ${{ matrix.profile == 'release' && needs.meta.outputs.image_name_release || needs.meta.outputs.image_name_debug }}
           IMAGE_FAMILY: ${{ matrix.profile == 'release' && needs.meta.outputs.family_release || needs.meta.outputs.family_debug }}
           IMAGE_CLASS: ${{ needs.meta.outputs.class }}
@@ -230,23 +234,28 @@ jobs:
         run: |
           cvm-measure extract-uki --disk /tmp/disk.raw --output /tmp/BOOTX64.EFI
 
-          RTMR2=$(python3 -c "
-          import hashlib
-          from cvm_measure.tdx.pe import pe_extract_section
-          from cvm_measure.tdx.rtmr import extend_rtmr, SHA384_SIZE
-          uki = open('/tmp/BOOTX64.EFI', 'rb').read()
-          sections = ['linux', 'osrel', 'cmdline', 'initrd', 'ucode', 'uname', 'sbat', 'pcrpkey']
-          rtmr2 = bytes(SHA384_SIZE)
-          for name in sections:
-              data = pe_extract_section(uki, f'.{name}', use_virtual_size=True)
-              if data is None:
-                  continue
-              name_hash = hashlib.sha384(f'.{name}\0'.encode('ascii')).digest()
-              rtmr2 = extend_rtmr(rtmr2, name_hash)
-              content_hash = hashlib.sha384(data).digest()
-              rtmr2 = extend_rtmr(rtmr2, content_hash)
-          print(rtmr2.hex())
-          ")
+          mkdir -p /tmp/cvm-artifacts
+          BASELINE="/tmp/cvm-artifacts/${SMOKE_MACHINE_TYPE}.json"
+          gh api "/repos/${BASELINES_REPO}/contents/baselines/gcp/tdx/${SMOKE_MACHINE_TYPE}.json" \
+            --jq .content | base64 -d > "$BASELINE"
+
+          FIRMWARE_SHA384=$(jq -r '.firmware_sha384' "$BASELINE")
+          FIRMWARE="/tmp/cvm-artifacts/${FIRMWARE_SHA384}.fd"
+          curl -fsSL \
+            "https://storage.googleapis.com/gce_tcb_integrity/ovmf_x64_csm/${FIRMWARE_SHA384}.fd" \
+            -o "$FIRMWARE"
+
+          cvm-measure tdx \
+            --firmware "$FIRMWARE" \
+            --uki /tmp/BOOTX64.EFI \
+            --baseline "$BASELINE" \
+            --disk /tmp/disk.raw \
+            --ram "$SMOKE_RAM_GIB" \
+            --output-format json > /tmp/tdx-measurements.json
+
+          jq -e 'has("mrtd") and has("rtmr0") and has("rtmr1") and has("rtmr2") and has("rtmr3")' \
+            /tmp/tdx-measurements.json
+          RTMR2=$(jq -r '.rtmr2' /tmp/tdx-measurements.json)
 
           KERNEL=$(python3 -c "
           from cvm_measure.tdx.pe import pe_extract_section
@@ -287,6 +296,9 @@ jobs:
             --arg image_class "$IMAGE_CLASS" \
             --arg image_ttl "$IMAGE_TTL" \
             --arg pr_number "$PR_NUMBER" \
+            --slurpfile tdx /tmp/tdx-measurements.json \
+            --arg smoke_machine_type "$SMOKE_MACHINE_TYPE" \
+            --arg smoke_ram_gib "$SMOKE_RAM_GIB" \
             --arg rtmr2_sha384 "$RTMR2" \
             --arg kernel "$KERNEL" \
             --arg nvidia_driver_pkg "$NVIDIA_DRIVER_PKG" \
@@ -298,7 +310,9 @@ jobs:
             --arg profile "$PROFILE" \
             --arg tee_platform "$TEE_PLATFORM" \
             --arg build_date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            '$ARGS.named
+            '$ARGS.named + $tdx[0]
+             | .smoke_machine_type = $smoke_machine_type
+             | .smoke_ram_gib = ($smoke_ram_gib | tonumber)
              | if .nvidia_driver_version == "" then
                  del(.nvidia_driver_pkg, .nvidia_driver_version)
                else
@@ -392,3 +406,22 @@ jobs:
     secrets:
       GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
       GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+  smoke-gcp-tdx:
+    name: Smoke TDX measurements (GCP debug image)
+    needs: [meta, deploy-gcp]
+    if: |
+      needs.deploy-gcp.result == 'success' &&
+      (github.event_name == 'push' ||
+       (github.event_name == 'workflow_dispatch' && inputs.deploy_gcp))
+    uses: ./.github/workflows/smoke-gcp-tdx.yaml
+    with:
+      image_tag: ${{ needs.meta.outputs.image_tag_debug }}
+      image_name: ${{ needs.meta.outputs.image_name_debug }}
+      machine_type: a3-highgpu-1g
+      ram_gib: "234"
+    secrets:
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      CVM_MEASURE_TOKEN: ${{ secrets.CVM_MEASURE_TOKEN }}
+      DEBUG_SSH_PRIVATE_KEY: ${{ secrets.DEBUG_SSH_PRIVATE_KEY }}
