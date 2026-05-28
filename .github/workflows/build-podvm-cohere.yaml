@@ -307,9 +307,6 @@ jobs:
             --arg image_class "$IMAGE_CLASS" \
             --arg image_ttl "$IMAGE_TTL" \
             --arg pr_number "$PR_NUMBER" \
-            --slurpfile tdx /tmp/tdx-measurements.json \
-            --arg smoke_machine_type "$SMOKE_MACHINE_TYPE" \
-            --arg smoke_ram_gib "$SMOKE_RAM_GIB" \
             --arg rtmr2_sha384 "$RTMR2" \
             --arg kernel "$KERNEL" \
             --arg nvidia_driver_pkg "$NVIDIA_DRIVER_PKG" \
@@ -321,15 +318,22 @@ jobs:
             --arg profile "$PROFILE" \
             --arg tee_platform "$TEE_PLATFORM" \
             --arg build_date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            '$ARGS.named + $tdx[0]
-             | .smoke_machine_type = $smoke_machine_type
-             | .smoke_ram_gib = ($smoke_ram_gib | tonumber)
+            '$ARGS.named
              | if .nvidia_driver_version == "" then
                  del(.nvidia_driver_pkg, .nvidia_driver_version)
                else
                  .
                end
              | if .pr_number == "" then del(.pr_number) else . end' > /tmp/measurements.json
+
+          jq \
+            --slurpfile image /tmp/measurements.json \
+            --arg smoke_machine_type "$SMOKE_MACHINE_TYPE" \
+            --arg smoke_ram_gib "$SMOKE_RAM_GIB" \
+            '$image[0] + .
+             | .smoke_machine_type = $smoke_machine_type
+             | .smoke_ram_gib = ($smoke_ram_gib | tonumber)' \
+            /tmp/tdx-measurements.json > /tmp/smoke-measurements.json
 
           cat /tmp/measurements.json
 
@@ -338,6 +342,15 @@ jobs:
           tar -czf /tmp/disk.tar.gz -C /tmp disk.raw
           rm /tmp/disk.raw
           echo "Compressed size: $(du -sh /tmp/disk.tar.gz | cut -f1)"
+
+      - name: Upload smoke measurements
+        if: matrix.profile == 'debug'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: smoke-measurements-${{ needs.meta.outputs.image_name_debug }}
+          path: /tmp/smoke-measurements.json
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Login to GHCR
         uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4
