@@ -58,23 +58,27 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Verify attestation
+        id: verify
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           IMAGE_TAG: ${{ inputs.image_tag }}
         run: |
+          IMAGE_DIGEST=$(oras resolve "${OCI_IMAGE}:${IMAGE_TAG}")
+          IMAGE_REF="${OCI_IMAGE}@${IMAGE_DIGEST}"
           gh attestation verify \
-            "oci://${OCI_IMAGE}:${IMAGE_TAG}" \
+            "oci://${IMAGE_REF}" \
             --repo "${GITHUB_REPOSITORY}"
-          echo "Attestation verified for ${IMAGE_TAG}"
+          echo "image_ref=$IMAGE_REF" >> "$GITHUB_OUTPUT"
+          echo "Attestation verified for ${IMAGE_REF}"
 
       - name: Pull artifact and read measurements
         id: pull
         env:
-          IMAGE_TAG: ${{ inputs.image_tag }}
+          IMAGE_REF: ${{ steps.verify.outputs.image_ref }}
         run: |
           mkdir -p /tmp/podvm
           cd /tmp/podvm
-          oras pull "${OCI_IMAGE}:${IMAGE_TAG}"
+          oras pull "${IMAGE_REF}"
           ls -lh
 
           if [ ! -f measurements.json ]; then

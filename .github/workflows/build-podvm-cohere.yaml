@@ -81,14 +81,20 @@ jobs:
                 disc="${slug:-manual}-$sha"
               fi ;;
           esac
-          [ "${GITHUB_RUN_ATTEMPT:-1}" -gt 1 ] && disc="$disc-r$GITHUB_RUN_ATTEMPT"
-
           base="podvm-$DISTRO-$TEE_PLATFORM-$class"
           # GCE image names max 63 chars; deploy uses ${IMAGE_NAME}-import (7).
           # Debug names add -debug (6), so keep base-disc at 50 chars.
           max_disc_len=$((50 - ${#base} - 1))
           [ "$max_disc_len" -lt 8 ] && max_disc_len=8
-          disc="${disc:0:$max_disc_len}"
+          attempt_suffix=""
+          [ "${GITHUB_RUN_ATTEMPT:-1}" -gt 1 ] && attempt_suffix="-r$GITHUB_RUN_ATTEMPT"
+          if [ -n "$attempt_suffix" ]; then
+            max_base_disc_len=$((max_disc_len - ${#attempt_suffix}))
+            [ "$max_base_disc_len" -lt 1 ] && max_base_disc_len=1
+            disc="${disc:0:$max_base_disc_len}$attempt_suffix"
+          else
+            disc="${disc:0:$max_disc_len}"
+          fi
           name="$base-$disc"
           tag="$class-$disc"
           {

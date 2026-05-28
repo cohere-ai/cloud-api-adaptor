@@ -101,14 +101,17 @@ jobs:
           MACHINE_TYPE: ${{ inputs.machine_type }}
           RAM_GIB: ${{ inputs.ram_gib }}
         run: |
-          gh attestation verify "oci://${OCI_IMAGE}:${IMAGE_TAG}" \
-            --repo "${GITHUB_REPOSITORY}"
-
           echo "$GITHUB_TOKEN" | oras login ghcr.io \
             -u "$GITHUB_ACTOR" --password-stdin
+
+          IMAGE_DIGEST=$(oras resolve "${OCI_IMAGE}:${IMAGE_TAG}")
+          IMAGE_REF="${OCI_IMAGE}@${IMAGE_DIGEST}"
+          gh attestation verify "oci://${IMAGE_REF}" \
+            --repo "${GITHUB_REPOSITORY}"
+
           mkdir -p /tmp/podvm
           cd /tmp/podvm
-          oras pull "${OCI_IMAGE}:${IMAGE_TAG}"
+          oras pull "${IMAGE_REF}"
           jq -e \
             --arg image_name "$IMAGE_NAME" \
             --arg machine_type "$MACHINE_TYPE" \
