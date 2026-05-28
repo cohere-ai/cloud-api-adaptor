@@ -25,6 +25,15 @@ if [ ! -e /dev/tdx_guest ]; then
     exit 0
 fi
 
+on_error() {
+    local rc=$?
+    log "failed with exit code ${rc} at line ${BASH_LINENO[0]}"
+    ls -l "$digest_file" "$rtmr" 2>&1 || true
+    exit "${rc}"
+}
+trap on_error ERR
+
+log "starting RTMR3 extension"
 for attempt in {1..30}; do
     if [ -e "$rtmr" ]; then
         break
@@ -37,6 +46,8 @@ if [ ! -e "$rtmr" ]; then
     log "RTMR3 measurement node not found after waiting: $rtmr"
     exit 1
 fi
+
+ls -l "$digest_file" "$rtmr" 2>&1 || true
 
 hex=$(tr -d '[:space:]' < "$digest_file")
 # Right-pad with zero hex chars to 96 (a TDX RTMR is 48 bytes / SHA-384).
@@ -51,3 +62,4 @@ done
 # printf interprets the \xHH escapes; dd guarantees a single 48-byte
 # write(2), which the kernel TDX driver requires.
 printf -- "$escaped" | dd of="$rtmr" bs=48 count=1 status=none
+log "completed RTMR3 extension"
