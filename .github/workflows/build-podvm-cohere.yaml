@@ -21,11 +21,6 @@ on:
         required: false
         type: boolean
         default: true
-      replace_existing_image:
-        description: "Replace existing GCP image if it exists"
-        required: false
-        type: boolean
-        default: false
 
 permissions:
   id-token: write      # OIDC token for build provenance attestation
@@ -48,33 +43,57 @@ jobs:
     outputs:
       tag: ${{ steps.compute.outputs.tag }}
       distro: ${{ steps.compute.outputs.distro }}
-      replace_image: ${{ steps.compute.outputs.replace_image }}
+      class: ${{ steps.compute.outputs.class }}
+      ttl: ${{ steps.compute.outputs.ttl }}
       image_name_release: ${{ steps.compute.outputs.image_name_release }}
       image_name_debug: ${{ steps.compute.outputs.image_name_debug }}
       image_tag_release: ${{ steps.compute.outputs.image_tag_release }}
       image_tag_debug: ${{ steps.compute.outputs.image_tag_debug }}
+      family_release: ${{ steps.compute.outputs.family_release }}
+      family_debug: ${{ steps.compute.outputs.family_debug }}
     steps:
       - name: Compute tags and image names
         id: compute
         env:
           DISTRO: ${{ inputs.distro || 'ubuntu' }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/podvm-v* ]]; then
-            TAG="${GITHUB_REF#refs/tags/podvm-}"
-            REPLACE_IMAGE="false"
-          else
-            TAG="cohere-latest"
-            REPLACE_IMAGE="true"
-          fi
-          TAG="${TAG//./-}"
+          # Classify so consumers can pin (release/cohere) or auto-clean (dev).
+          # Names are content-addressed; reruns of the same SHA get -r<attempt>.
+          sha=${GITHUB_SHA:0:7}
+          case "$GITHUB_REF" in
+            refs/tags/podvm-v*)
+              class=release; ttl=keep
+              v="${GITHUB_REF#refs/tags/podvm-v}"; disc="v${v//./-}" ;;
+            refs/heads/cohere)
+              class=cohere; ttl=90d
+              disc="$(date -u +%Y%m%d)-$sha" ;;
+            *)
+              class=dev; ttl=30d
+              if [ -n "$PR_NUMBER" ]; then
+                disc="pr$PR_NUMBER-$sha"
+              else
+                slug=$(echo "$GITHUB_REF_NAME" | tr 'A-Z' 'a-z' \
+                  | sed 's/[^a-z0-9-]/-/g; s/^-*//; s/-*$//' | cut -c1-20)
+                disc="${slug:-manual}-$sha"
+              fi ;;
+          esac
+          [ "${GITHUB_RUN_ATTEMPT:-1}" -gt 1 ] && disc="$disc-r$GITHUB_RUN_ATTEMPT"
+
+          base="podvm-$DISTRO-$TEE_PLATFORM-$class"
+          name="$base-$disc"
+          tag="$class-$disc"
           {
-            echo "tag=$TAG"
+            echo "tag=$tag"
             echo "distro=$DISTRO"
-            echo "replace_image=$REPLACE_IMAGE"
-            echo "image_name_release=podvm-${DISTRO}-${TEE_PLATFORM}-release-${TAG}"
-            echo "image_name_debug=podvm-${DISTRO}-${TEE_PLATFORM}-debug-${TAG}"
-            echo "image_tag_release=${TAG}-${DISTRO}-release"
-            echo "image_tag_debug=${TAG}-${DISTRO}-debug"
+            echo "class=$class"
+            echo "ttl=$ttl"
+            echo "image_name_release=$name"
+            echo "image_name_debug=$name-debug"
+            echo "image_tag_release=$tag-$DISTRO-release"
+            echo "image_tag_debug=$tag-$DISTRO-debug"
+            echo "family_release=$base"
+            echo "family_debug=$base-debug"
           } >> "$GITHUB_OUTPUT"
 
   build:
@@ -196,6 +215,10 @@ jobs:
         id: measure
         env:
           IMAGE_NAME: ${{ matrix.profile == 'release' && needs.meta.outputs.image_name_release || needs.meta.outputs.image_name_debug }}
+          IMAGE_FAMILY: ${{ matrix.profile == 'release' && needs.meta.outputs.family_release || needs.meta.outputs.family_debug }}
+          IMAGE_CLASS: ${{ needs.meta.outputs.class }}
+          IMAGE_TTL: ${{ needs.meta.outputs.ttl }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
           CAA_COMMIT: ${{ github.sha }}
           CAA_REF: ${{ github.ref_name }}
           DISTRO: ${{ needs.meta.outputs.distro }}
@@ -256,6 +279,10 @@ jobs:
 
           jq -n \
             --arg image_name "$IMAGE_NAME" \
+            --arg image_family "$IMAGE_FAMILY" \
+            --arg image_class "$IMAGE_CLASS" \
+            --arg image_ttl "$IMAGE_TTL" \
+            --arg pr_number "$PR_NUMBER" \
             --arg rtmr2_sha384 "$RTMR2" \
             --arg kernel "$KERNEL" \
             --arg nvidia_driver_pkg "$NVIDIA_DRIVER_PKG" \
@@ -272,7 +299,8 @@ jobs:
                  del(.nvidia_driver_pkg, .nvidia_driver_version)
                else
                  .
-               end' > /tmp/measurements.json
+               end
+             | if .pr_number == "" then del(.pr_number) else . end' > /tmp/measurements.json
 
           cat /tmp/measurements.json
 
@@ -357,11 +385,6 @@ jobs:
     uses: ./.github/workflows/deploy-gcp-cohere.yaml
     with:
       image_tag: ${{ needs.meta.outputs.tag }}-${{ needs.meta.outputs.distro }}-${{ matrix.profile }}
-      replace_existing_image: >-
-        ${{
-          (github.event_name == 'push' && needs.meta.outputs.replace_image == 'true') ||
-          (github.event_name == 'workflow_dispatch' && inputs.replace_existing_image)
-        }}
     secrets:
       GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
       GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
