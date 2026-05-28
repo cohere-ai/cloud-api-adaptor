@@ -46,10 +46,7 @@ on:
       DEBUG_SSH_PRIVATE_KEY:
         required: true
 
-permissions:
-  id-token: write # GCP Workload Identity Federation.
-  contents: read  # Checkout repository contents.
-  packages: read  # Pull PodVM OCI artifacts from GHCR.
+permissions: {}
 
 env:
   OCI_IMAGE: ghcr.io/${{ github.repository }}/podvm
@@ -59,6 +56,10 @@ jobs:
   smoke:
     name: Boot and compare TDX measurements
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write # GCP Workload Identity Federation.
+      contents: read  # Checkout repository contents.
+      packages: read  # Pull PodVM OCI artifacts from GHCR.
     concurrency:
       group: smoke-gcp-tdx-${{ inputs.image_name }}
       cancel-in-progress: false
