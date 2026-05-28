@@ -23,6 +23,7 @@ on:
         default: true
 
 permissions:
+  actions: read       # download smoke measurements artifact in the GCP smoke workflow
   id-token: write      # OIDC token for build provenance attestation
   attestations: write  # actions/attest-build-provenance
   contents: read       # actions/checkout
