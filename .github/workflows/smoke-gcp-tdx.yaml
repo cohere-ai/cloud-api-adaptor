@@ -80,7 +80,7 @@ jobs:
           rm -f "oras_${ORAS_VERSION}_linux_amd64.tar.gz"
           oras version
 
-          git clone --depth 1 --branch alhassankhedr/cc-167-tdx-measurement-toolkit \
+          git clone --depth 1 --branch yousef/include-optional-uki-sections \
             "https://x-access-token:${CVM_TOKEN}@github.com/cohere-ai/cvm-measure.git" /tmp/cvm-measure
           pip install --break-system-packages /tmp/cvm-measure
           rm -rf /tmp/cvm-measure
