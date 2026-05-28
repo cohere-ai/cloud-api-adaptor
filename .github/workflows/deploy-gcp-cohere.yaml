@@ -4,14 +4,9 @@ on:
   workflow_call:
     inputs:
       image_tag:
-        description: "OCI artifact tag in GHCR (e.g. v1-0-0-ubuntu-release)"
+        description: "OCI artifact tag in GHCR (e.g. release-v1-0-0-ubuntu-release)"
         required: true
         type: string
-      replace_existing_image:
-        description: "Replace existing GCP image if it exists"
-        required: false
-        type: boolean
-        default: false
     secrets:
       GCP_WORKLOAD_IDENTITY_PROVIDER:
         required: true
@@ -24,11 +19,6 @@ on:
         description: "OCI artifact tag in GHCR to deploy"
         required: true
         type: string
-      replace_existing_image:
-        description: "Replace existing GCP image if it exists"
-        required: false
-        type: boolean
-        default: false
 
 permissions:
   id-token: write      # GCP Workload Identity Federation via OIDC
@@ -100,8 +90,20 @@ jobs:
             exit 1
           fi
 
+          IMAGE_FAMILY=$(jq -r '.image_family // ""' measurements.json)
+          IMAGE_CLASS=$(jq -r '.image_class // ""' measurements.json)
+          IMAGE_TTL=$(jq -r '.image_ttl // ""' measurements.json)
+          if [ -z "$IMAGE_FAMILY" ] || [ -z "$IMAGE_CLASS" ] || [ -z "$IMAGE_TTL" ]; then
+            echo "ERROR: image_family/image_class/image_ttl missing in measurements.json"
+            exit 1
+          fi
+
           {
             echo "image_name=$IMAGE_NAME"
+            echo "image_family=$IMAGE_FAMILY"
+            echo "image_class=$IMAGE_CLASS"
+            echo "image_ttl=$IMAGE_TTL"
+            echo "pr_number=$(jq -r '.pr_number // ""' measurements.json)"
             echo "distro=$(jq -r '.distro' measurements.json)"
             echo "profile=$(jq -r '.profile' measurements.json)"
             echo "caa_commit=$(jq -r '.caa_commit' measurements.json)"
@@ -137,6 +139,10 @@ jobs:
       - name: Create GCP compute image
         env:
           IMAGE_NAME: ${{ steps.pull.outputs.image_name }}
+          IMAGE_FAMILY: ${{ steps.pull.outputs.image_family }}
+          IMAGE_CLASS: ${{ steps.pull.outputs.image_class }}
+          IMAGE_TTL: ${{ steps.pull.outputs.image_ttl }}
+          PR_NUMBER: ${{ steps.pull.outputs.pr_number }}
           DISTRO: ${{ steps.pull.outputs.distro }}
           CAA_VERSION: ${{ steps.pull.outputs.caa_version }}
           CAA_COMMIT: ${{ steps.pull.outputs.caa_commit }}
@@ -149,22 +155,23 @@ jobs:
           GCS_URI: ${{ steps.upload.outputs.gcs_uri }}
           GCP_PROJECT: ${{ env.PODVM_GCP_IMAGE_PROJECT }}
           IMAGE_TAG: ${{ inputs.image_tag }}
-          REPLACE_EXISTING: ${{ inputs.replace_existing_image }}
         run: |
-          RAW_IMAGE="${IMAGE_NAME}-import"
+          # Names are content-addressed (class + version|date+sha, plus run
+          # attempt on reruns) so collisions mean the workflow logic regressed.
+          # Fail loud rather than overwrite — overwriting breaks attestation
+          # pinning and rollback. To rebuild the same SHA, re-run the job (the
+          # run attempt suffix differentiates the image name).
+          if gcloud compute images describe "$IMAGE_NAME" --project="$GCP_PROJECT" &>/dev/null; then
+            echo "ERROR: image $IMAGE_NAME already exists in $GCP_PROJECT" >&2
+            echo "Names are immutable; re-run the workflow to bump the run-attempt suffix." >&2
+            exit 1
+          fi
 
+          RAW_IMAGE="${IMAGE_NAME}-import"
           if gcloud compute images describe "$RAW_IMAGE" --project="$GCP_PROJECT" &>/dev/null; then
             echo "Deleting stale intermediate image $RAW_IMAGE"
             gcloud compute images delete "$RAW_IMAGE" \
               --project="$GCP_PROJECT" --quiet
-          fi
-
-          if [ "$REPLACE_EXISTING" = "true" ]; then
-            if gcloud compute images describe "$IMAGE_NAME" --project="$GCP_PROJECT" &>/dev/null; then
-              echo "Deleting existing image $IMAGE_NAME"
-              gcloud compute images delete "$IMAGE_NAME" \
-                --project="$GCP_PROJECT" --quiet
-            fi
           fi
 
           gcloud compute images create "$RAW_IMAGE" \
@@ -173,11 +180,14 @@ jobs:
             --description="podvm import (intermediate): distro=${DISTRO} tee=${TEE_PLATFORM} caa=${CAA_VERSION} commit=${CAA_COMMIT}"
 
           sanitize_label() { echo "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9_-]/-/g' | cut -c1-63; }
-          LABELS="caa-commit=$(sanitize_label "$CAA_COMMIT_SHORT")"
+          LABELS="class=${IMAGE_CLASS}"
+          LABELS="${LABELS},ttl=${IMAGE_TTL}"
+          LABELS="${LABELS},caa-commit=$(sanitize_label "$CAA_COMMIT_SHORT")"
           LABELS="${LABELS},caa-branch=$(sanitize_label "$CAA_REF")"
           LABELS="${LABELS},profile=$(sanitize_label "$PROFILE")"
           LABELS="${LABELS},distro=$(sanitize_label "$DISTRO")"
           LABELS="${LABELS},tee=${TEE_PLATFORM}"
+          [ -n "$PR_NUMBER" ] && LABELS="${LABELS},pr=${PR_NUMBER}"
           [ -n "$KERNEL" ] && LABELS="${LABELS},kernel=$(sanitize_label "$KERNEL")"
           [ -n "$BUILD_DATE" ] && LABELS="${LABELS},build-date=$(sanitize_label "$BUILD_DATE")"
 
@@ -185,7 +195,8 @@ jobs:
             --source-image="$RAW_IMAGE" \
             --source-image-project="$GCP_PROJECT" \
             --project="$GCP_PROJECT" \
-            --description="podvm: distro=${DISTRO} tee=${TEE_PLATFORM} profile=${PROFILE} caa=${CAA_VERSION} commit=${CAA_COMMIT} rtmr2=${RTMR2} oci=${OCI_IMAGE}:${IMAGE_TAG}" \
+            --family="$IMAGE_FAMILY" \
+            --description="podvm: distro=${DISTRO} tee=${TEE_PLATFORM} profile=${PROFILE} class=${IMAGE_CLASS} caa=${CAA_VERSION} commit=${CAA_COMMIT} rtmr2=${RTMR2} oci=${OCI_IMAGE}:${IMAGE_TAG}" \
             --labels="$LABELS" \
             --guest-os-features=TDX_CAPABLE,UEFI_COMPATIBLE,GVNIC
 
@@ -194,7 +205,19 @@ jobs:
 
           gcloud compute images describe "$IMAGE_NAME" \
             --project="$GCP_PROJECT" \
-            --format="yaml(name,status,diskSizeGb,guestOsFeatures,description,labels)"
+            --format="yaml(name,family,status,diskSizeGb,guestOsFeatures,description,labels)"
+
+          {
+            echo "### PodVM image published"
+            echo ""
+            echo "| Field | Value |"
+            echo "| --- | --- |"
+            echo "| Name | \`${IMAGE_NAME}\` |"
+            echo "| Family | \`${IMAGE_FAMILY}\` |"
+            echo "| Class | ${IMAGE_CLASS} |"
+            echo "| TTL | ${IMAGE_TTL} |"
+            echo "| Project | ${GCP_PROJECT} |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Clean up GCS staging files
         if: success()
