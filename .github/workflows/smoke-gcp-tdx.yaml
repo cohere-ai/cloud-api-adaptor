@@ -1,0 +1,254 @@
+name: Smoke TDX Measurements (GCP)
+
+on:
+  workflow_call:
+    inputs:
+      image_tag:
+        description: "PodVM OCI artifact tag in GHCR"
+        required: true
+        type: string
+      image_name:
+        description: "GCE image name to boot"
+        required: true
+        type: string
+      image_project:
+        description: "GCP project containing the image"
+        required: false
+        type: string
+        default: cohere-artifacts
+      gcp_project:
+        description: "GCP project where the smoke VM is created"
+        required: false
+        type: string
+        default: cohere-confidential-computing
+      zone:
+        description: "GCP zone for the smoke VM"
+        required: false
+        type: string
+        default: us-central1-a
+      machine_type:
+        description: "GCE machine type; must match measurements.json"
+        required: false
+        type: string
+        default: a3-highgpu-1g
+      ram_gib:
+        description: "Guest RAM in GiB; must match measurements.json"
+        required: false
+        type: string
+        default: "234"
+    secrets:
+      GCP_WORKLOAD_IDENTITY_PROVIDER:
+        required: true
+      GCP_SERVICE_ACCOUNT:
+        required: true
+      CVM_MEASURE_TOKEN:
+        required: true
+      DEBUG_SSH_PRIVATE_KEY:
+        required: true
+
+permissions:
+  id-token: write
+  contents: read
+  packages: read
+  attestations: read
+
+env:
+  OCI_IMAGE: ghcr.io/${{ github.repository }}/podvm
+  VERSIONS_YAML: src/cloud-api-adaptor/versions.yaml
+
+jobs:
+  smoke:
+    name: Boot and compare TDX measurements
+    runs-on: ubuntu-latest
+    concurrency:
+      group: smoke-gcp-tdx-${{ inputs.image_name }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - name: Install ORAS and cvm-measure
+        env:
+          CVM_TOKEN: ${{ secrets.CVM_MEASURE_TOKEN }}
+        run: |
+          command -v yq || sudo snap install yq
+          ORAS_VERSION=$(yq '.tools.oras' "$VERSIONS_YAML")
+          curl -fsSLO "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_amd64.tar.gz"
+          tar -xzf "oras_${ORAS_VERSION}_linux_amd64.tar.gz" oras
+          sudo mv oras /usr/local/bin/
+          rm -f "oras_${ORAS_VERSION}_linux_amd64.tar.gz"
+          oras version
+
+          git clone --depth 1 --branch alhassankhedr/cc-167-tdx-measurement-toolkit \
+            "https://x-access-token:${CVM_TOKEN}@github.com/cohere-ai/cvm-measure.git" /tmp/cvm-measure
+          pip install --break-system-packages /tmp/cvm-measure
+          rm -rf /tmp/cvm-measure
+          cvm-measure --version
+
+      - name: Pull measurements artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+        run: |
+          gh attestation verify "oci://${OCI_IMAGE}:${IMAGE_TAG}" \
+            --repo "${GITHUB_REPOSITORY}"
+
+          echo "${{ github.token }}" | oras login ghcr.io \
+            -u "${{ github.actor }}" --password-stdin
+          mkdir -p /tmp/podvm
+          cd /tmp/podvm
+          oras pull "${OCI_IMAGE}:${IMAGE_TAG}"
+          jq -e \
+            --arg image_name "${{ inputs.image_name }}" \
+            --arg machine_type "${{ inputs.machine_type }}" \
+            --argjson ram_gib "${{ inputs.ram_gib }}" \
+            '.image_name == $image_name
+             and .smoke_machine_type == $machine_type
+             and .smoke_ram_gib == $ram_gib
+             and has("mrtd") and has("rtmr0") and has("rtmr1") and has("rtmr2") and has("rtmr3")' \
+            /tmp/podvm/measurements.json
+          cat /tmp/podvm/measurements.json
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
+
+      - name: Boot smoke VM
+        env:
+          IMAGE_NAME: ${{ inputs.image_name }}
+          IMAGE_PROJECT: ${{ inputs.image_project }}
+          GCP_PROJECT: ${{ inputs.gcp_project }}
+          ZONE: ${{ inputs.zone }}
+          MACHINE_TYPE: ${{ inputs.machine_type }}
+        run: |
+          VM_NAME="podvm-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          echo "VM_NAME=$VM_NAME" >> "$GITHUB_ENV"
+
+          install -m 0700 -d ~/.ssh
+          printf '%s\n' "${{ secrets.DEBUG_SSH_PRIVATE_KEY }}" > ~/.ssh/podvm_smoke
+          chmod 0600 ~/.ssh/podvm_smoke
+
+          gcloud compute instances create "$VM_NAME" \
+            --project="$GCP_PROJECT" \
+            --zone="$ZONE" \
+            --machine-type="$MACHINE_TYPE" \
+            --image="$IMAGE_NAME" \
+            --image-project="$IMAGE_PROJECT" \
+            --confidential-compute-type=TDX \
+            --maintenance-policy=TERMINATE \
+            --shielded-vtpm \
+            --no-service-account \
+            --no-scopes \
+            --labels=purpose=podvm-smoke,github-run-id="${GITHUB_RUN_ID}"
+
+      - name: Fetch AA evidence and CC event log
+        env:
+          GCP_PROJECT: ${{ inputs.gcp_project }}
+          ZONE: ${{ inputs.zone }}
+        run: |
+          SSH_BASE=(
+            ssh
+            -o StrictHostKeyChecking=no
+            -o UserKnownHostsFile=/dev/null
+            -o ConnectTimeout=10
+            -o ProxyCommand="gcloud compute start-iap-tunnel ${VM_NAME} 22 --listen-on-stdin --zone=${ZONE} --project=${GCP_PROJECT}"
+            -i ~/.ssh/podvm_smoke
+            root@compute.0
+          )
+
+          for _ in $(seq 1 60); do
+            if "${SSH_BASE[@]}" 'true' >/dev/null 2>&1; then
+              break
+            fi
+            sleep 10
+          done
+          "${SSH_BASE[@]}" 'true'
+
+          runtime_data=$(printf 'podvm-smoke-%s' "$GITHUB_RUN_ID" | base64 -w0)
+          "${SSH_BASE[@]}" \
+            "curl -fsS 'http://127.0.0.1:8006/aa/evidence?runtime_data=${runtime_data}&encoding=base64'" \
+            > /tmp/aa-evidence.json
+          "${SSH_BASE[@]}" 'nvidia-smi -L'
+
+          python3 - <<'PY'
+          import base64
+          import json
+          from pathlib import Path
+
+          evidence = json.loads(Path("/tmp/aa-evidence.json").read_text())
+
+          def find_key(obj, key):
+              if isinstance(obj, dict):
+                  for k, v in obj.items():
+                      if k == key:
+                          return v
+                      found = find_key(v, key)
+                      if found is not None:
+                          return found
+              elif isinstance(obj, list):
+                  for item in obj:
+                      found = find_key(item, key)
+                      if found is not None:
+                          return found
+              return None
+
+          quote_b64 = find_key(evidence, "quote")
+          ccel_b64 = find_key(evidence, "cc_eventlog")
+          if not quote_b64 or not ccel_b64:
+              raise SystemExit("AA evidence did not include quote and cc_eventlog")
+
+          Path("/tmp/tdx-quote.bin").write_bytes(base64.b64decode(quote_b64))
+          Path("/tmp/ccel.bin").write_bytes(base64.b64decode(ccel_b64))
+          PY
+
+      - name: Compare expected and runtime measurements
+        run: |
+          cvm-measure tdx replay --ccel /tmp/ccel.bin > /tmp/runtime-rtmrs.txt
+          cat /tmp/runtime-rtmrs.txt
+
+          python3 - <<'PY'
+          import json
+          import re
+          from pathlib import Path
+
+          expected = json.loads(Path("/tmp/podvm/measurements.json").read_text())
+          quote = Path("/tmp/tdx-quote.bin").read_bytes()
+          replay = Path("/tmp/runtime-rtmrs.txt").read_text()
+          runtime = dict(re.findall(r"^(rtmr[0-3]):\s*([0-9a-f]{96})$", replay, re.M))
+
+          errors = []
+          for key in ("rtmr0", "rtmr1", "rtmr2", "rtmr3"):
+              if runtime.get(key) != expected[key]:
+                  errors.append(f"{key}: expected {expected[key]}, got {runtime.get(key)}")
+
+          # The quote is the AA-produced object used by ITA. Assert the full
+          # expected values are present in it without relying on DCAP offsets.
+          for key in ("mrtd", "rtmr0", "rtmr1", "rtmr2", "rtmr3"):
+              needle = bytes.fromhex(expected[key])
+              if needle not in quote:
+                  errors.append(f"{key}: expected value not found in AA quote")
+
+          if errors:
+              raise SystemExit("Measurement comparison failed:\n" + "\n".join(errors))
+
+          print("TDX measurements match cvm-measure expectations")
+          PY
+
+      - name: Delete smoke VM
+        if: always()
+        env:
+          GCP_PROJECT: ${{ inputs.gcp_project }}
+          ZONE: ${{ inputs.zone }}
+        run: |
+          if [ -n "${VM_NAME:-}" ]; then
+            gcloud compute instances delete "$VM_NAME" \
+              --project="$GCP_PROJECT" \
+              --zone="$ZONE" \
+              --quiet || true
+          fi
