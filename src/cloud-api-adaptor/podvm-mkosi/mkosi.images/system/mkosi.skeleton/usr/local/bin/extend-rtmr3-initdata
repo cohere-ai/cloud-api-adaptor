@@ -19,6 +19,12 @@ log() {
 digest_file=/run/peerpod/initdata.digest
 rtmr=/sys/devices/virtual/misc/tdx_guest/measurements/rtmr3:sha384
 
+# QEMU podvm smoke tests boot without TDX; skip instead of waiting 30s and failing.
+if [ ! -e /dev/tdx_guest ]; then
+    log "skipping RTMR3 extension (not a TDX guest)"
+    exit 0
+fi
+
 on_error() {
     local rc=$?
     log "failed with exit code ${rc} at line ${BASH_LINENO[0]}"
