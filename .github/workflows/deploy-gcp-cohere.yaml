@@ -89,6 +89,11 @@ jobs:
             echo "ERROR: image_name is missing or empty in measurements.json"
             exit 1
           fi
+          # GCE names max 63; this workflow uses ${IMAGE_NAME}-import.
+          if [ "${#IMAGE_NAME}" -gt 56 ]; then
+            echo "ERROR: image_name length ${#IMAGE_NAME} exceeds GCE limit (56 before -import)" >&2
+            exit 1
+          fi
 
           IMAGE_FAMILY=$(jq -r '.image_family // ""' measurements.json)
           IMAGE_CLASS=$(jq -r '.image_class // ""' measurements.json)

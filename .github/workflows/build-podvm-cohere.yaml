@@ -84,6 +84,11 @@ jobs:
           [ "${GITHUB_RUN_ATTEMPT:-1}" -gt 1 ] && disc="$disc-r$GITHUB_RUN_ATTEMPT"
 
           base="podvm-$DISTRO-$TEE_PLATFORM-$class"
+          # GCE image names max 63 chars; deploy uses ${IMAGE_NAME}-import (7).
+          # Debug names add -debug (6), so keep base-disc at 50 chars.
+          max_disc_len=$((50 - ${#base} - 1))
+          [ "$max_disc_len" -lt 8 ] && max_disc_len=8
+          disc="${disc:0:$max_disc_len}"
           name="$base-$disc"
           tag="$class-$disc"
           {
