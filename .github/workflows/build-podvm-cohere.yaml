@@ -84,6 +84,11 @@ jobs:
           [ "${GITHUB_RUN_ATTEMPT:-1}" -gt 1 ] && disc="$disc-r$GITHUB_RUN_ATTEMPT"
 
           base="podvm-$DISTRO-$TEE_PLATFORM-$class"
+          # GCE image names max 63 chars; deploy uses ${IMAGE_NAME}-import (7).
+          # Debug names add -debug (6), so keep base-disc at 50 chars.
+          max_disc_len=$((50 - ${#base} - 1))
+          [ "$max_disc_len" -lt 8 ] && max_disc_len=8
+          disc="${disc:0:$max_disc_len}"
           name="$base-$disc"
           tag="$class-$disc"
           {
@@ -152,10 +157,12 @@ jobs:
         env:
           CVM_TOKEN: ${{ secrets.CVM_MEASURE_TOKEN }}
           # cc-167 lacks `tdx --disk`; build-podvm needs GPT digest for RTMR[1].
-          CVM_MEASURE_REF: yousef/include-optional-uki-sections
+          CVM_MEASURE_SHA: e92d481640c5be7e66e8fbe81fa473d89db5c71a
         run: |
-          git clone --depth 1 --branch "${CVM_MEASURE_REF}" \
+          git clone --depth 1 \
             "https://x-access-token:${CVM_TOKEN}@github.com/cohere-ai/cvm-measure.git" /tmp/cvm-measure
+          git -C /tmp/cvm-measure fetch --depth 1 origin "${CVM_MEASURE_SHA}"
+          git -C /tmp/cvm-measure checkout "${CVM_MEASURE_SHA}"
           pip install --break-system-packages /tmp/cvm-measure
           rm -rf /tmp/cvm-measure
           cvm-measure --version

@@ -60,6 +60,7 @@ jobs:
       id-token: write # GCP Workload Identity Federation.
       contents: read  # Checkout repository contents.
       packages: read  # Pull PodVM OCI artifacts from GHCR.
+      attestations: read # gh attestation verify
     concurrency:
       group: smoke-gcp-tdx-${{ inputs.image_name }}
       cancel-in-progress: false
@@ -80,9 +81,11 @@ jobs:
           rm -f "oras_${ORAS_VERSION}_linux_amd64.tar.gz"
           oras version
 
-          CVM_MEASURE_REF="${CVM_MEASURE_REF:-yousef/include-optional-uki-sections}"
-          git clone --depth 1 --branch "${CVM_MEASURE_REF}" \
+          CVM_MEASURE_SHA="${CVM_MEASURE_SHA:-e92d481640c5be7e66e8fbe81fa473d89db5c71a}"
+          git clone --depth 1 \
             "https://x-access-token:${CVM_TOKEN}@github.com/cohere-ai/cvm-measure.git" /tmp/cvm-measure
+          git -C /tmp/cvm-measure fetch --depth 1 origin "${CVM_MEASURE_SHA}"
+          git -C /tmp/cvm-measure checkout "${CVM_MEASURE_SHA}"
           pip install --break-system-packages /tmp/cvm-measure
           rm -rf /tmp/cvm-measure
           cvm-measure --version
