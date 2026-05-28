@@ -12,8 +12,25 @@
 # bytes without going through sed.
 set -euo pipefail
 
+log() {
+    echo "[extend-rtmr3-initdata] $(date -Is) $*"
+}
+
 digest_file=/run/peerpod/initdata.digest
 rtmr=/sys/devices/virtual/misc/tdx_guest/measurements/rtmr3:sha384
+
+for attempt in {1..30}; do
+    if [ -e "$rtmr" ]; then
+        break
+    fi
+    log "waiting for RTMR3 measurement node: $rtmr (attempt ${attempt}/30)"
+    sleep 1
+done
+
+if [ ! -e "$rtmr" ]; then
+    log "RTMR3 measurement node not found after waiting: $rtmr"
+    exit 1
+fi
 
 hex=$(tr -d '[:space:]' < "$digest_file")
 # Right-pad with zero hex chars to 96 (a TDX RTMR is 48 bytes / SHA-384).
