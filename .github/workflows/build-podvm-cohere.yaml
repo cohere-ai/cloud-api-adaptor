@@ -151,13 +151,15 @@ jobs:
       - name: Install cvm-measure
         env:
           CVM_TOKEN: ${{ secrets.CVM_MEASURE_TOKEN }}
+          # cc-167 lacks `tdx --disk`; build-podvm needs GPT digest for RTMR[1].
+          CVM_MEASURE_REF: yousef/include-optional-uki-sections
         run: |
-          # TODO: switch to main (or pin to a release tag/SHA) after cvm-measure PR merges
-          git clone --depth 1 --branch yousef/include-optional-uki-sections \
+          git clone --depth 1 --branch "${CVM_MEASURE_REF}" \
             "https://x-access-token:${CVM_TOKEN}@github.com/cohere-ai/cvm-measure.git" /tmp/cvm-measure
           pip install --break-system-packages /tmp/cvm-measure
           rm -rf /tmp/cvm-measure
           cvm-measure --version
+          cvm-measure tdx --help | grep -q -- '--disk'
 
       - name: Inject SSH key for debug image
         if: matrix.profile == 'debug'
