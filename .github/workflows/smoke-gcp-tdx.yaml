@@ -31,6 +31,16 @@ on:
         required: false
         type: string
         default: a3-highgpu-1g
+      network:
+        description: "GCP VPC network for the smoke VM"
+        required: false
+        type: string
+        default: conf-compute
+      subnet:
+        description: "GCP subnet for the smoke VM"
+        required: false
+        type: string
+        default: conf-compute-subnet
       ram_gib:
         description: "Guest RAM in GiB; must match measurements.json"
         required: false
@@ -156,6 +166,8 @@ jobs:
           GCP_PROJECT: ${{ inputs.gcp_project }}
           ZONE: ${{ inputs.zone }}
           MACHINE_TYPE: ${{ inputs.machine_type }}
+          NETWORK: ${{ inputs.network }}
+          SUBNET: ${{ inputs.subnet }}
           DEBUG_SSH_PRIVATE_KEY: ${{ secrets.DEBUG_SSH_PRIVATE_KEY }}
         run: |
           VM_NAME="podvm-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
@@ -169,6 +181,8 @@ jobs:
             --project="$GCP_PROJECT" \
             --zone="$ZONE" \
             --machine-type="$MACHINE_TYPE" \
+            --network="$NETWORK" \
+            --subnet="$SUBNET" \
             --image="$IMAGE_NAME" \
             --image-project="$IMAGE_PROJECT" \
             --confidential-compute-type=TDX \
