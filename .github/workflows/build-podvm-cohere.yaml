@@ -98,8 +98,8 @@ jobs:
             echo "ttl=$ttl"
             echo "image_name_release=$name"
             echo "image_name_debug=$name-debug"
-            echo "image_tag_release=$tag-$DISTRO-release"
-            echo "image_tag_debug=$tag-$DISTRO-debug"
+            echo "image_tag_release=$name"
+            echo "image_tag_debug=$name-debug"
             echo "family_release=$base"
             echo "family_debug=$base-debug"
           } >> "$GITHUB_OUTPUT"
@@ -407,7 +407,7 @@ jobs:
         profile: [release, debug]
     uses: ./.github/workflows/deploy-gcp-cohere.yaml
     with:
-      image_tag: ${{ needs.meta.outputs.tag }}-${{ needs.meta.outputs.distro }}-${{ matrix.profile }}
+      image_tag: ${{ matrix.profile == 'release' && needs.meta.outputs.image_tag_release || needs.meta.outputs.image_tag_debug }}
     secrets:
       GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
       GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
