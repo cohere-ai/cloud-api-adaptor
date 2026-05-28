@@ -20,7 +20,13 @@ dump_state() {
     fi
 }
 
-trap 'rc=$?; log "failed with exit code ${rc} at line ${LINENO}"; dump_state; exit "${rc}"' ERR
+on_error() {
+    local rc=$?
+    log "failed with exit code ${rc} at line ${BASH_LINENO[0]}"
+    dump_state
+    exit "${rc}"
+}
+trap on_error ERR
 
 log "starting process-user-data provision-files"
 dump_state
