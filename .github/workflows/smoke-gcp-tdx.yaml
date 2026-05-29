@@ -219,9 +219,19 @@ jobs:
           "${SSH_BASE[@]}" 'true'
 
           runtime_data=$(printf 'podvm-smoke-%s' "$GITHUB_RUN_ID" | base64 -w0)
-          "${SSH_BASE[@]}" \
-            "curl -fsS 'http://127.0.0.1:8006/aa/evidence?runtime_data=${runtime_data}&encoding=base64'" \
-            > /tmp/aa-evidence.json
+          for _ in $(seq 1 60); do
+            if "${SSH_BASE[@]}" \
+              "curl -fsS 'http://127.0.0.1:8006/aa/evidence?runtime_data=${runtime_data}&encoding=base64'" \
+              > /tmp/aa-evidence.json; then
+              break
+            fi
+            sleep 10
+          done
+          if [ ! -s /tmp/aa-evidence.json ]; then
+            "${SSH_BASE[@]}" 'systemctl --no-pager --full status attestation-agent confidential-data-hub || true'
+            "${SSH_BASE[@]}" 'journalctl --no-pager -u attestation-agent -u confidential-data-hub -n 200 || true'
+            exit 1
+          fi
           "${SSH_BASE[@]}" 'nvidia-smi -L'
 
           python3 - <<'PY'
