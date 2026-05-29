@@ -294,7 +294,7 @@ jobs:
           runtime_data=$(printf 'podvm-smoke-%s' "$GITHUB_RUN_ID" | base64 -w0)
           for _ in $(seq 1 60); do
             if "${SSH_BASE[@]}" \
-              "curl -fsS 'http://127.0.0.1:8006/aa/evidence?runtime_data=${runtime_data}&encoding=base64'" \
+              "nsenter --net=/run/netns/podns curl -fsS 'http://127.0.0.1:8006/aa/evidence?runtime_data=${runtime_data}&encoding=base64'" \
               > /tmp/aa-evidence.json; then
               break
             fi
