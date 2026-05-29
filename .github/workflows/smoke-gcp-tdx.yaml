@@ -187,6 +187,8 @@ jobs:
             --image="$IMAGE_NAME" \
             --image-project="$IMAGE_PROJECT" \
             --confidential-compute-type=TDX \
+            --provisioning-model=SPOT \
+            --instance-termination-action=DELETE \
             --maintenance-policy=TERMINATE \
             --shielded-vtpm \
             --no-service-account \
