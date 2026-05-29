@@ -1,6 +1,55 @@
 name: Smoke TDX Measurements (GCP)
 
 on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "PodVM OCI artifact tag in GHCR"
+        required: true
+        type: string
+      image_name:
+        description: "GCE image name to boot"
+        required: true
+        type: string
+      measurements_run_id:
+        description: "Workflow run ID containing the smoke-measurements artifact"
+        required: true
+        type: string
+      image_project:
+        description: "GCP project containing the image"
+        required: false
+        type: string
+        default: cohere-artifacts
+      gcp_project:
+        description: "GCP project where the smoke VM is created"
+        required: false
+        type: string
+        default: cohere-confidential-computing
+      zone:
+        description: "GCP zone for the smoke VM"
+        required: false
+        type: string
+        default: us-central1-a
+      machine_type:
+        description: "GCE machine type; must match measurements.json"
+        required: false
+        type: string
+        default: a3-highgpu-1g
+      network:
+        description: "GCP VPC network for the smoke VM"
+        required: false
+        type: string
+        default: conf-compute
+      subnet:
+        description: "GCP subnet for the smoke VM"
+        required: false
+        type: string
+        default: conf-compute-subnet
+      ram_gib:
+        description: "Guest RAM in GiB; must match measurements.json"
+        required: false
+        type: string
+        default: "234"
   workflow_call:
     inputs:
       image_tag:
@@ -81,10 +130,20 @@ jobs:
           persist-credentials: false
 
       - name: Download smoke measurements
+        if: ${{ github.event_name != 'workflow_dispatch' }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: smoke-measurements-${{ inputs.image_name }}
           path: /tmp/podvm
+
+      - name: Download smoke measurements from prior run
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: smoke-measurements-${{ inputs.image_name }}
+          path: /tmp/podvm
+          run-id: ${{ inputs.measurements_run_id }}
+          github-token: ${{ github.token }}
 
       - name: Install ORAS and cvm-measure
         env:
@@ -178,6 +237,14 @@ jobs:
           printf '%s\n' "$DEBUG_SSH_PRIVATE_KEY" > ~/.ssh/podvm_smoke
           chmod 0600 ~/.ssh/podvm_smoke
 
+          cat > /tmp/podvm-smoke-user-data.yaml <<'EOF'
+          #cloud-config
+          write_files:
+          - path: /run/peerpod/aa.toml
+            content: ""
+          EOF
+          base64 -w0 /tmp/podvm-smoke-user-data.yaml > /tmp/podvm-smoke-user-data.b64
+
           gcloud compute instances create "$VM_NAME" \
             --project="$GCP_PROJECT" \
             --zone="$ZONE" \
@@ -193,6 +260,7 @@ jobs:
             --shielded-vtpm \
             --no-service-account \
             --no-scopes \
+            --metadata-from-file=user-data=/tmp/podvm-smoke-user-data.b64 \
             --labels=purpose=podvm-smoke,github-run-id="${GITHUB_RUN_ID}"
 
       - name: Fetch AA evidence and CC event log
