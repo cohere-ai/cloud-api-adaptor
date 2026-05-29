@@ -12,8 +12,42 @@
 # bytes without going through sed.
 set -euo pipefail
 
+log() {
+    echo "[extend-rtmr3-initdata] $(date -Is) $*"
+}
+
 digest_file=/run/peerpod/initdata.digest
 rtmr=/sys/devices/virtual/misc/tdx_guest/measurements/rtmr3:sha384
+
+# QEMU podvm smoke tests boot without TDX; skip instead of waiting 30s and failing.
+if [ ! -e /dev/tdx_guest ]; then
+    log "skipping RTMR3 extension (not a TDX guest)"
+    exit 0
+fi
+
+on_error() {
+    local rc=$?
+    log "failed with exit code ${rc} at line ${BASH_LINENO[0]}"
+    ls -l "$digest_file" "$rtmr" 2>&1 || true
+    exit "${rc}"
+}
+trap on_error ERR
+
+log "starting RTMR3 extension"
+for attempt in {1..30}; do
+    if [ -e "$rtmr" ]; then
+        break
+    fi
+    log "waiting for RTMR3 measurement node: $rtmr (attempt ${attempt}/30)"
+    sleep 1
+done
+
+if [ ! -e "$rtmr" ]; then
+    log "RTMR3 measurement node not found after waiting: $rtmr"
+    exit 1
+fi
+
+ls -l "$digest_file" "$rtmr" 2>&1 || true
 
 hex=$(tr -d '[:space:]' < "$digest_file")
 # Right-pad with zero hex chars to 96 (a TDX RTMR is 48 bytes / SHA-384).
@@ -28,3 +62,4 @@ done
 # printf interprets the \xHH escapes; dd guarantees a single 48-byte
 # write(2), which the kernel TDX driver requires.
 printf -- "$escaped" | dd of="$rtmr" bs=48 count=1 status=none
+log "completed RTMR3 extension"

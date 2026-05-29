@@ -130,9 +130,11 @@ jobs:
         env:
           CVM_TOKEN: ${{ secrets.CVM_MEASURE_TOKEN }}
         run: |
-          # TODO: switch to main (or pin to a release tag/SHA) after cvm-measure PR merges
-          git clone --depth 1 --branch alhassankhedr/cc-167-tdx-measurement-toolkit \
+          CVM_MEASURE_REF=$(yq -r '.git["cvm-measure"].reference' "$VERSIONS_YAML")
+          git clone --depth 1 \
             "https://x-access-token:${CVM_TOKEN}@github.com/cohere-ai/cvm-measure.git" /tmp/cvm-measure
+          git -C /tmp/cvm-measure fetch --depth 1 origin "${CVM_MEASURE_REF}"
+          git -C /tmp/cvm-measure checkout "${CVM_MEASURE_REF}"
           pip install --break-system-packages /tmp/cvm-measure
           rm -rf /tmp/cvm-measure
           cvm-measure --version
