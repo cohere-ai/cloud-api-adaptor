@@ -193,7 +193,8 @@ jobs:
 
           mkdir -p /tmp/podvm
           cd /tmp/podvm
-          oras pull "${IMAGE_REF}"
+          oras pull "${IMAGE_REF}" \
+            measurements.json:application/vnd.cohere.podvm.measurements+json
           jq -e \
             --arg image_name "$IMAGE_NAME" \
             '.image_name == $image_name
