@@ -21,6 +21,25 @@ on:
         required: false
         type: boolean
         default: true
+      # TODO: Remove this once smoke-gcp-tdx.yaml is registered on the default branch
+      # and can be dispatched directly.
+      smoke_only:
+        description: "Only run the GCP TDX smoke test against an existing debug image"
+        required: false
+        type: boolean
+        default: false
+      smoke_image_tag:
+        description: "Existing debug PodVM OCI artifact tag; required when smoke_only is true"
+        required: false
+        type: string
+      smoke_image_name:
+        description: "Existing debug GCE image name; required when smoke_only is true"
+        required: false
+        type: string
+      smoke_measurements_run_id:
+        description: "Workflow run ID containing the smoke-measurements artifact; required when smoke_only is true"
+        required: false
+        type: string
 
 permissions:
   actions: read       # download smoke measurements artifact in the GCP smoke workflow
@@ -43,6 +62,7 @@ env:
 jobs:
   meta:
     name: Compute metadata
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.smoke_only) }}
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.compute.outputs.tag }}
@@ -443,6 +463,22 @@ jobs:
     with:
       image_tag: ${{ needs.meta.outputs.image_tag_debug }}
       image_name: ${{ needs.meta.outputs.image_name_debug }}
+      machine_type: a3-highgpu-1g
+      ram_gib: "234"
+    secrets:
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      CVM_MEASURE_TOKEN: ${{ secrets.CVM_MEASURE_TOKEN }}
+      DEBUG_SSH_PRIVATE_KEY: ${{ secrets.DEBUG_SSH_PRIVATE_KEY }}
+
+  smoke-gcp-tdx-only:
+    name: Smoke TDX measurements (GCP debug image only)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.smoke_only }}
+    uses: ./.github/workflows/smoke-gcp-tdx.yaml
+    with:
+      image_tag: ${{ inputs.smoke_image_tag }}
+      image_name: ${{ inputs.smoke_image_name }}
+      measurements_run_id: ${{ inputs.smoke_measurements_run_id }}
       machine_type: a3-highgpu-1g
       ram_gib: "234"
     secrets:
