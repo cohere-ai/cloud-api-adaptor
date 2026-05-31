@@ -87,12 +87,18 @@ jobs:
           # GCE image names max 63 chars; deploy uses ${IMAGE_NAME}-import (7).
           # Debug names add -debug (6), so keep base-disc at 50 chars.
           max_disc_len=$((50 - ${#base} - 1))
-          [ "$max_disc_len" -lt 8 ] && max_disc_len=8
+          if [ "$max_disc_len" -lt 1 ]; then
+            echo "ERROR: image name prefix '$base' is too long for GCE image names" >&2
+            exit 1
+          fi
           attempt_suffix=""
           [ "${GITHUB_RUN_ATTEMPT:-1}" -gt 1 ] && attempt_suffix="-r$GITHUB_RUN_ATTEMPT"
           if [ -n "$attempt_suffix" ]; then
             max_base_disc_len=$((max_disc_len - ${#attempt_suffix}))
-            [ "$max_base_disc_len" -lt 1 ] && max_base_disc_len=1
+            if [ "$max_base_disc_len" -lt 1 ]; then
+              echo "ERROR: rerun suffix '$attempt_suffix' leaves no room for image discriminator" >&2
+              exit 1
+            fi
             disc="${disc:0:$max_base_disc_len}$attempt_suffix"
           else
             disc="${disc:0:$max_disc_len}"
@@ -121,7 +127,7 @@ jobs:
       matrix:
         profile: [release, debug]
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
 
@@ -353,7 +359,7 @@ jobs:
           retention-days: 1
 
       - name: Login to GHCR
-        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -404,7 +410,7 @@ jobs:
           echo "Pushed: $OCI_REF @ $DIGEST"
 
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
         with:
           subject-name: ${{ env.OCI_IMAGE }}
           subject-digest: ${{ steps.push.outputs.digest }}

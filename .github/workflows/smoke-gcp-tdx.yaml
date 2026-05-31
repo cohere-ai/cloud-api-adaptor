@@ -193,8 +193,16 @@ jobs:
 
           mkdir -p /tmp/podvm
           cd /tmp/podvm
-          oras pull "${IMAGE_REF}" \
-            measurements.json:application/vnd.cohere.podvm.measurements+json
+          MEASUREMENTS_DIGEST=$(oras manifest fetch "${IMAGE_REF}" \
+            | jq -r '.layers[]
+              | select(.annotations["org.opencontainers.image.title"] == "measurements.json")
+              | .digest')
+          if [ -z "$MEASUREMENTS_DIGEST" ] || [ "$MEASUREMENTS_DIGEST" = "null" ]; then
+            echo "ERROR: measurements.json layer not found in ${IMAGE_REF}" >&2
+            exit 1
+          fi
+          oras blob fetch "${OCI_IMAGE}@${MEASUREMENTS_DIGEST}" \
+            --output /tmp/podvm/measurements.json
           jq -e \
             --arg image_name "$IMAGE_NAME" \
             '.image_name == $image_name
