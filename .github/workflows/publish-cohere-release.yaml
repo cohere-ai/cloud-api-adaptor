@@ -127,6 +127,14 @@ jobs:
               RELEASE_TAGS="${RELEASE_TAGS}" \
               make image registry="${REGISTRY}"
 
+      - name: Publish release manifest
+        env:
+          IMAGE_REGISTRY: ${{ env.REGISTRY }}
+          IMAGE_NAME: cloud-api-adaptor
+          IMAGE_TAGS: ${{ needs.tags.outputs.image_tag }}
+          ARCHES: amd64
+        run: ./hack/publish.sh publish-multiarch-manifest
+
   peerpod-ctrl:
     name: Build peerpod-ctrl image (amd64)
     needs: tags
@@ -165,7 +173,7 @@ jobs:
 
   chart:
     name: Publish peerpods Helm chart
-    needs: tags
+    needs: [tags, caa, peerpod-ctrl]
     runs-on: ubuntu-24.04
     permissions:
       contents: read           # checkout the release tag

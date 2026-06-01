@@ -21,13 +21,9 @@ on:
         required: false
         type: boolean
         default: true
-      replace_existing_image:
-        description: "Replace existing GCP image if it exists"
-        required: false
-        type: boolean
-        default: false
 
 permissions:
+  actions: read       # download smoke measurements artifact in the GCP smoke workflow
   id-token: write      # OIDC token for build provenance attestation
   attestations: write  # actions/attest-build-provenance
   contents: read       # actions/checkout
@@ -40,41 +36,81 @@ env:
   TEE_PLATFORM: tdx-nvidia
   OCI_IMAGE: ghcr.io/${{ github.repository }}/podvm
   VERSIONS_YAML: src/cloud-api-adaptor/versions.yaml
+  SMOKE_MACHINE_TYPE: a3-highgpu-1g
+  SMOKE_RAM_GIB: "234"
+  BASELINES_REPO: cohere-ai/cohere-cc-baselines
 
 jobs:
   meta:
     name: Compute metadata
     runs-on: ubuntu-latest
     outputs:
-      tag: ${{ steps.compute.outputs.tag }}
       distro: ${{ steps.compute.outputs.distro }}
-      replace_image: ${{ steps.compute.outputs.replace_image }}
+      class: ${{ steps.compute.outputs.class }}
+      ttl: ${{ steps.compute.outputs.ttl }}
       image_name_release: ${{ steps.compute.outputs.image_name_release }}
       image_name_debug: ${{ steps.compute.outputs.image_name_debug }}
       image_tag_release: ${{ steps.compute.outputs.image_tag_release }}
       image_tag_debug: ${{ steps.compute.outputs.image_tag_debug }}
+      family_release: ${{ steps.compute.outputs.family_release }}
+      family_debug: ${{ steps.compute.outputs.family_debug }}
+      smoke_machine_type: ${{ steps.compute.outputs.smoke_machine_type }}
+      smoke_ram_gib: ${{ steps.compute.outputs.smoke_ram_gib }}
     steps:
       - name: Compute tags and image names
         id: compute
         env:
           DISTRO: ${{ inputs.distro || 'ubuntu' }}
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/podvm-v* ]]; then
-            TAG="${GITHUB_REF#refs/tags/podvm-}"
-            REPLACE_IMAGE="false"
-          else
-            TAG="cohere-latest"
-            REPLACE_IMAGE="true"
+          # Classify so consumers can pin (release/cohere) or auto-clean (dev).
+          # Names are content-addressed; reruns of the same SHA get -r<attempt>.
+          sha=${GITHUB_SHA:0:7}
+          case "$GITHUB_REF" in
+            refs/tags/podvm-v*)
+              class=release; ttl=keep
+              v="${GITHUB_REF#refs/tags/podvm-v}"; disc="v${v//./-}" ;;
+            refs/heads/cohere)
+              class=cohere; ttl=90d
+              disc="$(date -u +%Y%m%d)-$sha" ;;
+            *)
+              class=dev; ttl=30d
+              slug=$(echo "$GITHUB_REF_NAME" | tr '[:upper:]' '[:lower:]' \
+                | sed 's/[^a-z0-9-]/-/g; s/^-*//; s/-*$//' | cut -c1-20)
+              disc="${slug:-manual}-$sha" ;;
+          esac
+          base="podvm-$DISTRO-$TEE_PLATFORM-$class"
+          # GCE image names max 63 chars; deploy uses ${IMAGE_NAME}-import (7).
+          # Debug names add -debug (6), so keep base-disc at 50 chars.
+          max_disc_len=$((50 - ${#base} - 1))
+          if [ "$max_disc_len" -lt 1 ]; then
+            echo "ERROR: image name prefix '$base' is too long for GCE image names" >&2
+            exit 1
           fi
-          TAG="${TAG//./-}"
+          attempt_suffix=""
+          [ "${GITHUB_RUN_ATTEMPT:-1}" -gt 1 ] && attempt_suffix="-r$GITHUB_RUN_ATTEMPT"
+          if [ -n "$attempt_suffix" ]; then
+            max_base_disc_len=$((max_disc_len - ${#attempt_suffix}))
+            if [ "$max_base_disc_len" -lt 1 ]; then
+              echo "ERROR: rerun suffix '$attempt_suffix' leaves no room for image discriminator" >&2
+              exit 1
+            fi
+            disc="${disc:0:$max_base_disc_len}$attempt_suffix"
+          else
+            disc="${disc:0:$max_disc_len}"
+          fi
+          name="$base-$disc"
           {
-            echo "tag=$TAG"
             echo "distro=$DISTRO"
-            echo "replace_image=$REPLACE_IMAGE"
-            echo "image_name_release=podvm-${DISTRO}-${TEE_PLATFORM}-release-${TAG}"
-            echo "image_name_debug=podvm-${DISTRO}-${TEE_PLATFORM}-debug-${TAG}"
-            echo "image_tag_release=${TAG}-${DISTRO}-release"
-            echo "image_tag_debug=${TAG}-${DISTRO}-debug"
+            echo "class=$class"
+            echo "ttl=$ttl"
+            echo "image_name_release=$name"
+            echo "image_name_debug=$name-debug"
+            echo "image_tag_release=$name"
+            echo "image_tag_debug=$name-debug"
+            echo "family_release=$base"
+            echo "family_debug=$base-debug"
+            echo "smoke_machine_type=$SMOKE_MACHINE_TYPE"
+            echo "smoke_ram_gib=$SMOKE_RAM_GIB"
           } >> "$GITHUB_OUTPUT"
 
   build:
@@ -86,7 +122,7 @@ jobs:
       matrix:
         profile: [release, debug]
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
 
@@ -194,10 +230,14 @@ jobs:
           echo "=== After cleanup ==="
           df -h /
 
-      - name: Extract UKI and predict RTMR2
+      - name: Extract UKI and predict TDX measurements
         id: measure
         env:
+          GH_TOKEN: ${{ secrets.CVM_MEASURE_TOKEN }}
           IMAGE_NAME: ${{ matrix.profile == 'release' && needs.meta.outputs.image_name_release || needs.meta.outputs.image_name_debug }}
+          IMAGE_FAMILY: ${{ matrix.profile == 'release' && needs.meta.outputs.family_release || needs.meta.outputs.family_debug }}
+          IMAGE_CLASS: ${{ needs.meta.outputs.class }}
+          IMAGE_TTL: ${{ needs.meta.outputs.ttl }}
           CAA_COMMIT: ${{ github.sha }}
           CAA_REF: ${{ github.ref_name }}
           DISTRO: ${{ needs.meta.outputs.distro }}
@@ -205,23 +245,28 @@ jobs:
         run: |
           cvm-measure extract-uki --disk /tmp/disk.raw --output /tmp/BOOTX64.EFI
 
-          RTMR2=$(python3 -c "
-          import hashlib
-          from cvm_measure.tdx.pe import pe_extract_section
-          from cvm_measure.tdx.rtmr import extend_rtmr, SHA384_SIZE
-          uki = open('/tmp/BOOTX64.EFI', 'rb').read()
-          sections = ['linux', 'osrel', 'cmdline', 'initrd', 'ucode', 'uname', 'sbat', 'pcrpkey']
-          rtmr2 = bytes(SHA384_SIZE)
-          for name in sections:
-              data = pe_extract_section(uki, f'.{name}', use_virtual_size=True)
-              if data is None:
-                  continue
-              name_hash = hashlib.sha384(f'.{name}\0'.encode('ascii')).digest()
-              rtmr2 = extend_rtmr(rtmr2, name_hash)
-              content_hash = hashlib.sha384(data).digest()
-              rtmr2 = extend_rtmr(rtmr2, content_hash)
-          print(rtmr2.hex())
-          ")
+          mkdir -p /tmp/cvm-artifacts
+          BASELINE="/tmp/cvm-artifacts/${SMOKE_MACHINE_TYPE}.json"
+          gh api "/repos/${BASELINES_REPO}/contents/baselines/gcp/tdx/${SMOKE_MACHINE_TYPE}.json" \
+            --jq .content | base64 -d > "$BASELINE"
+
+          FIRMWARE_SHA384=$(jq -r '.firmware_sha384' "$BASELINE")
+          FIRMWARE="/tmp/cvm-artifacts/${FIRMWARE_SHA384}.fd"
+          curl -fsSL \
+            "https://storage.googleapis.com/gce_tcb_integrity/ovmf_x64_csm/${FIRMWARE_SHA384}.fd" \
+            -o "$FIRMWARE"
+
+          cvm-measure tdx \
+            --firmware "$FIRMWARE" \
+            --uki /tmp/BOOTX64.EFI \
+            --baseline "$BASELINE" \
+            --disk /tmp/disk.raw \
+            --ram "$SMOKE_RAM_GIB" \
+            --output-format json > /tmp/tdx-measurements.json
+
+          jq -e 'has("mrtd") and has("rtmr0") and has("rtmr1") and has("rtmr2") and has("rtmr3")' \
+            /tmp/tdx-measurements.json
+          RTMR2=$(jq -r '.rtmr2' /tmp/tdx-measurements.json)
 
           KERNEL=$(python3 -c "
           from cvm_measure.tdx.pe import pe_extract_section
@@ -258,6 +303,9 @@ jobs:
 
           jq -n \
             --arg image_name "$IMAGE_NAME" \
+            --arg image_family "$IMAGE_FAMILY" \
+            --arg image_class "$IMAGE_CLASS" \
+            --arg image_ttl "$IMAGE_TTL" \
             --arg rtmr2_sha384 "$RTMR2" \
             --arg kernel "$KERNEL" \
             --arg nvidia_driver_pkg "$NVIDIA_DRIVER_PKG" \
@@ -276,6 +324,15 @@ jobs:
                  .
                end' > /tmp/measurements.json
 
+          jq \
+            --slurpfile image /tmp/measurements.json \
+            --arg smoke_machine_type "$SMOKE_MACHINE_TYPE" \
+            --arg smoke_ram_gib "$SMOKE_RAM_GIB" \
+            '$image[0] + .
+             | .smoke_machine_type = $smoke_machine_type
+             | .smoke_ram_gib = ($smoke_ram_gib | tonumber)' \
+            /tmp/tdx-measurements.json > /tmp/smoke-measurements.json
+
           cat /tmp/measurements.json
 
       - name: Prepare artifacts
@@ -284,8 +341,17 @@ jobs:
           rm /tmp/disk.raw
           echo "Compressed size: $(du -sh /tmp/disk.tar.gz | cut -f1)"
 
+      - name: Upload smoke measurements
+        if: matrix.profile == 'debug'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: smoke-measurements-${{ needs.meta.outputs.image_name_debug }}
+          path: /tmp/smoke-measurements.json
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Login to GHCR
-        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -336,7 +402,7 @@ jobs:
           echo "Pushed: $OCI_REF @ $DIGEST"
 
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
         with:
           subject-name: ${{ env.OCI_IMAGE }}
           subject-digest: ${{ steps.push.outputs.digest }}
@@ -358,12 +424,26 @@ jobs:
         profile: [release, debug]
     uses: ./.github/workflows/deploy-gcp-cohere.yaml
     with:
-      image_tag: ${{ needs.meta.outputs.tag }}-${{ needs.meta.outputs.distro }}-${{ matrix.profile }}
-      replace_existing_image: >-
-        ${{
-          (github.event_name == 'push' && needs.meta.outputs.replace_image == 'true') ||
-          (github.event_name == 'workflow_dispatch' && inputs.replace_existing_image)
-        }}
+      image_tag: ${{ matrix.profile == 'release' && needs.meta.outputs.image_tag_release || needs.meta.outputs.image_tag_debug }}
     secrets:
       GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
       GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+  smoke-gcp-tdx:
+    name: Smoke TDX measurements (GCP debug image)
+    needs: [meta, deploy-gcp]
+    if: |
+      needs.deploy-gcp.result == 'success' &&
+      (github.event_name == 'push' ||
+       (github.event_name == 'workflow_dispatch' && inputs.deploy_gcp))
+    uses: ./.github/workflows/smoke-gcp-tdx.yaml
+    with:
+      image_tag: ${{ needs.meta.outputs.image_tag_debug }}
+      image_name: ${{ needs.meta.outputs.image_name_debug }}
+      machine_type: ${{ needs.meta.outputs.smoke_machine_type }}
+      ram_gib: ${{ needs.meta.outputs.smoke_ram_gib }}
+    secrets:
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      CVM_MEASURE_TOKEN: ${{ secrets.CVM_MEASURE_TOKEN }}
+      DEBUG_SSH_PRIVATE_KEY: ${{ secrets.DEBUG_SSH_PRIVATE_KEY }}

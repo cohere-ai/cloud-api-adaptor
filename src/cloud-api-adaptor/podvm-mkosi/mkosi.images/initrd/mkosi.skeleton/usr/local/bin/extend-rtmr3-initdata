@@ -19,12 +19,6 @@ log() {
 digest_file=/run/peerpod/initdata.digest
 rtmr=/sys/devices/virtual/misc/tdx_guest/measurements/rtmr3:sha384
 
-# QEMU podvm smoke tests boot without TDX; skip instead of waiting 30s and failing.
-if [ ! -e /dev/tdx_guest ]; then
-    log "skipping RTMR3 extension (not a TDX guest)"
-    exit 0
-fi
-
 on_error() {
     local rc=$?
     log "failed with exit code ${rc} at line ${BASH_LINENO[0]}"
@@ -33,7 +27,22 @@ on_error() {
 }
 trap on_error ERR
 
+# On GCP TDX peer pods /dev/tdx_guest is not ready when process-user-data
+# starts; wait before giving up. QEMU smoke tests never get the device.
 log "starting RTMR3 extension"
+for attempt in {1..30}; do
+    if [ -e /dev/tdx_guest ]; then
+        break
+    fi
+    log "waiting for /dev/tdx_guest (attempt ${attempt}/30)"
+    sleep 1
+done
+
+if [ ! -e /dev/tdx_guest ]; then
+    log "skipping RTMR3 extension (not a TDX guest)"
+    exit 0
+fi
+
 for attempt in {1..30}; do
     if [ -e "$rtmr" ]; then
         break
