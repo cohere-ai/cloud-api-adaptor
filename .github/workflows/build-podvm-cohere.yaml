@@ -61,7 +61,6 @@ jobs:
         id: compute
         env:
           DISTRO: ${{ inputs.distro || 'ubuntu' }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           # Classify so consumers can pin (release/cohere) or auto-clean (dev).
           # Names are content-addressed; reruns of the same SHA get -r<attempt>.
@@ -75,13 +74,9 @@ jobs:
               disc="$(date -u +%Y%m%d)-$sha" ;;
             *)
               class=dev; ttl=30d
-              if [ -n "$PR_NUMBER" ]; then
-                disc="pr$PR_NUMBER-$sha"
-              else
-                slug=$(echo "$GITHUB_REF_NAME" | tr '[:upper:]' '[:lower:]' \
-                  | sed 's/[^a-z0-9-]/-/g; s/^-*//; s/-*$//' | cut -c1-20)
-                disc="${slug:-manual}-$sha"
-              fi ;;
+              slug=$(echo "$GITHUB_REF_NAME" | tr '[:upper:]' '[:lower:]' \
+                | sed 's/[^a-z0-9-]/-/g; s/^-*//; s/-*$//' | cut -c1-20)
+              disc="${slug:-manual}-$sha" ;;
           esac
           base="podvm-$DISTRO-$TEE_PLATFORM-$class"
           # GCE image names max 63 chars; deploy uses ${IMAGE_NAME}-import (7).
@@ -243,7 +238,6 @@ jobs:
           IMAGE_FAMILY: ${{ matrix.profile == 'release' && needs.meta.outputs.family_release || needs.meta.outputs.family_debug }}
           IMAGE_CLASS: ${{ needs.meta.outputs.class }}
           IMAGE_TTL: ${{ needs.meta.outputs.ttl }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
           CAA_COMMIT: ${{ github.sha }}
           CAA_REF: ${{ github.ref_name }}
           DISTRO: ${{ needs.meta.outputs.distro }}
@@ -312,7 +306,6 @@ jobs:
             --arg image_family "$IMAGE_FAMILY" \
             --arg image_class "$IMAGE_CLASS" \
             --arg image_ttl "$IMAGE_TTL" \
-            --arg pr_number "$PR_NUMBER" \
             --arg rtmr2_sha384 "$RTMR2" \
             --arg kernel "$KERNEL" \
             --arg nvidia_driver_pkg "$NVIDIA_DRIVER_PKG" \
@@ -329,8 +322,7 @@ jobs:
                  del(.nvidia_driver_pkg, .nvidia_driver_version)
                else
                  .
-               end
-             | if .pr_number == "" then del(.pr_number) else . end' > /tmp/measurements.json
+               end' > /tmp/measurements.json
 
           jq \
             --slurpfile image /tmp/measurements.json \

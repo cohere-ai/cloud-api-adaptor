@@ -112,7 +112,6 @@ jobs:
             echo "image_family=$IMAGE_FAMILY"
             echo "image_class=$IMAGE_CLASS"
             echo "image_ttl=$IMAGE_TTL"
-            echo "pr_number=$(jq -r '.pr_number // ""' measurements.json)"
             echo "distro=$(jq -r '.distro' measurements.json)"
             echo "profile=$(jq -r '.profile' measurements.json)"
             echo "caa_commit=$(jq -r '.caa_commit' measurements.json)"
@@ -151,7 +150,6 @@ jobs:
           IMAGE_FAMILY: ${{ steps.pull.outputs.image_family }}
           IMAGE_CLASS: ${{ steps.pull.outputs.image_class }}
           IMAGE_TTL: ${{ steps.pull.outputs.image_ttl }}
-          PR_NUMBER: ${{ steps.pull.outputs.pr_number }}
           DISTRO: ${{ steps.pull.outputs.distro }}
           CAA_VERSION: ${{ steps.pull.outputs.caa_version }}
           CAA_COMMIT: ${{ steps.pull.outputs.caa_commit }}
@@ -196,7 +194,6 @@ jobs:
           LABELS="${LABELS},profile=$(sanitize_label "$PROFILE")"
           LABELS="${LABELS},distro=$(sanitize_label "$DISTRO")"
           LABELS="${LABELS},tee=${TEE_PLATFORM}"
-          [ -n "$PR_NUMBER" ] && LABELS="${LABELS},pr=${PR_NUMBER}"
           [ -n "$KERNEL" ] && LABELS="${LABELS},kernel=$(sanitize_label "$KERNEL")"
           [ -n "$BUILD_DATE" ] && LABELS="${LABELS},build-date=$(sanitize_label "$BUILD_DATE")"
 
