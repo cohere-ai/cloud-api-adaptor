@@ -230,10 +230,19 @@ jobs:
           echo "=== After cleanup ==="
           df -h /
 
+      - name: Mint GitHub App token for baselines
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+        with:
+          app-id: ${{ secrets.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: cohere-ai
+          repositories: cohere-cc-baselines
+
       - name: Extract UKI and predict TDX measurements
         id: measure
         env:
-          GH_TOKEN: ${{ secrets.CVM_MEASURE_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           IMAGE_NAME: ${{ matrix.profile == 'release' && needs.meta.outputs.image_name_release || needs.meta.outputs.image_name_debug }}
           IMAGE_FAMILY: ${{ matrix.profile == 'release' && needs.meta.outputs.family_release || needs.meta.outputs.family_debug }}
           IMAGE_CLASS: ${{ needs.meta.outputs.class }}
