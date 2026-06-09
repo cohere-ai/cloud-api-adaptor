@@ -164,7 +164,7 @@ jobs:
 
       - name: Install cvm-measure
         env:
-          CVM_TOKEN: ${{ secrets.CVM_MEASURE_TOKEN }}
+          CVM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           CVM_MEASURE_REF=$(yq -r '.git["cvm-measure"].reference' "$VERSIONS_YAML")
           git clone --depth 1 \
@@ -454,5 +454,4 @@ jobs:
     secrets:
       GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
       GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
-      CVM_MEASURE_TOKEN: ${{ secrets.CVM_MEASURE_TOKEN }}
       DEBUG_SSH_PRIVATE_KEY: ${{ secrets.DEBUG_SSH_PRIVATE_KEY }}
