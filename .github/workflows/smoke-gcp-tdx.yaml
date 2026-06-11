@@ -105,8 +105,6 @@ on:
         required: true
       GCP_SERVICE_ACCOUNT:
         required: true
-      CVM_MEASURE_TOKEN:
-        required: true
       DEBUG_SSH_PRIVATE_KEY:
         required: true
 
@@ -152,7 +150,7 @@ jobs:
 
       - name: Install ORAS and cvm-measure
         env:
-          CVM_TOKEN: ${{ secrets.CVM_MEASURE_TOKEN }}
+          CVM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           command -v yq || sudo snap install yq
           ORAS_VERSION=$(yq '.tools.oras' "$VERSIONS_YAML")
