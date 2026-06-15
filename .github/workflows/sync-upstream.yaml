@@ -4,7 +4,7 @@ on:
   # TEMPORARY: testing on feature branch — remove before merging to cohere.
   push:
     branches:
-      - feat/sync-upstream-workflow
+      - vijay/sync-upstream-fix
   schedule:
     # Every Monday at 09:00 UTC
     - cron: "0 9 * * 1"
@@ -31,7 +31,8 @@ concurrency:
 env:
   UPSTREAM_REPO: https://github.com/confidential-containers/cloud-api-adaptor.git
   UPSTREAM_REF: ${{ inputs.upstream_ref || 'main' }}
-  COHERE_BRANCH: ${{ inputs.cohere_branch || 'cohere' }}
+  # TEMPORARY: testing target — restore to 'cohere' before merging.
+  COHERE_BRANCH: ${{ inputs.cohere_branch || 'vijay/sync-cohere-test' }}
 
 jobs:
   # ── Step 1: fast-forward origin/main to match upstream/main ──────────────
@@ -88,7 +89,7 @@ jobs:
           fi
 
           git merge --ff-only "upstream/$UPSTREAM_REF"
-          git push origin main
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:main
           echo "new_commits=$BEHIND" >> "$GITHUB_OUTPUT"
           echo "Fast-forwarded main by $BEHIND commits to $UPSTREAM_SHA"
 
@@ -168,7 +169,7 @@ jobs:
         if: steps.check.outputs.behind != '0'
         env:
           SYNC_BRANCH: ${{ steps.check.outputs.sync_branch }}
-        run: git push origin "$SYNC_BRANCH"
+        run: git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$SYNC_BRANCH"
 
       - name: Create pull request (clean merge)
         if: steps.check.outputs.behind != '0' && steps.merge.outputs.conflict == 'false'
