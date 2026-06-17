@@ -44,12 +44,18 @@ jobs:
     outputs:
       new_commits: ${{ steps.ff.outputs.new_commits }}
       upstream_sha: ${{ steps.ff.outputs.upstream_sha }}
-    # GH_TOKEN must be available to every step — `gh auth setup-git`
-    # registers `gh` as a git credential helper, and that helper shells
-    # out to `gh` at push-time, which reads $GH_TOKEN from the environment.
-    env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
+      # The default GITHUB_TOKEN cannot push to .github/workflows/ files, and
+      # main is protected by a branch ruleset. We mint a short-lived token from
+      # the cloud-api-adaptor-upstream-sync GitHub App, which has Workflows:
+      # write and is a bypass actor on the main ruleset.
+      - name: Mint GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.SYNC_APP_CLIENT_ID }}
+          private-key: ${{ secrets.SYNC_APP_PRIVATE_KEY }}
+
       - name: Checkout main
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -60,6 +66,11 @@ jobs:
           persist-credentials: false
 
       - name: Configure git
+        # The App token is set per-step (it's a step output, so it can't live
+        # at job level). `gh auth setup-git` registers gh as a git credential
+        # helper, which reads $GH_TOKEN at push-time.
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -67,6 +78,8 @@ jobs:
 
       - name: Fast-forward main to upstream
         id: ff
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           git remote add upstream "$UPSTREAM_REPO" || true
           git fetch upstream "$UPSTREAM_REF"
@@ -101,12 +114,14 @@ jobs:
     permissions:
       contents: write # push the sync/* branch
       pull-requests: write # create the sync PR via `gh pr create`
-    # GH_TOKEN must be available to every step — `gh auth setup-git`
-    # registers `gh` as a git credential helper, and that helper shells
-    # out to `gh` at push-time, which reads $GH_TOKEN from the environment.
-    env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
+      - name: Mint GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.SYNC_APP_CLIENT_ID }}
+          private-key: ${{ secrets.SYNC_APP_PRIVATE_KEY }}
+
       - name: Checkout cohere branch
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -117,6 +132,8 @@ jobs:
           persist-credentials: false
 
       - name: Configure git
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -124,6 +141,8 @@ jobs:
 
       - name: Check if cohere is behind main
         id: check
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           git fetch origin main
           BEHIND=$(git rev-list --count HEAD..origin/main)
@@ -168,13 +187,14 @@ jobs:
       - name: Push sync branch
         if: steps.check.outputs.behind != '0'
         env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           SYNC_BRANCH: ${{ steps.check.outputs.sync_branch }}
         run: git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$SYNC_BRANCH"
 
       - name: Create pull request (clean merge)
         if: steps.check.outputs.behind != '0' && steps.merge.outputs.conflict == 'false'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           BEHIND: ${{ steps.check.outputs.behind }}
           UPSTREAM_SHA: ${{ needs.sync-main.outputs.upstream_sha }}
           SYNC_BRANCH: ${{ steps.check.outputs.sync_branch }}
@@ -201,7 +221,7 @@ jobs:
       - name: Create pull request (conflicts)
         if: steps.check.outputs.behind != '0' && steps.merge.outputs.conflict == 'true'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           UPSTREAM_SHA: ${{ needs.sync-main.outputs.upstream_sha }}
           SYNC_BRANCH: ${{ steps.check.outputs.sync_branch }}
         run: |
