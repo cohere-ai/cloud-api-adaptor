@@ -1,10 +1,6 @@
 name: Sync upstream
 
 on:
-  # TEMPORARY: testing on feature branch — remove before merging to cohere.
-  push:
-    branches:
-      - vijay/sync-upstream-fix
   schedule:
     # Every Monday at 09:00 UTC
     - cron: "0 9 * * 1"
@@ -31,8 +27,7 @@ concurrency:
 env:
   UPSTREAM_REPO: https://github.com/confidential-containers/cloud-api-adaptor.git
   UPSTREAM_REF: ${{ inputs.upstream_ref || 'main' }}
-  # TEMPORARY: testing target — restore to 'cohere' before merging.
-  COHERE_BRANCH: ${{ inputs.cohere_branch || 'vijay/sync-cohere-test' }}
+  COHERE_BRANCH: ${{ inputs.cohere_branch || 'cohere' }}
 
 jobs:
   # ── Step 1: fast-forward origin/main to match upstream/main ──────────────
@@ -46,9 +41,9 @@ jobs:
       upstream_sha: ${{ steps.ff.outputs.upstream_sha }}
     steps:
       # The default GITHUB_TOKEN cannot push to .github/workflows/ files, and
-      # main is protected by a branch ruleset. We mint a short-lived token from
+      # main is protected by branch protection. We mint a short-lived token from
       # the cloud-api-adaptor-upstream-sync GitHub App, which has Workflows:
-      # write and is a bypass actor on the main ruleset.
+      # write and is a bypass actor on the main branch protection.
       - name: Mint GitHub App token
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
