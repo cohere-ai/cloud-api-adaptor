@@ -148,12 +148,32 @@ jobs:
           SHORT_SHA=$(git rev-parse --short origin/main)
           echo "sync_branch=sync/upstream-${DATE}-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
 
+      - name: Check for existing sync PR
+        id: existing_pr
+        if: steps.check.outputs.behind != '0'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          SYNC_BRANCH: ${{ steps.check.outputs.sync_branch }}
+        run: |
+          # Idempotency guard. The sync branch name is deterministic
+          # (date + main SHA), so re-running on an unchanged main computes the
+          # same name. If an open PR for it already exists, a previous run
+          # already did the work — re-creating it would fail with "a pull
+          # request already exists" or a non-fast-forward push. Skip in that case.
+          COUNT=$(gh pr list --head "$SYNC_BRANCH" --state open --json number --jq 'length')
+          if [ "$COUNT" -gt 0 ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "An open sync PR for $SYNC_BRANCH already exists — skipping push + PR creation."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Skip if up to date
         if: steps.check.outputs.behind == '0'
         run: echo "Cohere branch is already up to date with main. Nothing to do."
 
       - name: Create sync branch and check for conflicts
-        if: steps.check.outputs.behind != '0'
+        if: steps.check.outputs.behind != '0' && steps.existing_pr.outputs.exists == 'false'
         id: merge
         env:
           SYNC_BRANCH: ${{ steps.check.outputs.sync_branch }}
@@ -180,14 +200,14 @@ jobs:
           git merge --abort 2>/dev/null || true
 
       - name: Push sync branch
-        if: steps.check.outputs.behind != '0'
+        if: steps.check.outputs.behind != '0' && steps.existing_pr.outputs.exists == 'false'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           SYNC_BRANCH: ${{ steps.check.outputs.sync_branch }}
         run: git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$SYNC_BRANCH"
 
       - name: Create pull request (clean merge)
-        if: steps.check.outputs.behind != '0' && steps.merge.outputs.conflict == 'false'
+        if: steps.check.outputs.behind != '0' && steps.existing_pr.outputs.exists == 'false' && steps.merge.outputs.conflict == 'false'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           BEHIND: ${{ steps.check.outputs.behind }}
@@ -214,7 +234,7 @@ jobs:
           )"
 
       - name: Create pull request (conflicts)
-        if: steps.check.outputs.behind != '0' && steps.merge.outputs.conflict == 'true'
+        if: steps.check.outputs.behind != '0' && steps.existing_pr.outputs.exists == 'false' && steps.merge.outputs.conflict == 'true'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           UPSTREAM_SHA: ${{ needs.sync-main.outputs.upstream_sha }}
