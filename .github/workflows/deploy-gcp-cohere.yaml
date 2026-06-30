@@ -27,6 +27,7 @@ permissions:
   attestations: read   # gh attestation verify
 
 env:
+  # Fallback; overridden per-image from measurements.json in the deploy job.
   TEE_PLATFORM: tdx
   OCI_IMAGE: ghcr.io/${{ github.repository }}/podvm
   PODVM_GCP_IMAGE_PROJECT: cohere-artifacts
@@ -121,6 +122,7 @@ jobs:
             echo "rtmr2=$(jq -r '.rtmr2_sha384 // ""' measurements.json)"
             echo "kernel=$(jq -r '.kernel // ""' measurements.json)"
             echo "build_date=$(jq -r '.build_date // ""' measurements.json)"
+            echo "tee_platform=$(jq -r '.tee_platform // "tdx"' measurements.json)"
           } >> "$GITHUB_OUTPUT"
 
       - name: Authenticate to GCP
@@ -162,6 +164,8 @@ jobs:
           GCS_URI: ${{ steps.upload.outputs.gcs_uri }}
           GCP_PROJECT: ${{ env.PODVM_GCP_IMAGE_PROJECT }}
           IMAGE_TAG: ${{ inputs.image_tag }}
+          # From the image's measurements.json; drives guest-os-features below.
+          TEE_PLATFORM: ${{ steps.pull.outputs.tee_platform }}
         run: |
           # Names are content-addressed (class + version|date+sha, plus run
           # attempt on reruns) so collisions mean the workflow logic regressed.
@@ -186,6 +190,19 @@ jobs:
             --project="$GCP_PROJECT" \
             --description="podvm import (intermediate): distro=${DISTRO} tee=${TEE_PLATFORM} caa=${CAA_VERSION} commit=${CAA_COMMIT}"
 
+          # guest-os-features must match the image's attesters; cc-* gets both.
+          CC_FEATURES=""
+          case "$TEE_PLATFORM" in
+            *cc*)  CC_FEATURES="TDX_CAPABLE,SEV_SNP_CAPABLE" ;;
+            *snp*) CC_FEATURES="SEV_SNP_CAPABLE" ;;
+            *tdx*) CC_FEATURES="TDX_CAPABLE" ;;
+            *)
+              echo "ERROR: cannot derive guest-os-features from tee_platform='$TEE_PLATFORM'" >&2
+              exit 1
+              ;;
+          esac
+          GUEST_OS_FEATURES="${CC_FEATURES},UEFI_COMPATIBLE,GVNIC"
+
           sanitize_label() { echo "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9_-]/-/g' | cut -c1-63; }
           LABELS="class=${IMAGE_CLASS}"
           LABELS="${LABELS},ttl=${IMAGE_TTL}"
@@ -204,7 +221,7 @@ jobs:
             --family="$IMAGE_FAMILY" \
             --description="podvm: distro=${DISTRO} tee=${TEE_PLATFORM} profile=${PROFILE} class=${IMAGE_CLASS} caa=${CAA_VERSION} commit=${CAA_COMMIT} rtmr2=${RTMR2} oci=${OCI_IMAGE}:${IMAGE_TAG}" \
             --labels="$LABELS" \
-            --guest-os-features=TDX_CAPABLE,UEFI_COMPATIBLE,GVNIC
+            --guest-os-features="$GUEST_OS_FEATURES"
 
           gcloud compute images delete "$RAW_IMAGE" \
             --project="$GCP_PROJECT" --quiet

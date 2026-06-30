@@ -12,6 +12,14 @@ on:
         type: choice
         options: [ubuntu, fedora]
         default: ubuntu
+      tee_platform:
+        description: >-
+          AA variant. tdx-nvidia = live TDX fleet (baselines enforced).
+          cc-nvidia = universal image for the new AMD GPUs (baselines deferred).
+        required: false
+        type: choice
+        options: [tdx-nvidia, cc-nvidia]
+        default: tdx-nvidia
       ssh_public_key:
         description: "SSH public key for debug images (optional)"
         required: false
@@ -21,6 +29,11 @@ on:
         required: false
         type: boolean
         default: true
+      deploy_azure:
+        description: "Publish to Azure Compute Gallery (needs Azure CC infra)."
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   actions: read       # download smoke measurements artifact in the GCP smoke workflow
@@ -30,10 +43,9 @@ permissions:
   packages: write      # push OCI artifact to GHCR
 
 env:
-  # tdx-nvidia selects the AA OCI tag suffix (<sha>-tdx-nvidia_x86_64) that
-  # bundles libnvat.so* alongside the binary. The fork's publish-artifacts
-  # workflow produces this variant; upstream guest-components does not.
-  TEE_PLATFORM: tdx-nvidia
+  # AA OCI tag suffix (<sha>-<TEE_PLATFORM>_x86_64) pulled by `make binaries`.
+  # Push/tag builds default to the live tdx-nvidia; cc-nvidia is dispatch-only.
+  TEE_PLATFORM: ${{ inputs.tee_platform || 'tdx-nvidia' }}
   OCI_IMAGE: ghcr.io/${{ github.repository }}/podvm
   VERSIONS_YAML: src/cloud-api-adaptor/versions.yaml
   SMOKE_MACHINE_TYPE: a3-highgpu-1g
@@ -163,6 +175,8 @@ jobs:
           oras version
 
       - name: Install cvm-measure
+        # TDX-only: cc-nvidia defers baselines (Phase 2).
+        if: env.TEE_PLATFORM == 'tdx-nvidia'
         env:
           CVM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -232,6 +246,7 @@ jobs:
 
       - name: Mint GitHub App token for baselines
         id: app-token
+        if: env.TEE_PLATFORM == 'tdx-nvidia'
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
         with:
           client-id: ${{ secrets.GH_APP_CLIENT_ID }}
@@ -241,6 +256,7 @@ jobs:
 
       - name: Extract UKI and predict TDX measurements
         id: measure
+        if: env.TEE_PLATFORM == 'tdx-nvidia'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           IMAGE_NAME: ${{ matrix.profile == 'release' && needs.meta.outputs.image_name_release || needs.meta.outputs.image_name_debug }}
@@ -344,6 +360,54 @@ jobs:
 
           cat /tmp/measurements.json
 
+      - name: Write metadata-only measurements (no attestation baseline)
+        # cc-nvidia: emit deploy metadata only, no rtmr2/mrtd (baselines = Phase 2).
+        if: env.TEE_PLATFORM != 'tdx-nvidia'
+        env:
+          IMAGE_NAME: ${{ matrix.profile == 'release' && needs.meta.outputs.image_name_release || needs.meta.outputs.image_name_debug }}
+          IMAGE_FAMILY: ${{ matrix.profile == 'release' && needs.meta.outputs.family_release || needs.meta.outputs.family_debug }}
+          IMAGE_CLASS: ${{ needs.meta.outputs.class }}
+          IMAGE_TTL: ${{ needs.meta.outputs.ttl }}
+          CAA_COMMIT: ${{ github.sha }}
+          CAA_REF: ${{ github.ref_name }}
+          DISTRO: ${{ needs.meta.outputs.distro }}
+          PROFILE: ${{ matrix.profile }}
+        run: |
+          # Surface the pinned nvidia driver (best-effort; omitted if absent).
+          DISTRO_CONF="src/cloud-api-adaptor/podvm-mkosi/mkosi.images/system/mkosi.conf.d/${DISTRO}.conf"
+          NVIDIA_DRIVER_PKG=""
+          if [ -f "$DISTRO_CONF" ]; then
+            NVIDIA_DRIVER_PKG=$(awk -F= '
+              /^[[:space:]]*nvidia-driver-[0-9]+(-open)?[[:space:]]*=/ {
+                gsub(/[[:space:]]/,"",$1); gsub(/[[:space:]]/,"",$2);
+                print $1 "=" $2; exit
+              }' "$DISTRO_CONF")
+          fi
+          NVIDIA_DRIVER_VERSION="${NVIDIA_DRIVER_PKG#*=}"
+
+          jq -n \
+            --arg image_name "$IMAGE_NAME" \
+            --arg image_family "$IMAGE_FAMILY" \
+            --arg image_class "$IMAGE_CLASS" \
+            --arg image_ttl "$IMAGE_TTL" \
+            --arg nvidia_driver_pkg "$NVIDIA_DRIVER_PKG" \
+            --arg nvidia_driver_version "$NVIDIA_DRIVER_VERSION" \
+            --arg caa_commit "$CAA_COMMIT" \
+            --arg caa_ref "$CAA_REF" \
+            --arg caa_version "$CAA_REF" \
+            --arg distro "$DISTRO" \
+            --arg profile "$PROFILE" \
+            --arg tee_platform "$TEE_PLATFORM" \
+            --arg build_date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '$ARGS.named
+             | if .nvidia_driver_version == "" then
+                 del(.nvidia_driver_pkg, .nvidia_driver_version)
+               else
+                 .
+               end' > /tmp/measurements.json
+
+          cat /tmp/measurements.json
+
       - name: Prepare artifacts
         run: |
           tar -czf /tmp/disk.tar.gz -C /tmp disk.raw
@@ -351,7 +415,7 @@ jobs:
           echo "Compressed size: $(du -sh /tmp/disk.tar.gz | cut -f1)"
 
       - name: Upload smoke measurements
-        if: matrix.profile == 'debug'
+        if: matrix.profile == 'debug' && env.TEE_PLATFORM == 'tdx-nvidia'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: smoke-measurements-${{ needs.meta.outputs.image_name_debug }}
@@ -376,7 +440,8 @@ jobs:
           CAA_COMMIT: ${{ github.sha }}
         run: |
           OCI_REF="${OCI_IMAGE}:${OCI_TAG}"
-          RTMR2=$(jq -r '.rtmr2_sha384' /tmp/measurements.json)
+          # rtmr2 present only for tdx-nvidia; cc-nvidia omits it.
+          RTMR2=$(jq -r '.rtmr2_sha384 // ""' /tmp/measurements.json)
           NVIDIA_DRIVER_VERSION=$(jq -r '.nvidia_driver_version // ""' /tmp/measurements.json)
 
           cd /tmp
@@ -388,8 +453,11 @@ jobs:
             --annotation "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
             --annotation "com.cohere.caa.commit=${CAA_COMMIT}"
             --annotation "com.cohere.caa.version=${GITHUB_REF_NAME}"
-            --annotation "com.cohere.rtmr2=${RTMR2}"
+            --annotation "com.cohere.tee_platform=${TEE_PLATFORM}"
           )
+          if [ -n "$RTMR2" ]; then
+            ANNOTATIONS+=(--annotation "com.cohere.rtmr2=${RTMR2}")
+          fi
           if [ -n "$NVIDIA_DRIVER_VERSION" ]; then
             ANNOTATIONS+=(--annotation "com.cohere.nvidia.driver_version=${NVIDIA_DRIVER_VERSION}")
           fi
@@ -441,10 +509,11 @@ jobs:
   smoke-gcp-tdx:
     name: Smoke TDX measurements (GCP debug image)
     needs: [meta, deploy-gcp]
+    # TDX-only: cc-nvidia has no predicted measurements to reproduce yet.
     if: |
       needs.deploy-gcp.result == 'success' &&
       (github.event_name == 'push' ||
-       (github.event_name == 'workflow_dispatch' && inputs.deploy_gcp))
+       (github.event_name == 'workflow_dispatch' && inputs.deploy_gcp && inputs.tee_platform == 'tdx-nvidia'))
     uses: ./.github/workflows/smoke-gcp-tdx.yaml
     with:
       image_tag: ${{ needs.meta.outputs.image_tag_debug }}
@@ -455,3 +524,22 @@ jobs:
       GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
       GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
       DEBUG_SSH_PRIVATE_KEY: ${{ secrets.DEBUG_SSH_PRIVATE_KEY }}
+
+  # Deploy to Azure Compute Gallery — opt-in; needs the Azure CC infra.
+  deploy-azure:
+    name: Deploy ${{ matrix.profile }} to Azure
+    needs: [meta, build]
+    if: |
+      needs.build.result == 'success' &&
+      github.event_name == 'workflow_dispatch' && inputs.deploy_azure
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [release, debug]
+    uses: ./.github/workflows/deploy-azure-cohere.yaml
+    with:
+      image_tag: ${{ matrix.profile == 'release' && needs.meta.outputs.image_tag_release || needs.meta.outputs.image_tag_debug }}
+    secrets:
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
