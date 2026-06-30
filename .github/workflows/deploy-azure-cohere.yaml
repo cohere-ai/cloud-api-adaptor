@@ -1,0 +1,236 @@
+name: Deploy PodVM to Azure (Cohere)
+
+# Publishes a podvm artifact to an Azure Compute Gallery image version flagged
+# ConfidentialVmSupported (x86_64/Gen2) for SEV-SNP VMs (e.g. NCCadsH100v5).
+# Requires (infra-azure):
+#   secrets: AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID (OIDC app
+#            with Contributor + Storage Blob Data Contributor)
+#   vars:    AZURE_RESOURCE_GROUP, AZURE_PODVM_GALLERY_NAME,
+#            AZURE_PODVM_STORAGE_ACCOUNT, AZURE_PODVM_BLOB_CONTAINER,
+#            AZURE_LOCATION
+
+on:
+  workflow_call:
+    inputs:
+      image_tag:
+        description: "OCI artifact tag in GHCR to deploy"
+        required: true
+        type: string
+    secrets:
+      AZURE_CLIENT_ID:
+        required: true
+      AZURE_TENANT_ID:
+        required: true
+      AZURE_SUBSCRIPTION_ID:
+        required: true
+
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "OCI artifact tag in GHCR to deploy"
+        required: true
+        type: string
+
+permissions:
+  id-token: write      # Azure login via OIDC federated credentials
+  contents: read       # actions/checkout
+  packages: read       # pull OCI artifact from GHCR
+  attestations: read   # gh attestation verify
+
+env:
+  OCI_IMAGE: ghcr.io/${{ github.repository }}/podvm
+  VERSIONS_YAML: src/cloud-api-adaptor/versions.yaml
+
+jobs:
+  deploy:
+    name: Azure
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-utils
+          command -v yq || sudo snap install yq
+          ORAS_VERSION=$(yq '.tools.oras' "$VERSIONS_YAML")
+          curl -fsSLO "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_amd64.tar.gz"
+          tar -xzf "oras_${ORAS_VERSION}_linux_amd64.tar.gz" oras
+          sudo mv oras /usr/local/bin/
+          oras version
+          qemu-img --version
+
+      - name: Login to GHCR
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify attestation
+        id: verify
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+        run: |
+          IMAGE_DIGEST=$(oras resolve "${OCI_IMAGE}:${IMAGE_TAG}")
+          IMAGE_REF="${OCI_IMAGE}@${IMAGE_DIGEST}"
+          gh attestation verify \
+            "oci://${IMAGE_REF}" \
+            --repo "${GITHUB_REPOSITORY}"
+          echo "image_ref=$IMAGE_REF" >> "$GITHUB_OUTPUT"
+          echo "Attestation verified for ${IMAGE_REF}"
+
+      - name: Pull artifact and read measurements
+        id: pull
+        env:
+          IMAGE_REF: ${{ steps.verify.outputs.image_ref }}
+        run: |
+          mkdir -p /tmp/podvm
+          cd /tmp/podvm
+          oras pull "${IMAGE_REF}"
+          ls -lh
+
+          if [ ! -f measurements.json ]; then
+            echo "ERROR: measurements.json not found in artifact - build is broken"
+            exit 1
+          fi
+          cat measurements.json
+
+          IMAGE_NAME=$(jq -r '.image_name' measurements.json)
+          IMAGE_FAMILY=$(jq -r '.image_family // ""' measurements.json)
+          if [ -z "$IMAGE_NAME" ] || [ "$IMAGE_NAME" = "null" ] || [ -z "$IMAGE_FAMILY" ]; then
+            echo "ERROR: image_name/image_family missing in measurements.json" >&2
+            exit 1
+          fi
+
+          # Definition names: [A-Za-z0-9._-], <=80 chars.
+          IMAGE_DEF=$(echo "$IMAGE_FAMILY" | sed 's/[^A-Za-z0-9._-]/-/g' | cut -c1-80)
+
+          # Versions need numeric Major.Minor.Patch, no leading zeros.
+          MAJOR=$(date -u +%Y)
+          MINOR=$(date -u +%m%d | sed 's/^0*//'); MINOR=${MINOR:-0}
+          PATCH=$(date -u +%H%M | sed 's/^0*//'); PATCH=${PATCH:-0}
+          IMAGE_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+
+          {
+            echo "image_name=$IMAGE_NAME"
+            echo "image_def=$IMAGE_DEF"
+            echo "image_version=$IMAGE_VERSION"
+            echo "tee_platform=$(jq -r '.tee_platform // "tdx"' measurements.json)"
+            echo "distro=$(jq -r '.distro' measurements.json)"
+            echo "profile=$(jq -r '.profile' measurements.json)"
+            echo "caa_commit=$(jq -r '.caa_commit' measurements.json)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Extract raw disk and convert to fixed VHD
+        id: vhd
+        run: |
+          cd /tmp/podvm
+          tar -xzf disk.tar.gz
+          # Azure needs a fixed-format VHD with an exact 1 MiB-aligned size.
+          qemu-img convert -f raw -O vpc -o subformat=fixed,force_size \
+            disk.raw disk.vhd
+          ls -lh disk.vhd
+
+      - name: Azure login (OIDC)
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Publish confidential gallery image version
+        env:
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          GALLERY: ${{ vars.AZURE_PODVM_GALLERY_NAME }}
+          STORAGE_ACCOUNT: ${{ vars.AZURE_PODVM_STORAGE_ACCOUNT }}
+          BLOB_CONTAINER: ${{ vars.AZURE_PODVM_BLOB_CONTAINER }}
+          LOCATION: ${{ vars.AZURE_LOCATION }}
+          IMAGE_NAME: ${{ steps.pull.outputs.image_name }}
+          IMAGE_DEF: ${{ steps.pull.outputs.image_def }}
+          IMAGE_VERSION: ${{ steps.pull.outputs.image_version }}
+          TEE_PLATFORM: ${{ steps.pull.outputs.tee_platform }}
+        run: |
+          set -euo pipefail
+          for v in RESOURCE_GROUP GALLERY STORAGE_ACCOUNT BLOB_CONTAINER LOCATION; do
+            if [ -z "${!v}" ]; then
+              echo "ERROR: required Azure var '$v' is empty - configure the infra-azure prerequisites" >&2
+              exit 1
+            fi
+          done
+
+          BLOB_NAME="${IMAGE_NAME}.vhd"
+          BLOB_URI="https://${STORAGE_ACCOUNT}.blob.core.windows.net/${BLOB_CONTAINER}/${BLOB_NAME}"
+
+          echo "Uploading staging VHD page blob: $BLOB_URI"
+          az storage blob upload \
+            --account-name "$STORAGE_ACCOUNT" \
+            --container-name "$BLOB_CONTAINER" \
+            --name "$BLOB_NAME" \
+            --file /tmp/podvm/disk.vhd \
+            --type page \
+            --auth-mode login \
+            --overwrite true
+
+          # Create the ConfidentialVmSupported definition on first use.
+          if ! az sig image-definition show \
+                --resource-group "$RESOURCE_GROUP" \
+                --gallery-name "$GALLERY" \
+                --gallery-image-definition "$IMAGE_DEF" >/dev/null 2>&1; then
+            echo "Creating image definition $IMAGE_DEF (ConfidentialVmSupported)"
+            az sig image-definition create \
+              --resource-group "$RESOURCE_GROUP" \
+              --gallery-name "$GALLERY" \
+              --gallery-image-definition "$IMAGE_DEF" \
+              --publisher cohere \
+              --offer podvm \
+              --sku "$IMAGE_DEF" \
+              --os-type Linux \
+              --os-state Generalized \
+              --hyper-v-generation V2 \
+              --architecture x64 \
+              --features SecurityType=ConfidentialVmSupported
+          fi
+
+          if az sig image-version show \
+                --resource-group "$RESOURCE_GROUP" \
+                --gallery-name "$GALLERY" \
+                --gallery-image-definition "$IMAGE_DEF" \
+                --gallery-image-version "$IMAGE_VERSION" >/dev/null 2>&1; then
+            echo "ERROR: image version $IMAGE_DEF:$IMAGE_VERSION already exists" >&2
+            echo "Gallery versions are immutable; re-run to bump the time-based patch." >&2
+            exit 1
+          fi
+
+          echo "Creating gallery image version $IMAGE_DEF:$IMAGE_VERSION"
+          az sig image-version create \
+            --resource-group "$RESOURCE_GROUP" \
+            --gallery-name "$GALLERY" \
+            --gallery-image-definition "$IMAGE_DEF" \
+            --gallery-image-version "$IMAGE_VERSION" \
+            --location "$LOCATION" \
+            --os-vhd-storage-account "$STORAGE_ACCOUNT" \
+            --os-vhd-uri "$BLOB_URI" \
+            --tags "tee=${TEE_PLATFORM}" "image_name=${IMAGE_NAME}" "caa_commit=${{ steps.pull.outputs.caa_commit }}"
+
+          echo "Cleaning up staging VHD blob"
+          az storage blob delete \
+            --account-name "$STORAGE_ACCOUNT" \
+            --container-name "$BLOB_CONTAINER" \
+            --name "$BLOB_NAME" \
+            --auth-mode login || true
+
+          {
+            echo "### PodVM Azure gallery image published"
+            echo ""
+            echo "| Field | Value |"
+            echo "| --- | --- |"
+            echo "| Gallery | \`${GALLERY}\` |"
+            echo "| Definition | \`${IMAGE_DEF}\` |"
+            echo "| Version | \`${IMAGE_VERSION}\` |"
+            echo "| Security type | ConfidentialVmSupported |"
+            echo "| TEE | ${TEE_PLATFORM} |"
+          } >> "$GITHUB_STEP_SUMMARY"
