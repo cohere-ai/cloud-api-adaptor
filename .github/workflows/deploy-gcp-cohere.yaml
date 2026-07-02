@@ -182,7 +182,7 @@ jobs:
 
           case "$TEE_PLATFORM" in
             tdx-snp-nvidia)
-              GUEST_OS_FEATURES="TDX_CAPABLE,SEV_SNP_CAPABLE,UEFI_COMPATIBLE,GVNIC"
+              GUEST_OS_FEATURES="TDX_CAPABLE,SEV_CAPABLE,SEV_SNP_CAPABLE,UEFI_COMPATIBLE,GVNIC"
               ;;
             tdx)
               GUEST_OS_FEATURES="TDX_CAPABLE,UEFI_COMPATIBLE,GVNIC"
