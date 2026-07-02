@@ -5,7 +5,7 @@
 # caa_build_and_push.yaml has a hardcoded matrix that builds dev+release in
 # parallel, so we inline the release path here to avoid wasting an hour of CI
 # on a libvirt build we don't ship. peerpod-ctrl is also inlined (amd64-only,
-# GCP build tags) because upstream's reusable hardcodes all four arches.
+# gcp,azure build tags) because upstream's reusable hardcodes all four arches.
 #
 # Tags produced (push to cohere):
 #   ghcr.io/cohere-ai/cloud-api-adaptor/cloud-api-adaptor:latest-cohere
@@ -156,7 +156,7 @@ jobs:
           file: src/peerpod-ctrl/Dockerfile
           platforms: linux/amd64
           build-args: |
-            GOFLAGS=-tags=gcp
+            GOFLAGS=-tags=gcp,azure
 
   chart:
     name: Publish peerpods Helm chart
