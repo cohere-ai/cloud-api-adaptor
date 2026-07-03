@@ -497,6 +497,13 @@ func (p *azureProvider) getVMParameters(instanceSize, diskName, cloudConfig stri
 				ComputerName:  to.Ptr(instanceName),
 				LinuxConfiguration: &armcompute.LinuxConfiguration{
 					DisablePasswordAuthentication: to.Ptr(true),
+					// Peer pod VMs are ephemeral and never run the Azure Linux
+					// guest agent (waagent). Tell Azure not to expect it, so the
+					// VM create LRO reports Succeeded once the VM boots instead
+					// of blocking on an agent/afterburn check-in that may be
+					// absent (e.g. the Ubuntu podvm image) — which otherwise hangs
+					// CreateInstance until the CRI context is canceled.
+					ProvisionVMAgent: to.Ptr(false),
 					//TBD: replace with a suitable mechanism to use precreated SSH key
 					SSH: &armcompute.SSHConfiguration{
 						PublicKeys: []*armcompute.SSHPublicKey{{
