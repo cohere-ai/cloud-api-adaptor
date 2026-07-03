@@ -130,7 +130,18 @@ jobs:
         run: |
           cd /tmp/podvm
           tar -xzf disk.tar.gz
-          # Azure needs a fixed-format VHD with an exact 1 MiB-aligned size.
+          # Azure needs a fixed-format VHD whose virtual size is a whole number
+          # of MiB. mkosi's raw image isn't necessarily 1 MiB-aligned, so round
+          # it up to the next whole MiB first; qemu-img's force_size then keeps
+          # that exact aligned size in the fixed VHD footer. Without this, the
+          # gallery image-version create fails with "unsupported virtual size".
+          MB=$((1024 * 1024))
+          size=$(qemu-img info -f raw --output json disk.raw | jq '.["virtual-size"]')
+          rounded=$(( ((size + MB - 1) / MB) * MB ))
+          if [ "$rounded" -ne "$size" ]; then
+            echo "Rounding raw image $size -> $rounded bytes ($((rounded / MB)) MiB) for Azure alignment"
+            qemu-img resize -f raw disk.raw "$rounded"
+          fi
           qemu-img convert -f raw -O vpc -o subformat=fixed,force_size \
             disk.raw disk.vhd
           ls -lh disk.vhd
