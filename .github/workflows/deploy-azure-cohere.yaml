@@ -31,11 +31,7 @@ on:
         required: true
         type: string
 
-permissions:
-  id-token: write      # Azure login via OIDC federated credentials
-  contents: read       # actions/checkout
-  packages: read       # pull OCI artifact from GHCR
-  attestations: read   # gh attestation verify
+permissions: {}
 
 env:
   OCI_IMAGE: ghcr.io/${{ github.repository }}/podvm
@@ -45,8 +41,18 @@ jobs:
   deploy:
     name: Azure
     runs-on: ubuntu-latest
+    # Serialize publishes per image tag: gallery versions are immutable and the
+    # patch is time-based, so overlapping runs could collide on the same version.
+    concurrency:
+      group: deploy-azure-cohere-${{ inputs.image_tag }}
+      cancel-in-progress: false
+    permissions:
+      id-token: write      # Azure login via OIDC federated credentials
+      contents: read       # actions/checkout
+      packages: read       # pull OCI artifact from GHCR
+      attestations: read   # gh attestation verify
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
 
@@ -63,7 +69,7 @@ jobs:
           qemu-img --version
 
       - name: Login to GHCR
-        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -164,6 +170,7 @@ jobs:
           IMAGE_DEF: ${{ steps.pull.outputs.image_def }}
           IMAGE_VERSION: ${{ steps.pull.outputs.image_version }}
           TEE_PLATFORM: ${{ steps.pull.outputs.tee_platform }}
+          CAA_COMMIT: ${{ steps.pull.outputs.caa_commit }}
         run: |
           set -euo pipefail
           for v in RESOURCE_GROUP GALLERY STORAGE_ACCOUNT BLOB_CONTAINER LOCATION; do
@@ -225,7 +232,7 @@ jobs:
             --location "$LOCATION" \
             --os-vhd-storage-account "$STORAGE_ACCOUNT" \
             --os-vhd-uri "$BLOB_URI" \
-            --tags "tee=${TEE_PLATFORM}" "image_name=${IMAGE_NAME}" "caa_commit=${{ steps.pull.outputs.caa_commit }}"
+            --tags "tee=${TEE_PLATFORM}" "image_name=${IMAGE_NAME}" "caa_commit=${CAA_COMMIT}"
 
           echo "Cleaning up staging VHD blob"
           az storage blob delete \
