@@ -108,5 +108,26 @@ RUN ./hack/cross-build-extras.sh
 
 RUN LIBC=gnu make binaries
 
+# afterburn is not packaged for Ubuntu/Debian (unlike Fedora) and upstream
+# ships no prebuilt binary, so build it from source. Its Azure --check-in
+# reports provisioning completion to the Azure fabric (WireServer), which is
+# what flips a VM's provisioningState from Creating to Succeeded. Without it
+# the peer-pod VM boots but never signals Azure, so the CAA CreateInstance LRO
+# never completes on Ubuntu podvms. Built here against the same ubuntu:24.04
+# glibc/OpenSSL as the target image, so the dynamic link is ABI-compatible.
+FROM builder AS afterburn_builder
+ARG AFTERBURN_VERSION=5.10.0
+RUN curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
+ENV PATH="/root/.cargo/bin:${PATH}"
+RUN git clone --depth 1 -b "v${AFTERBURN_VERSION}" https://github.com/coreos/afterburn /tmp/afterburn && \
+    cd /tmp/afterburn && \
+    cargo build --release --bin afterburn && \
+    install -D -m0755 target/release/afterburn /out/usr/bin/afterburn && \
+    install -D -m0644 systemd/afterburn-checkin.service \
+        /out/usr/lib/systemd/system/afterburn-checkin.service
+
 FROM scratch
 COPY --from=podvm_binaries_builder /src/cloud-api-adaptor/podvm/files /
+# afterburn binary + base check-in unit (the Cohere drop-in in mkosi.skeleton
+# layers on top; on Fedora the base unit comes from the afterburn RPM instead).
+COPY --from=afterburn_builder /out/ /
