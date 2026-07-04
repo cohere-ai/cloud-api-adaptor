@@ -1,7 +1,7 @@
 ARG BUILD_TYPE=dev
-# golang:1.25.10 (based on Debian 13 trixie)
-ARG BUILDER_BASE=golang@sha256:3965b9511a9bed199f0b4eb146f99c31971a5c0adb3240d9f25e233cbd9e01c8
-# debian:trixie-slim (matches golang:1.25.10 base for library compatibility)
+# golang:1.25.11 (based on Debian 13 trixie)
+ARG BUILDER_BASE=golang@sha256:f188e8c16ea47a8b22d2bdcf6d9bcd07b63ea7876c199749c07bf31e0ab33bad
+# debian:trixie-slim (matches golang:1.25.11 base for library compatibility)
 # Multi-arch manifest list digest supporting amd64, arm64, ppc64le,, s390x
 ARG BASE=debian@sha256:109e2c65005bf160609e4ba6acf7783752f8502ad218e298253428690b9eaa4b
 
