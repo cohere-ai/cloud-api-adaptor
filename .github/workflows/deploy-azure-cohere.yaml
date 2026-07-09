@@ -2,12 +2,12 @@ name: Deploy PodVM to Azure (Cohere)
 
 # Publishes a podvm artifact to an Azure Compute Gallery image version flagged
 # ConfidentialVmSupported (x86_64/Gen2) for SEV-SNP VMs (e.g. NCCadsH100v5).
+# Uses uplosi (same tool as upstream azure-podvm-image-build) to MiB-align the
+# raw disk, upload via managed disk, and create the gallery image version.
 # Requires (infra-azure):
 #   secrets: AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID (OIDC app
-#            with Contributor + Storage Blob Data Contributor)
-#   vars:    AZURE_RESOURCE_GROUP, AZURE_PODVM_GALLERY_NAME,
-#            AZURE_PODVM_STORAGE_ACCOUNT, AZURE_PODVM_BLOB_CONTAINER,
-#            AZURE_LOCATION
+#            with Contributor on the gallery resource group)
+#   vars:    AZURE_RESOURCE_GROUP, AZURE_PODVM_GALLERY_NAME, AZURE_LOCATION
 
 on:
   workflow_call:
@@ -36,6 +36,8 @@ permissions: {}
 env:
   OCI_IMAGE: ghcr.io/${{ github.repository }}/podvm
   VERSIONS_YAML: src/cloud-api-adaptor/versions.yaml
+  UPLOSI_VERSION: "0.3.0"
+  UPLOSI_SHA256: "687bcab7398ab0fda65a3809492e8cd4d6a25aad1573927be5ec75ac1c4cbc35"
 
 jobs:
   deploy:
@@ -59,14 +61,18 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends qemu-utils
           command -v yq || sudo snap install yq
           ORAS_VERSION=$(yq '.tools.oras' "$VERSIONS_YAML")
           curl -fsSLO "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_amd64.tar.gz"
           tar -xzf "oras_${ORAS_VERSION}_linux_amd64.tar.gz" oras
           sudo mv oras /usr/local/bin/
           oras version
-          qemu-img --version
+
+          wget -q "https://github.com/edgelesssys/uplosi/releases/download/v${UPLOSI_VERSION}/uplosi_${UPLOSI_VERSION}_linux_amd64.tar.gz"
+          sha256sum -c <(echo "$UPLOSI_SHA256  uplosi_${UPLOSI_VERSION}_linux_amd64.tar.gz")
+          tar xzf "uplosi_${UPLOSI_VERSION}_linux_amd64.tar.gz" uplosi
+          sudo mv uplosi /usr/local/bin/
+          uplosi -v
 
       - name: Login to GHCR
         uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
@@ -121,36 +127,32 @@ jobs:
           PATCH=$(date -u +%H%M | sed 's/^0*//'); PATCH=${PATCH:-0}
           IMAGE_VERSION="${MAJOR}.${MINOR}.${PATCH}"
 
+          TEE_PLATFORM=$(jq -r '.tee_platform // "sev"' measurements.json)
+          case "$TEE_PLATFORM" in
+            tdx|az-tdx|azure-tdx) ATTESTATION_VARIANT=azure-tdx ;;
+            sev|sev-snp|snp|az-cvm-vtpm|azure-sev-snp) ATTESTATION_VARIANT=azure-sev-snp ;;
+            *)
+              echo "WARN: unknown tee_platform='$TEE_PLATFORM'; defaulting attestationVariant=azure-sev-snp" >&2
+              ATTESTATION_VARIANT=azure-sev-snp
+              ;;
+          esac
+
           {
             echo "image_name=$IMAGE_NAME"
             echo "image_def=$IMAGE_DEF"
             echo "image_version=$IMAGE_VERSION"
-            echo "tee_platform=$(jq -r '.tee_platform // "tdx"' measurements.json)"
+            echo "tee_platform=$TEE_PLATFORM"
+            echo "attestation_variant=$ATTESTATION_VARIANT"
             echo "distro=$(jq -r '.distro' measurements.json)"
             echo "profile=$(jq -r '.profile' measurements.json)"
             echo "caa_commit=$(jq -r '.caa_commit' measurements.json)"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Extract raw disk and convert to fixed VHD
-        id: vhd
+      - name: Extract raw disk
         run: |
           cd /tmp/podvm
           tar -xzf disk.tar.gz
-          # Azure needs a fixed-format VHD whose virtual size is a whole number
-          # of MiB. mkosi's raw image isn't necessarily 1 MiB-aligned, so round
-          # it up to the next whole MiB first; qemu-img's force_size then keeps
-          # that exact aligned size in the fixed VHD footer. Without this, the
-          # gallery image-version create fails with "unsupported virtual size".
-          MB=$((1024 * 1024))
-          size=$(qemu-img info -f raw --output json disk.raw | jq '.["virtual-size"]')
-          rounded=$(( ((size + MB - 1) / MB) * MB ))
-          if [ "$rounded" -ne "$size" ]; then
-            echo "Rounding raw image $size -> $rounded bytes ($((rounded / MB)) MiB) for Azure alignment"
-            qemu-img resize -f raw disk.raw "$rounded"
-          fi
-          qemu-img convert -f raw -O vpc -o subformat=fixed,force_size \
-            disk.raw disk.vhd
-          ls -lh disk.vhd
+          ls -lh disk.raw
 
       - name: Azure login (OIDC)
         uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
@@ -161,85 +163,61 @@ jobs:
 
       - name: Publish confidential gallery image version
         env:
+          SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
           GALLERY: ${{ vars.AZURE_PODVM_GALLERY_NAME }}
-          STORAGE_ACCOUNT: ${{ vars.AZURE_PODVM_STORAGE_ACCOUNT }}
-          BLOB_CONTAINER: ${{ vars.AZURE_PODVM_BLOB_CONTAINER }}
           LOCATION: ${{ vars.AZURE_LOCATION }}
-          IMAGE_NAME: ${{ steps.pull.outputs.image_name }}
           IMAGE_DEF: ${{ steps.pull.outputs.image_def }}
           IMAGE_VERSION: ${{ steps.pull.outputs.image_version }}
           TEE_PLATFORM: ${{ steps.pull.outputs.tee_platform }}
-          CAA_COMMIT: ${{ steps.pull.outputs.caa_commit }}
+          ATTESTATION_VARIANT: ${{ steps.pull.outputs.attestation_variant }}
         run: |
           set -euo pipefail
-          for v in RESOURCE_GROUP GALLERY STORAGE_ACCOUNT BLOB_CONTAINER LOCATION; do
+          for v in SUBSCRIPTION_ID RESOURCE_GROUP GALLERY LOCATION; do
             if [ -z "${!v}" ]; then
-              echo "ERROR: required Azure var '$v' is empty - configure the infra-azure prerequisites" >&2
+              echo "ERROR: required Azure var/secret '$v' is empty - configure the infra-azure prerequisites" >&2
               exit 1
             fi
           done
 
-          BLOB_NAME="${IMAGE_NAME}.vhd"
-          BLOB_URI="https://${STORAGE_ACCOUNT}.blob.core.windows.net/${BLOB_CONTAINER}/${BLOB_NAME}"
+          # Disk / managed-image names must be unique per upload and Azure-safe.
+          DISK_NAME=$(echo "${IMAGE_DEF}-${IMAGE_VERSION}" | sed 's/[^A-Za-z0-9._-]/-/g' | cut -c1-80)
 
-          echo "Uploading staging VHD page blob: $BLOB_URI"
-          az storage blob upload \
-            --account-name "$STORAGE_ACCOUNT" \
-            --container-name "$BLOB_CONTAINER" \
-            --name "$BLOB_NAME" \
-            --file /tmp/podvm/disk.vhd \
-            --type page \
-            --auth-mode login \
-            --overwrite true
+          # Write unindented TOML (uplosi config parser is whitespace-sensitive on tables).
+          cat > /tmp/podvm/uplosi.conf <<EOF
+          [base]
+          imageVersion = "${IMAGE_VERSION}"
+          name = "${IMAGE_DEF}"
 
-          # Create the ConfidentialVmSupported definition on first use.
-          if ! az sig image-definition show \
-                --resource-group "$RESOURCE_GROUP" \
-                --gallery-name "$GALLERY" \
-                --gallery-image-definition "$IMAGE_DEF" >/dev/null 2>&1; then
-            echo "Creating image definition $IMAGE_DEF (ConfidentialVmSupported)"
-            az sig image-definition create \
-              --resource-group "$RESOURCE_GROUP" \
-              --gallery-name "$GALLERY" \
-              --gallery-image-definition "$IMAGE_DEF" \
-              --publisher cohere \
-              --offer podvm \
-              --sku "$IMAGE_DEF" \
-              --os-type Linux \
-              --os-state Generalized \
-              --hyper-v-generation V2 \
-              --architecture x64 \
-              --features SecurityType=ConfidentialVmSupported
-          fi
+          [base.azure]
+          subscriptionID = "${SUBSCRIPTION_ID}"
+          location = "${LOCATION}"
+          resourceGroup = "${RESOURCE_GROUP}"
+          sharedImageGallery = "${GALLERY}"
+          sharingProfile = "private"
+          attestationVariant = "${ATTESTATION_VARIANT}"
+          imageDefinitionName = "${IMAGE_DEF}"
+          publisher = "cohere"
+          offer = "podvm"
+          sku = "${IMAGE_DEF}"
+          diskName = "${DISK_NAME}"
 
-          if az sig image-version show \
-                --resource-group "$RESOURCE_GROUP" \
-                --gallery-name "$GALLERY" \
-                --gallery-image-definition "$IMAGE_DEF" \
-                --gallery-image-version "$IMAGE_VERSION" >/dev/null 2>&1; then
-            echo "ERROR: image version $IMAGE_DEF:$IMAGE_VERSION already exists" >&2
-            echo "Gallery versions are immutable; re-run to bump the time-based patch." >&2
-            exit 1
-          fi
+          [variant.default]
+          provider = "azure"
 
-          echo "Creating gallery image version $IMAGE_DEF:$IMAGE_VERSION"
-          az sig image-version create \
-            --resource-group "$RESOURCE_GROUP" \
-            --gallery-name "$GALLERY" \
-            --gallery-image-definition "$IMAGE_DEF" \
-            --gallery-image-version "$IMAGE_VERSION" \
-            --location "$LOCATION" \
-            --os-vhd-storage-account "$STORAGE_ACCOUNT" \
-            --os-vhd-uri "$BLOB_URI" \
-            --tags "tee=${TEE_PLATFORM}" "image_name=${IMAGE_NAME}" "caa_commit=${CAA_COMMIT}"
+          [variant.default.azure]
+          replicationRegions = ["${LOCATION}"]
+          EOF
+          sed -i 's/^[[:space:]]*//' /tmp/podvm/uplosi.conf
 
-          echo "Cleaning up staging VHD blob"
-          az storage blob delete \
-            --account-name "$STORAGE_ACCOUNT" \
-            --container-name "$BLOB_CONTAINER" \
-            --name "$BLOB_NAME" \
-            --auth-mode login || true
+          echo "Uploading with uplosi (private gallery, ${ATTESTATION_VARIANT}):"
+          cat /tmp/podvm/uplosi.conf
+
+          cd /tmp/podvm
+          uplosi upload disk.raw
+
+          IMAGE_ID="/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.Compute/galleries/${GALLERY}/images/${IMAGE_DEF}/versions/${IMAGE_VERSION}"
+          echo "Published ${IMAGE_ID}"
 
           {
             echo "### PodVM Azure gallery image published"
@@ -249,6 +227,7 @@ jobs:
             echo "| Gallery | \`${GALLERY}\` |"
             echo "| Definition | \`${IMAGE_DEF}\` |"
             echo "| Version | \`${IMAGE_VERSION}\` |"
-            echo "| Security type | ConfidentialVmSupported |"
+            echo "| Security type | ConfidentialVmSupported (${ATTESTATION_VARIANT}) |"
             echo "| TEE | ${TEE_PLATFORM} |"
+            echo "| Image ID | \`${IMAGE_ID}\` |"
           } >> "$GITHUB_STEP_SUMMARY"
