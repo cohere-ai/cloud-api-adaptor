@@ -36,6 +36,7 @@ permissions: {}
 env:
   OCI_IMAGE: ghcr.io/${{ github.repository }}/podvm
   VERSIONS_YAML: src/cloud-api-adaptor/versions.yaml
+  ORAS_SHA256: "5b3f1cbb86d869eee68120b9b45b9be983f3738442f87ee5f06b00edd0bab336"
   UPLOSI_VERSION: "0.3.0"
   UPLOSI_SHA256: "687bcab7398ab0fda65a3809492e8cd4d6a25aad1573927be5ec75ac1c4cbc35"
 
@@ -43,10 +44,10 @@ jobs:
   deploy:
     name: Azure
     runs-on: ubuntu-latest
-    # Serialize publishes per image tag: gallery versions are immutable and the
-    # patch is time-based, so overlapping runs could collide on the same version.
+    # Serialize all gallery publishes. Image versions are immutable and keyed by
+    # image definition, which is only known after reading measurements.json.
     concurrency:
-      group: deploy-azure-cohere-${{ inputs.image_tag }}
+      group: deploy-azure-cohere-gallery-${{ github.repository }}
       cancel-in-progress: false
     permissions:
       id-token: write      # Azure login via OIDC federated credentials
@@ -64,6 +65,7 @@ jobs:
           command -v yq || sudo snap install yq
           ORAS_VERSION=$(yq '.tools.oras' "$VERSIONS_YAML")
           curl -fsSLO "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_amd64.tar.gz"
+          sha256sum -c <(echo "$ORAS_SHA256  oras_${ORAS_VERSION}_linux_amd64.tar.gz")
           tar -xzf "oras_${ORAS_VERSION}_linux_amd64.tar.gz" oras
           sudo mv oras /usr/local/bin/
           oras version
@@ -121,10 +123,11 @@ jobs:
           # Definition names: [A-Za-z0-9._-], <=80 chars.
           IMAGE_DEF=$(echo "$IMAGE_FAMILY" | sed 's/[^A-Za-z0-9._-]/-/g' | cut -c1-80)
 
-          # Versions need numeric Major.Minor.Patch, no leading zeros.
+          # Versions need numeric Major.Minor.Patch, no leading zeros. Use
+          # epoch seconds as patch so same-minute retries do not collide.
           MAJOR=$(date -u +%Y)
           MINOR=$(date -u +%m%d | sed 's/^0*//'); MINOR=${MINOR:-0}
-          PATCH=$(date -u +%H%M | sed 's/^0*//'); PATCH=${PATCH:-0}
+          PATCH=$(($(date -u +%s) + ${GITHUB_RUN_ATTEMPT:-1}))
           IMAGE_VERSION="${MAJOR}.${MINOR}.${PATCH}"
 
           TEE_PLATFORM=$(jq -r '.tee_platform // "sev"' measurements.json)

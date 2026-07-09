@@ -184,7 +184,7 @@ jobs:
             tdx-snp-nvidia)
               GUEST_OS_FEATURES="TDX_CAPABLE,SEV_CAPABLE,SEV_SNP_CAPABLE,UEFI_COMPATIBLE,GVNIC"
               ;;
-            tdx)
+            tdx|tdx-nvidia)
               GUEST_OS_FEATURES="TDX_CAPABLE,UEFI_COMPATIBLE,GVNIC"
               ;;
             snp|amd)
