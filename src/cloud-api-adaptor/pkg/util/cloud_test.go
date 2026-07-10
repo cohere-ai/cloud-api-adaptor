@@ -1,6 +1,7 @@
 package util
 
 import (
+	"strings"
 	"testing"
 
 	hypannotations "github.com/kata-containers/kata-containers/src/runtime/virtcontainers/pkg/annotations"
@@ -187,5 +188,179 @@ func TestGetImageFromAnnotation(t *testing.T) {
 				t.Errorf("GetImageFromAnnotation() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestGetCloudConfigFromAnnotation(t *testing.T) {
+	annotations := map[string]string{
+		UseSpotAnnotation:             "true",
+		GCPProjectIDAnnotation:        "project-a",
+		GCPZoneAnnotation:             "us-central1-b",
+		GCPNetworkAnnotation:          "global/networks/conf-compute",
+		GCPSubnetworkAnnotation:       "regions/us-central1/subnetworks/conf-compute-subnet",
+		GCPDiskTypeAnnotation:         "hyperdisk-balanced",
+		GCPDisableCVMAnnotation:       "false",
+		GCPConfidentialTypeAnnotation: "SEV",
+		GCPRootVolumeSizeAnnotation:   "100",
+		GCPUsePublicIPAnnotation:      "true",
+		GCPNetworkTagsAnnotation:      "peerpods-vm, gpu",
+		GCPTagsAnnotation:             "env=dev,owner=peerpods",
+		GCPInstanceTypesAnnotation:    "g4-standard-48,a3-highgpu-1g",
+	}
+
+	got := GetCloudConfigFromAnnotation(annotations)
+
+	if !got.UseSpot || !got.UseSpotSet {
+		t.Errorf("UseSpot = %v, UseSpotSet = %v, want true, true", got.UseSpot, got.UseSpotSet)
+	}
+	if got.ProjectID != "project-a" {
+		t.Errorf("ProjectID = %q, want project-a", got.ProjectID)
+	}
+	if got.Zone != "us-central1-b" {
+		t.Errorf("Zone = %q, want us-central1-b", got.Zone)
+	}
+	if got.Network != "global/networks/conf-compute" {
+		t.Errorf("Network = %q, want global/networks/conf-compute", got.Network)
+	}
+	if got.Subnetwork != "regions/us-central1/subnetworks/conf-compute-subnet" {
+		t.Errorf("Subnetwork = %q, want regions/us-central1/subnetworks/conf-compute-subnet", got.Subnetwork)
+	}
+	if got.DiskType != "hyperdisk-balanced" {
+		t.Errorf("DiskType = %q, want hyperdisk-balanced", got.DiskType)
+	}
+	if got.DisableCVM == nil || *got.DisableCVM {
+		t.Errorf("DisableCVM = %v, want pointer to false", got.DisableCVM)
+	}
+	if got.ConfidentialType != "SEV" {
+		t.Errorf("ConfidentialType = %q, want SEV", got.ConfidentialType)
+	}
+	if got.RootVolumeSize != 100 {
+		t.Errorf("RootVolumeSize = %d, want 100", got.RootVolumeSize)
+	}
+	if got.UsePublicIP == nil || !*got.UsePublicIP {
+		t.Errorf("UsePublicIP = %v, want pointer to true", got.UsePublicIP)
+	}
+	if len(got.NetworkTags) != 2 || got.NetworkTags[0] != "peerpods-vm" || got.NetworkTags[1] != "gpu" {
+		t.Errorf("NetworkTags = %v, want [peerpods-vm gpu]", got.NetworkTags)
+	}
+	if got.Tags["env"] != "dev" || got.Tags["owner"] != "peerpods" {
+		t.Errorf("Tags = %v, want env=dev owner=peerpods", got.Tags)
+	}
+	if len(got.InstanceTypes) != 2 || got.InstanceTypes[0] != "g4-standard-48" || got.InstanceTypes[1] != "a3-highgpu-1g" {
+		t.Errorf("InstanceTypes = %v, want [g4-standard-48 a3-highgpu-1g]", got.InstanceTypes)
+	}
+}
+
+func TestGetCloudConfigFromAnnotationAzure(t *testing.T) {
+	annotations := map[string]string{
+		AzureSubscriptionIDAnnotation:   "sub-123",
+		AzureResourceGroupAnnotation:    "rg-peerpods",
+		AzureRegionAnnotation:           "eastus2",
+		AzureZoneAnnotation:             "2",
+		AzureSubnetIDAnnotation:         "/subscriptions/sub-123/resourceGroups/rg/providers/Microsoft.Network/virtualNetworks/vnet/subnets/peerpod",
+		AzureSecurityGroupIDAnnotation:  "/subscriptions/sub-123/resourceGroups/rg/providers/Microsoft.Network/networkSecurityGroups/nsg",
+		AzureDisableCVMAnnotation:       "true",
+		AzureRootVolumeSizeAnnotation:   "200",
+		AzureUsePublicIPAnnotation:      "false",
+		AzureTagsAnnotation:             "team=cc,env=test",
+		AzureInstanceSizesAnnotation:    "Standard_DC2as_v5,Standard_NCC40ads_H100_v5",
+		AzureEnableSecureBootAnnotation: "true",
+	}
+
+	got := GetCloudConfigFromAnnotation(annotations)
+
+	if got.SubscriptionID != "sub-123" {
+		t.Errorf("SubscriptionID = %q, want sub-123", got.SubscriptionID)
+	}
+	if got.ResourceGroup != "rg-peerpods" {
+		t.Errorf("ResourceGroup = %q, want rg-peerpods", got.ResourceGroup)
+	}
+	if got.Region != "eastus2" {
+		t.Errorf("Region = %q, want eastus2", got.Region)
+	}
+	if got.Zone != "2" {
+		t.Errorf("Zone = %q, want 2", got.Zone)
+	}
+	if !strings.Contains(got.SubnetID, "/subnets/peerpod") {
+		t.Errorf("SubnetID = %q, want azure subnet id", got.SubnetID)
+	}
+	if !strings.Contains(got.SecurityGroupID, "/networkSecurityGroups/nsg") {
+		t.Errorf("SecurityGroupID = %q, want azure nsg id", got.SecurityGroupID)
+	}
+	if got.DisableCVM == nil || !*got.DisableCVM {
+		t.Errorf("DisableCVM = %v, want pointer to true", got.DisableCVM)
+	}
+	if got.RootVolumeSize != 200 {
+		t.Errorf("RootVolumeSize = %d, want 200", got.RootVolumeSize)
+	}
+	if got.UsePublicIP == nil || *got.UsePublicIP {
+		t.Errorf("UsePublicIP = %v, want pointer to false", got.UsePublicIP)
+	}
+	if got.Tags["team"] != "cc" || got.Tags["env"] != "test" {
+		t.Errorf("Tags = %v, want team=cc env=test", got.Tags)
+	}
+	if len(got.InstanceTypes) != 2 || got.InstanceTypes[0] != "Standard_DC2as_v5" {
+		t.Errorf("InstanceTypes = %v, want Azure sizes", got.InstanceTypes)
+	}
+	if got.EnableSecureBoot == nil || !*got.EnableSecureBoot {
+		t.Errorf("EnableSecureBoot = %v, want pointer to true", got.EnableSecureBoot)
+	}
+}
+
+func TestGetCloudConfigFromAnnotationAzureOverridesGCP(t *testing.T) {
+	annotations := map[string]string{
+		GCPZoneAnnotation:           "us-central1-a",
+		AzureZoneAnnotation:         "3",
+		GCPDisableCVMAnnotation:     "false",
+		AzureDisableCVMAnnotation:   "true",
+		GCPRootVolumeSizeAnnotation: "50",
+		AzureRootVolumeSizeAnnotation: "120",
+		GCPTagsAnnotation:           "cloud=gcp",
+		AzureTagsAnnotation:         "cloud=azure",
+		GCPInstanceTypesAnnotation:  "c3-standard-4",
+		AzureInstanceSizesAnnotation: "Standard_DC2as_v5",
+	}
+
+	got := GetCloudConfigFromAnnotation(annotations)
+	if got.Zone != "3" {
+		t.Errorf("Zone = %q, want Azure zone 3", got.Zone)
+	}
+	if got.DisableCVM == nil || !*got.DisableCVM {
+		t.Errorf("DisableCVM = %v, want Azure override true", got.DisableCVM)
+	}
+	if got.RootVolumeSize != 120 {
+		t.Errorf("RootVolumeSize = %d, want 120", got.RootVolumeSize)
+	}
+	if got.Tags["cloud"] != "azure" {
+		t.Errorf("Tags = %v, want cloud=azure", got.Tags)
+	}
+	if len(got.InstanceTypes) != 1 || got.InstanceTypes[0] != "Standard_DC2as_v5" {
+		t.Errorf("InstanceTypes = %v, want [Standard_DC2as_v5]", got.InstanceTypes)
+	}
+}
+
+func TestGetCloudConfigFromAnnotationIgnoresInvalidValues(t *testing.T) {
+	annotations := map[string]string{
+		UseSpotAnnotation:           "invalid",
+		GCPDisableCVMAnnotation:     "invalid",
+		GCPRootVolumeSizeAnnotation: "invalid",
+		GCPUsePublicIPAnnotation:    "invalid",
+		AzureDisableCVMAnnotation:   "invalid",
+		AzureUsePublicIPAnnotation:  "invalid",
+	}
+
+	got := GetCloudConfigFromAnnotation(annotations)
+
+	if got.UseSpotSet {
+		t.Errorf("UseSpotSet = %v, want false", got.UseSpotSet)
+	}
+	if got.DisableCVM != nil {
+		t.Errorf("DisableCVM = %v, want nil", got.DisableCVM)
+	}
+	if got.RootVolumeSize != 0 {
+		t.Errorf("RootVolumeSize = %d, want 0", got.RootVolumeSize)
+	}
+	if got.UsePublicIP != nil {
+		t.Errorf("UsePublicIP = %v, want nil", got.UsePublicIP)
 	}
 }

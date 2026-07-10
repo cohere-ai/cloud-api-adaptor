@@ -1,0 +1,26 @@
+# Expect render failure: same config key with different values across providers.
+resourceCtrl:
+  enabled: false
+webhook:
+  enabled: false
+kata-deploy:
+  enabled: false
+gkeNodeFix:
+  enabled: false
+providers:
+  - name: gcp
+    cloudProvider: gcp
+    runtimeClassName: kata-remote-gcp
+    socketPath: /run/peerpod/caa-gcp.sock
+    extendedResource: kata.peerpods.io/vm-gcp
+    peerPodsLimitPerNode: "10"
+    config:
+      PROXY_TIMEOUT: 30m
+  - name: azure
+    cloudProvider: azure
+    runtimeClassName: kata-remote-azure
+    socketPath: /run/peerpod/caa-azure.sock
+    extendedResource: kata.peerpods.io/vm-azure
+    peerPodsLimitPerNode: "10"
+    config:
+      PROXY_TIMEOUT: 45m

@@ -193,6 +193,9 @@ func (s *cloudService) CreateVM(ctx context.Context, req *pb.CreateVMRequest) (r
 	// Get Pod VM image from annotations
 	image := util.GetImageFromAnnotation(req.Annotations)
 
+	// Get inline VM config overrides from annotations
+	inlineConfig := util.GetCloudConfigFromAnnotation(req.Annotations)
+
 	netNSPath := req.NetworkNamespacePath
 
 	podNetworkConfig, err := s.workerNode.Inspect(netNSPath)
@@ -206,12 +209,32 @@ func (s *cloudService) CreateVM(ctx context.Context, req *pb.CreateVMRequest) (r
 
 	// Pod VM spec
 	vmSpec := provider.InstanceTypeSpec{
-		InstanceType: instanceType,
-		VCPUs:        vcpus,
-		Memory:       memory,
-		GPUs:         gpus,
-		Image:        image,
-		MultiNic:     podNetworkConfig.ExternalNetViaPodVM,
+		InstanceType:     instanceType,
+		VCPUs:            vcpus,
+		Memory:           memory,
+		GPUs:             gpus,
+		Image:            image,
+		MultiNic:         podNetworkConfig.ExternalNetViaPodVM,
+		UseSpot:          inlineConfig.UseSpot,
+		UseSpotSet:       inlineConfig.UseSpotSet,
+		ProjectID:        inlineConfig.ProjectID,
+		Zone:             inlineConfig.Zone,
+		Network:          inlineConfig.Network,
+		Subnetwork:       inlineConfig.Subnetwork,
+		DiskType:         inlineConfig.DiskType,
+		DisableCVM:       inlineConfig.DisableCVM,
+		ConfidentialType: inlineConfig.ConfidentialType,
+		RootVolumeSize:   inlineConfig.RootVolumeSize,
+		UsePublicIP:      inlineConfig.UsePublicIP,
+		NetworkTags:      inlineConfig.NetworkTags,
+		Tags:             inlineConfig.Tags,
+		InstanceTypes:    inlineConfig.InstanceTypes,
+		SubscriptionID:   inlineConfig.SubscriptionID,
+		ResourceGroup:    inlineConfig.ResourceGroup,
+		Region:           inlineConfig.Region,
+		SubnetID:         inlineConfig.SubnetID,
+		SecurityGroupID:  inlineConfig.SecurityGroupID,
+		EnableSecureBoot: inlineConfig.EnableSecureBoot,
 	}
 
 	// TODO: server name is also generated in each cloud provider, and possibly inconsistent

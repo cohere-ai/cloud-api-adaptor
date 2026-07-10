@@ -61,11 +61,33 @@ type Instance struct {
 }
 
 type InstanceTypeSpec struct {
-	InstanceType string
-	VCPUs        int64
-	Memory       int64
-	Arch         string
-	GPUs         int64
-	Image        string
-	MultiNic     bool
+	InstanceType     string
+	VCPUs            int64
+	Memory           int64
+	Arch             string
+	GPUs             int64
+	Image            string
+	MultiNic         bool
+	UseSpot          bool
+	UseSpotSet       bool
+	ProjectID        string
+	Zone             string
+	Network          string
+	Subnetwork       string
+	DiskType         string
+	DisableCVM       *bool
+	ConfidentialType string
+	RootVolumeSize   int64
+	UsePublicIP      *bool
+	NetworkTags      []string
+	Tags             map[string]string
+	InstanceTypes    []string
+
+	// Azure-specific overrides (empty means use provider ConfigMap defaults).
+	SubscriptionID   string
+	ResourceGroup    string
+	Region           string
+	SubnetID         string
+	SecurityGroupID  string
+	EnableSecureBoot *bool
 }

@@ -89,6 +89,35 @@ image:
 # Cloud provider: libvirt, aws, azure, byom, gcp, ibmcloud, vsphere
 provider: gcp
 
+# Optional multi-provider mode. Leave empty to use the legacy single-provider
+# chart behavior above. When set, the chart renders one CAA DaemonSet,
+# ConfigMap, ServiceAccount/RBAC set, and RuntimeClass per provider entry.
+#
+# Required fields per entry:
+#   name, cloudProvider, runtimeClassName, socketPath, extendedResource,
+#   peerPodsLimitPerNode
+# Optional: enabled (default true), probePort, config, nodeSelector,
+#   tolerations, podLabels, serviceAccount.annotations, gcpWorkloadIdentity,
+#   azureWorkloadIdentity
+#
+# Example:
+# providers:
+#   - name: gcp
+#     cloudProvider: gcp
+#     runtimeClassName: kata-remote-gcp
+#     socketPath: /run/peerpod/caa-gcp.sock
+#     extendedResource: kata.peerpods.io/vm-gcp
+#     peerPodsLimitPerNode: "10"
+#     config:
+#       GCP_PROJECT_ID: my-project
+providers: []
+
+# Extra values written to the shared peer-pods-cm in multi-provider mode for
+# peerpod-ctrl. Provider configs are also unioned into that ConfigMap; if two
+# providers set the same key to different values the chart fails — put shared
+# keys here instead (sharedConfig wins).
+sharedConfig: {}
+
 # Override the DaemonSet container command. Set to bypass entrypoint.sh when
 # using Workload Identity (no GCP_CREDENTIALS file needed).
 command: ["/bin/sh", "-c", "exec cloud-api-adaptor gcp"]
@@ -143,6 +172,7 @@ gcpWorkloadIdentity:
 gkeNodeFix:
   enabled: true
   runtimeRequestTimeout: "15m"
+  reconcileIntervalSeconds: 60
 
 # Maximum number of peer pods allowed to run simultaneously
 # This limit prevents resource exhaustion on the cloud provider
@@ -193,6 +223,18 @@ resourceCtrl:
 # NOTE: Requires cert-manager to be installed in the cluster
 webhook:
   enabled: true
+
+# Fixed webhook subchart aliases for the supported hybrid GCP+Azure layout.
+# Helm cannot create subchart instances dynamically from providers[], so these
+# aliases are explicit. In multi-provider mode: set webhook.enabled=false and
+# enable the aliases that match your RuntimeClasses, configuring
+# namePrefix / namespaceOverride / webhook.targetRuntimeClass /
+# webhook.podVMExtendedResource per alias.
+webhookGcp:
+  enabled: false
+
+webhookAzure:
+  enabled: false
 
 # kata-deploy subchart configuration
 kata-deploy:
