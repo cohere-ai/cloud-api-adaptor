@@ -95,9 +95,10 @@ func TestChooseHelpersPreferAnnotation(t *testing.T) {
 func TestGetVMParametersAppliesOverrides(t *testing.T) {
 	p := &azureProvider{
 		serviceConfig: &Config{
-			SSHUserName: "peerpod",
-			Region:      "westus",
-			SubnetID:    "/default/subnet",
+			SSHUserName:     "peerpod",
+			Region:          "eastus2",
+			SubnetID:        "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Network/virtualNetworks/vnet/subnets/peerpod",
+			SecurityGroupID: "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Network/networkSecurityGroups/nsg",
 		},
 	}
 
@@ -109,10 +110,7 @@ func TestGetVMParametersAppliesOverrides(t *testing.T) {
 		"vm-name",
 		"nic-name",
 		"/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Compute/images/img",
-		"eastus2",
 		"2",
-		"/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Network/virtualNetworks/vnet/subnets/override",
-		"/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Network/networkSecurityGroups/nsg",
 		true,  // disable CVM
 		false, // secure boot
 		true,  // public IP
@@ -139,7 +137,7 @@ func TestGetVMParametersAppliesOverrides(t *testing.T) {
 		t.Fatalf("Tags = %v, want env=test", vm.Tags)
 	}
 	nic := vm.Properties.NetworkProfile.NetworkInterfaceConfigurations[0]
-	if *nic.Properties.IPConfigurations[0].Properties.Subnet.ID != "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Network/virtualNetworks/vnet/subnets/override" {
+	if *nic.Properties.IPConfigurations[0].Properties.Subnet.ID != p.serviceConfig.SubnetID {
 		t.Fatalf("unexpected subnet: %s", *nic.Properties.IPConfigurations[0].Properties.Subnet.ID)
 	}
 	if nic.Properties.IPConfigurations[0].Properties.PublicIPAddressConfiguration == nil {

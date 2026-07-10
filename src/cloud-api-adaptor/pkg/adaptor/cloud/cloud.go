@@ -217,10 +217,7 @@ func (s *cloudService) CreateVM(ctx context.Context, req *pb.CreateVMRequest) (r
 		MultiNic:         podNetworkConfig.ExternalNetViaPodVM,
 		UseSpot:          inlineConfig.UseSpot,
 		UseSpotSet:       inlineConfig.UseSpotSet,
-		ProjectID:        inlineConfig.ProjectID,
 		Zone:             inlineConfig.Zone,
-		Network:          inlineConfig.Network,
-		Subnetwork:       inlineConfig.Subnetwork,
 		DiskType:         inlineConfig.DiskType,
 		DisableCVM:       inlineConfig.DisableCVM,
 		ConfidentialType: inlineConfig.ConfidentialType,
@@ -229,11 +226,6 @@ func (s *cloudService) CreateVM(ctx context.Context, req *pb.CreateVMRequest) (r
 		NetworkTags:      inlineConfig.NetworkTags,
 		Tags:             inlineConfig.Tags,
 		InstanceTypes:    inlineConfig.InstanceTypes,
-		SubscriptionID:   inlineConfig.SubscriptionID,
-		ResourceGroup:    inlineConfig.ResourceGroup,
-		Region:           inlineConfig.Region,
-		SubnetID:         inlineConfig.SubnetID,
-		SecurityGroupID:  inlineConfig.SecurityGroupID,
 		EnableSecureBoot: inlineConfig.EnableSecureBoot,
 	}
 

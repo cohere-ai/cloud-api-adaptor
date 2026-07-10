@@ -70,10 +70,7 @@ type InstanceTypeSpec struct {
 	MultiNic         bool
 	UseSpot          bool
 	UseSpotSet       bool
-	ProjectID        string
 	Zone             string
-	Network          string
-	Subnetwork       string
 	DiskType         string
 	DisableCVM       *bool
 	ConfidentialType string
@@ -82,12 +79,5 @@ type InstanceTypeSpec struct {
 	NetworkTags      []string
 	Tags             map[string]string
 	InstanceTypes    []string
-
-	// Azure-specific overrides (empty means use provider ConfigMap defaults).
-	SubscriptionID   string
-	ResourceGroup    string
-	Region           string
-	SubnetID         string
-	SecurityGroupID  string
 	EnableSecureBoot *bool
 }

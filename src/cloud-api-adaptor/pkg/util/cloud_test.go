@@ -1,7 +1,6 @@
 package util
 
 import (
-	"strings"
 	"testing"
 
 	hypannotations "github.com/kata-containers/kata-containers/src/runtime/virtcontainers/pkg/annotations"
@@ -194,10 +193,7 @@ func TestGetImageFromAnnotation(t *testing.T) {
 func TestGetCloudConfigFromAnnotation(t *testing.T) {
 	annotations := map[string]string{
 		UseSpotAnnotation:             "true",
-		GCPProjectIDAnnotation:        "project-a",
 		GCPZoneAnnotation:             "us-central1-b",
-		GCPNetworkAnnotation:          "global/networks/conf-compute",
-		GCPSubnetworkAnnotation:       "regions/us-central1/subnetworks/conf-compute-subnet",
 		GCPDiskTypeAnnotation:         "hyperdisk-balanced",
 		GCPDisableCVMAnnotation:       "false",
 		GCPConfidentialTypeAnnotation: "SEV",
@@ -213,17 +209,8 @@ func TestGetCloudConfigFromAnnotation(t *testing.T) {
 	if !got.UseSpot || !got.UseSpotSet {
 		t.Errorf("UseSpot = %v, UseSpotSet = %v, want true, true", got.UseSpot, got.UseSpotSet)
 	}
-	if got.ProjectID != "project-a" {
-		t.Errorf("ProjectID = %q, want project-a", got.ProjectID)
-	}
 	if got.Zone != "us-central1-b" {
 		t.Errorf("Zone = %q, want us-central1-b", got.Zone)
-	}
-	if got.Network != "global/networks/conf-compute" {
-		t.Errorf("Network = %q, want global/networks/conf-compute", got.Network)
-	}
-	if got.Subnetwork != "regions/us-central1/subnetworks/conf-compute-subnet" {
-		t.Errorf("Subnetwork = %q, want regions/us-central1/subnetworks/conf-compute-subnet", got.Subnetwork)
 	}
 	if got.DiskType != "hyperdisk-balanced" {
 		t.Errorf("DiskType = %q, want hyperdisk-balanced", got.DiskType)
@@ -253,12 +240,7 @@ func TestGetCloudConfigFromAnnotation(t *testing.T) {
 
 func TestGetCloudConfigFromAnnotationAzure(t *testing.T) {
 	annotations := map[string]string{
-		AzureSubscriptionIDAnnotation:   "sub-123",
-		AzureResourceGroupAnnotation:    "rg-peerpods",
-		AzureRegionAnnotation:           "eastus2",
 		AzureZoneAnnotation:             "2",
-		AzureSubnetIDAnnotation:         "/subscriptions/sub-123/resourceGroups/rg/providers/Microsoft.Network/virtualNetworks/vnet/subnets/peerpod",
-		AzureSecurityGroupIDAnnotation:  "/subscriptions/sub-123/resourceGroups/rg/providers/Microsoft.Network/networkSecurityGroups/nsg",
 		AzureDisableCVMAnnotation:       "true",
 		AzureRootVolumeSizeAnnotation:   "200",
 		AzureUsePublicIPAnnotation:      "false",
@@ -269,23 +251,8 @@ func TestGetCloudConfigFromAnnotationAzure(t *testing.T) {
 
 	got := GetCloudConfigFromAnnotation(annotations)
 
-	if got.SubscriptionID != "sub-123" {
-		t.Errorf("SubscriptionID = %q, want sub-123", got.SubscriptionID)
-	}
-	if got.ResourceGroup != "rg-peerpods" {
-		t.Errorf("ResourceGroup = %q, want rg-peerpods", got.ResourceGroup)
-	}
-	if got.Region != "eastus2" {
-		t.Errorf("Region = %q, want eastus2", got.Region)
-	}
 	if got.Zone != "2" {
 		t.Errorf("Zone = %q, want 2", got.Zone)
-	}
-	if !strings.Contains(got.SubnetID, "/subnets/peerpod") {
-		t.Errorf("SubnetID = %q, want azure subnet id", got.SubnetID)
-	}
-	if !strings.Contains(got.SecurityGroupID, "/networkSecurityGroups/nsg") {
-		t.Errorf("SecurityGroupID = %q, want azure nsg id", got.SecurityGroupID)
 	}
 	if got.DisableCVM == nil || !*got.DisableCVM {
 		t.Errorf("DisableCVM = %v, want pointer to true", got.DisableCVM)

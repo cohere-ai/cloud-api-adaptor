@@ -21,9 +21,14 @@ peerpods.confidentialcontainers.org/provider: {{ .provider.name | quote }}
 
 {{/*
 Return "true" when a providers[] entry is enabled (default true).
+
+Sprig `default` treats boolean false as empty, so `default true false`
+incorrectly yields true. Use hasKey so enabled: false is honored.
 */}}
 {{- define "peerpods.providerEnabled" -}}
-{{- if default true (index . "enabled") -}}
+{{- if hasKey . "enabled" -}}
+{{- if .enabled -}}true{{- end -}}
+{{- else -}}
 true
 {{- end -}}
 {{- end -}}

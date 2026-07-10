@@ -80,4 +80,13 @@ if ! grep -q 'conflicts with' "${TMPDIR_ROOT}/conflict.err"; then
   exit 1
 fi
 
+echo "Rendering multi-provider-disabled.yaml..."
+DISABLED_OUT="${TMPDIR_ROOT}/disabled.yaml"
+render "${FIXTURES}/multi-provider-disabled.yaml" "${DISABLED_OUT}"
+assert_contains "${DISABLED_OUT}" 'name: cloud-api-adaptor-gcp'
+assert_contains "${DISABLED_OUT}" 'name: kata-remote-gcp'
+assert_missing "${DISABLED_OUT}" 'name: cloud-api-adaptor-azure'
+assert_missing "${DISABLED_OUT}" 'name: peer-pods-cm-azure'
+assert_missing "${DISABLED_OUT}" 'name: kata-remote-azure'
+
 echo "Multi-provider chart checks passed"

@@ -11,10 +11,7 @@ import (
 )
 
 const (
-	GCPProjectIDAnnotation        = "io.katacontainers.config.hypervisor.gcp_project_id"
 	GCPZoneAnnotation             = "io.katacontainers.config.hypervisor.gcp_zone"
-	GCPNetworkAnnotation          = "io.katacontainers.config.hypervisor.gcp_network"
-	GCPSubnetworkAnnotation       = "io.katacontainers.config.hypervisor.gcp_subnetwork"
 	GCPDiskTypeAnnotation         = "io.katacontainers.config.hypervisor.gcp_disk_type"
 	GCPDisableCVMAnnotation       = "io.katacontainers.config.hypervisor.gcp_disable_cvm"
 	GCPConfidentialTypeAnnotation = "io.katacontainers.config.hypervisor.gcp_confidential_type"
@@ -24,29 +21,24 @@ const (
 	GCPTagsAnnotation             = "io.katacontainers.config.hypervisor.gcp_tags"
 	GCPInstanceTypesAnnotation    = "io.katacontainers.config.hypervisor.gcp_instance_types"
 
-	AzureSubscriptionIDAnnotation  = "io.katacontainers.config.hypervisor.azure_subscription_id"
-	AzureResourceGroupAnnotation   = "io.katacontainers.config.hypervisor.azure_resource_group"
-	AzureRegionAnnotation          = "io.katacontainers.config.hypervisor.azure_region"
-	AzureZoneAnnotation            = "io.katacontainers.config.hypervisor.azure_zone"
-	AzureSubnetIDAnnotation        = "io.katacontainers.config.hypervisor.azure_subnet_id"
-	AzureSecurityGroupIDAnnotation = "io.katacontainers.config.hypervisor.azure_nsg_id"
-	AzureDisableCVMAnnotation      = "io.katacontainers.config.hypervisor.azure_disable_cvm"
-	AzureRootVolumeSizeAnnotation  = "io.katacontainers.config.hypervisor.azure_root_volume_size"
-	AzureUsePublicIPAnnotation     = "io.katacontainers.config.hypervisor.azure_use_public_ip"
-	AzureTagsAnnotation            = "io.katacontainers.config.hypervisor.azure_tags"
-	AzureInstanceSizesAnnotation   = "io.katacontainers.config.hypervisor.azure_instance_sizes"
+	AzureZoneAnnotation             = "io.katacontainers.config.hypervisor.azure_zone"
+	AzureDisableCVMAnnotation       = "io.katacontainers.config.hypervisor.azure_disable_cvm"
+	AzureRootVolumeSizeAnnotation   = "io.katacontainers.config.hypervisor.azure_root_volume_size"
+	AzureUsePublicIPAnnotation      = "io.katacontainers.config.hypervisor.azure_use_public_ip"
+	AzureTagsAnnotation             = "io.katacontainers.config.hypervisor.azure_tags"
+	AzureInstanceSizesAnnotation    = "io.katacontainers.config.hypervisor.azure_instance_sizes"
 	AzureEnableSecureBootAnnotation = "io.katacontainers.config.hypervisor.azure_enable_secure_boot"
 
 	UseSpotAnnotation = "io.katacontainers.config.hypervisor.use_spot"
 )
 
+// CloudConfigAnnotations holds per-pod VM overrides from annotations.
+// Account/network placement (subscription, project, RG, VNet/subnet, NSG)
+// comes only from CAA ConfigMap/env — not from pod annotations.
 type CloudConfigAnnotations struct {
 	UseSpot          bool
 	UseSpotSet       bool
-	ProjectID        string
 	Zone             string
-	Network          string
-	Subnetwork       string
 	DiskType         string
 	DisableCVM       *bool
 	ConfidentialType string
@@ -55,12 +47,6 @@ type CloudConfigAnnotations struct {
 	NetworkTags      []string
 	Tags             map[string]string
 	InstanceTypes    []string
-
-	SubscriptionID   string
-	ResourceGroup    string
-	Region           string
-	SubnetID         string
-	SecurityGroupID  string
 	EnableSecureBoot *bool
 }
 
@@ -214,21 +200,13 @@ func GetCloudConfigFromAnnotation(annotations map[string]string) CloudConfigAnno
 	cfg := CloudConfigAnnotations{
 		UseSpot:          useSpot,
 		UseSpotSet:       useSpotSet,
-		ProjectID:        annotations[GCPProjectIDAnnotation],
 		Zone:             zone,
-		Network:          annotations[GCPNetworkAnnotation],
-		Subnetwork:       annotations[GCPSubnetworkAnnotation],
 		DiskType:         annotations[GCPDiskTypeAnnotation],
 		ConfidentialType: annotations[GCPConfidentialTypeAnnotation],
 		RootVolumeSize:   rootVolumeSize,
 		NetworkTags:      getStringListAnnotation(annotations, GCPNetworkTagsAnnotation),
 		Tags:             tags,
 		InstanceTypes:    instanceTypes,
-		SubscriptionID:   annotations[AzureSubscriptionIDAnnotation],
-		ResourceGroup:    annotations[AzureResourceGroupAnnotation],
-		Region:           annotations[AzureRegionAnnotation],
-		SubnetID:         annotations[AzureSubnetIDAnnotation],
-		SecurityGroupID:  annotations[AzureSecurityGroupIDAnnotation],
 	}
 
 	if disableCVMSet {

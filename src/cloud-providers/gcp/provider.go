@@ -258,10 +258,10 @@ func (p *gcpProvider) CreateInstance(ctx context.Context, podName, sandboxID str
 	instanceName := util.GenerateInstanceName(podName, sandboxID, maxInstanceNameLen)
 	logger.Printf("CreateInstance: name: %q", instanceName)
 
-	projectID := chooseString(spec.ProjectID, p.serviceConfig.ProjectID)
+	projectID := p.serviceConfig.ProjectID
 	zone := chooseString(spec.Zone, p.serviceConfig.Zone)
-	network := chooseString(spec.Network, p.serviceConfig.Network)
-	subnetwork := chooseString(spec.Subnetwork, p.serviceConfig.Subnetwork)
+	network := p.serviceConfig.Network
+	subnetwork := p.serviceConfig.Subnetwork
 	diskType := chooseString(spec.DiskType, p.serviceConfig.DiskType)
 	disableCVM := chooseBool(spec.DisableCVM, p.serviceConfig.DisableCVM)
 	confidentialType := chooseString(spec.ConfidentialType, p.serviceConfig.ConfidentialType)
