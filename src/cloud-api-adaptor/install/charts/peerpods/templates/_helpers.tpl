@@ -231,6 +231,11 @@ write_if_changed "$tmp" "$DROPIN"
 
 if grep -q 'coco-remote-handlers.toml' "$TOML"; then
   echo "containerd imports already include $DROPIN"
+elif grep -Eq '^imports = \[[[:space:]]*\]' "$TOML"; then
+  # Empty imports = [] must be replaced, not appended into (avoids imports = [, "..."]).
+  sed -i 's#^imports = \[[[:space:]]*\]#imports = ["/etc/containerd/coco-remote-handlers.toml"]#' "$TOML"
+  CHANGED=1
+  echo "replaced empty containerd imports with $DROPIN"
 elif grep -q '^imports = \[' "$TOML"; then
   sed -i 's#^imports = \[\(.*\)\]#imports = [\1, "/etc/containerd/coco-remote-handlers.toml"]#' "$TOML"
   CHANGED=1

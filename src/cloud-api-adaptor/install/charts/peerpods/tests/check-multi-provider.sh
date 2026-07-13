@@ -68,6 +68,9 @@ assert_contains "${HYBRID_OUT}" 'peer-pods-webhook-gcp-'
 assert_contains "${HYBRID_OUT}" 'peer-pods-webhook-azure-'
 assert_contains "${HYBRID_OUT}" 'name: fix-gke-node-config'
 assert_contains "${HYBRID_OUT}" 'name: reconcile-remote-handlers'
+# Empty imports = [] must be replaced, not rewritten to imports = [, "..."].
+assert_contains "${HYBRID_OUT}" "imports = \\[[[:space:]]*\\]"
+assert_contains "${HYBRID_OUT}" 'replaced empty containerd imports'
 
 echo "Expecting conflict fixture to fail..."
 if render "${FIXTURES}/multi-provider-conflict.yaml" "${TMPDIR_ROOT}/conflict.yaml" 2>"${TMPDIR_ROOT}/conflict.err"; then
