@@ -122,6 +122,11 @@ providerConfigs:
     # (default: "")
     # TUNNEL_TYPE: ""
 
+    # Cap pod/VXLAN MTU when set (0 = use discovered interface MTU).
+    # Use 1200 for hybrid Azure↔GCP VPN underlays with VXLAN overhead.
+    # (default: "0")
+    # MTU: "1200"
+
     # Assign public IP to the PoD VM and use to connect to kata-agent
     # (default: "false")
     # USE_PUBLIC_IP: "false"

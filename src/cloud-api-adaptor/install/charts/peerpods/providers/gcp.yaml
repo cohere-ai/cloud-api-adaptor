@@ -126,6 +126,10 @@ providerConfigs:
     # (default: "")
     # TUNNEL_TYPE: ""
 
+    # Cap pod/VXLAN MTU when set (0 = use discovered interface MTU).
+    # (default: "0")
+    # MTU: ""
+
     # Use Public IP for connecting to the kata-agent inside the Pod VM
     # (default: "false")
     # USE_PUBLIC_IP: "false"
