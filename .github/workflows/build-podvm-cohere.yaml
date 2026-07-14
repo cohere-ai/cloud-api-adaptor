@@ -21,6 +21,11 @@ on:
         required: false
         type: boolean
         default: true
+      deploy_azure:
+        description: "Publish to Azure Compute Gallery (needs Azure CC infra)."
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   actions: read       # download smoke measurements artifact in the GCP smoke workflow
@@ -30,10 +35,11 @@ permissions:
   packages: write      # push OCI artifact to GHCR
 
 env:
-  # tdx-nvidia selects the AA OCI tag suffix (<sha>-tdx-nvidia_x86_64) that
-  # bundles libnvat.so* alongside the binary. The fork's publish-artifacts
-  # workflow produces this variant; upstream guest-components does not.
-  TEE_PLATFORM: tdx-nvidia
+  # tdx-snp-nvidia selects the AA OCI tag suffix
+  # (<sha>-tdx-snp-nvidia_x86_64).
+  # The Cohere fork's variant bundles TDX + SNP + Azure SNP-vTPM + NVIDIA GPU
+  # attesters and includes libnvat.so* alongside the binary.
+  TEE_PLATFORM: tdx-snp-nvidia
   OCI_IMAGE: ghcr.io/${{ github.repository }}/podvm
   VERSIONS_YAML: src/cloud-api-adaptor/versions.yaml
   SMOKE_MACHINE_TYPE: a3-highgpu-1g
@@ -455,3 +461,25 @@ jobs:
       GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
       GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
       DEBUG_SSH_PRIVATE_KEY: ${{ secrets.DEBUG_SSH_PRIVATE_KEY }}
+
+  # ---------------------------------------------------------------------------
+  # Deploy to Azure Compute Gallery — opt-in; needs the Azure CC infra.
+  # ---------------------------------------------------------------------------
+  deploy-azure:
+    name: Deploy ${{ matrix.profile }} to Azure
+    needs: [meta, build]
+    if: |
+      needs.build.result == 'success' &&
+      github.event_name == 'workflow_dispatch' &&
+      inputs.deploy_azure
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [release, debug]
+    uses: ./.github/workflows/deploy-azure-cohere.yaml
+    with:
+      image_tag: ${{ matrix.profile == 'release' && needs.meta.outputs.image_tag_release || needs.meta.outputs.image_tag_debug }}
+    secrets:
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}

@@ -190,7 +190,7 @@ $(PAUSE): | $(PAUSE_SRC) $(UMOCI_SRC)/umoci
 $(ATTESTATION_AGENT): $(FORCE_TARGET)
 	$(call pull_gc_artifact,attestation-agent,$(TEE_PLATFORM)_$(ARCH))
 	tar xvJpf attestation-agent.tar.xz
-	# Cohere fork's tdx-nvidia AA tarball bundles libnvat.so* (NVIDIA
+	# Cohere fork's tdx-snp-nvidia AA tarball bundles libnvat.so* (NVIDIA
 	# attestation-sdk-cpp) under lib/. Install it into the podvm rootfs so
 	# the dynamically linked AA can resolve it at runtime. Other AA
 	# variants ship a binary-only tarball, in which case lib/ is absent

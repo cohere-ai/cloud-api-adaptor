@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       image_tag:
-        description: "OCI artifact tag in GHCR (e.g. podvm-ubuntu-tdx-nvidia-release-v1-0-0)"
+        description: "OCI artifact tag in GHCR (e.g. podvm-ubuntu-tdx-snp-nvidia-release-v1-0-0)"
         required: true
         type: string
     secrets:
@@ -27,7 +27,6 @@ permissions:
   attestations: read   # gh attestation verify
 
 env:
-  TEE_PLATFORM: tdx
   OCI_IMAGE: ghcr.io/${{ github.repository }}/podvm
   PODVM_GCP_IMAGE_PROJECT: cohere-artifacts
   VERSIONS_YAML: src/cloud-api-adaptor/versions.yaml
@@ -118,6 +117,7 @@ jobs:
             echo "caa_commit_short=$(jq -r '.caa_commit[:7]' measurements.json)"
             echo "caa_version=$(jq -r '.caa_version' measurements.json)"
             echo "caa_ref=$(jq -r '.caa_ref' measurements.json)"
+            echo "tee_platform=$(jq -r '.tee_platform' measurements.json)"
             echo "rtmr2=$(jq -r '.rtmr2_sha384 // ""' measurements.json)"
             echo "kernel=$(jq -r '.kernel // ""' measurements.json)"
             echo "build_date=$(jq -r '.build_date // ""' measurements.json)"
@@ -156,6 +156,7 @@ jobs:
           CAA_COMMIT_SHORT: ${{ steps.pull.outputs.caa_commit_short }}
           CAA_REF: ${{ steps.pull.outputs.caa_ref }}
           PROFILE: ${{ steps.pull.outputs.profile }}
+          TEE_PLATFORM: ${{ steps.pull.outputs.tee_platform }}
           RTMR2: ${{ steps.pull.outputs.rtmr2 }}
           KERNEL: ${{ steps.pull.outputs.kernel }}
           BUILD_DATE: ${{ steps.pull.outputs.build_date }}
@@ -173,6 +174,30 @@ jobs:
             echo "Names are immutable; re-run the workflow to bump the run-attempt suffix." >&2
             exit 1
           fi
+
+          if [ -z "$TEE_PLATFORM" ] || [ "$TEE_PLATFORM" = "null" ]; then
+            echo "ERROR: tee_platform is missing from measurements.json" >&2
+            exit 1
+          fi
+
+          case "$TEE_PLATFORM" in
+            tdx-snp-nvidia)
+              GUEST_OS_FEATURES="TDX_CAPABLE,SEV_CAPABLE,SEV_SNP_CAPABLE,UEFI_COMPATIBLE,GVNIC"
+              ;;
+            tdx|tdx-nvidia)
+              GUEST_OS_FEATURES="TDX_CAPABLE,UEFI_COMPATIBLE,GVNIC"
+              ;;
+            snp|amd)
+              GUEST_OS_FEATURES="SEV_SNP_CAPABLE,UEFI_COMPATIBLE,GVNIC"
+              ;;
+            sev)
+              GUEST_OS_FEATURES="SEV_CAPABLE,UEFI_COMPATIBLE,GVNIC"
+              ;;
+            *)
+              echo "ERROR: unsupported tee_platform '$TEE_PLATFORM'" >&2
+              exit 1
+              ;;
+          esac
 
           RAW_IMAGE="${IMAGE_NAME}-import"
           if gcloud compute images describe "$RAW_IMAGE" --project="$GCP_PROJECT" &>/dev/null; then
@@ -204,7 +229,7 @@ jobs:
             --family="$IMAGE_FAMILY" \
             --description="podvm: distro=${DISTRO} tee=${TEE_PLATFORM} profile=${PROFILE} class=${IMAGE_CLASS} caa=${CAA_VERSION} commit=${CAA_COMMIT} rtmr2=${RTMR2} oci=${OCI_IMAGE}:${IMAGE_TAG}" \
             --labels="$LABELS" \
-            --guest-os-features=TDX_CAPABLE,UEFI_COMPATIBLE,GVNIC
+            --guest-os-features="$GUEST_OS_FEATURES"
 
           gcloud compute images delete "$RAW_IMAGE" \
             --project="$GCP_PROJECT" --quiet

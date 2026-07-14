@@ -108,5 +108,33 @@ RUN ./hack/cross-build-extras.sh
 
 RUN LIBC=gnu make binaries
 
+# afterburn is not packaged for Ubuntu/Debian (unlike Fedora) and upstream
+# ships no prebuilt binary, so build it from source. Its Azure --check-in
+# reports provisioning completion to the Azure fabric (WireServer), which is
+# what flips a VM's provisioningState from Creating to Succeeded. Without it
+# the peer-pod VM boots but never signals Azure, so the CAA CreateInstance LRO
+# never completes on Ubuntu podvms. Build with a digest-pinned Rust image that
+# satisfies afterburn's MSRV; Debian bookworm's older glibc and OpenSSL 3.0 ABI
+# are compatible with the Ubuntu 24.04 target image.
+FROM rust:1.84.1-bookworm@sha256:738ae99a3d75623f41e6882566b4ef37e38a9840244a47efd4a0ca22e9628b88 AS afterburn_builder
+ARG AFTERBURN_COMMIT=f2d8f95c5b39f7d3e9300f91c6f290ba73a2a03b
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends git pkg-config libssl-dev ca-certificates && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+RUN git init /tmp/afterburn && \
+    cd /tmp/afterburn && \
+    git remote add origin https://github.com/coreos/afterburn && \
+    git fetch --depth=1 origin "${AFTERBURN_COMMIT}" && \
+    git checkout --detach FETCH_HEAD && \
+    test "$(git rev-parse HEAD)" = "${AFTERBURN_COMMIT}" && \
+    cargo build --release --bin afterburn && \
+    install -D -m0755 target/release/afterburn /out/usr/bin/afterburn && \
+    install -D -m0644 systemd/afterburn-checkin.service \
+        /out/usr/lib/systemd/system/afterburn-checkin.service
+
 FROM scratch
 COPY --from=podvm_binaries_builder /src/cloud-api-adaptor/podvm/files /
+# afterburn binary + base check-in unit (the Cohere drop-in in mkosi.skeleton
+# layers on top; on Fedora the base unit comes from the afterburn RPM instead).
+COPY --from=afterburn_builder /out/ /
