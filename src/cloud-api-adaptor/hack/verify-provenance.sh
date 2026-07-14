@@ -129,10 +129,8 @@ if [ "$workflow_trigger" != "push" ] && [ "$workflow_trigger" != "workflow_dispa
 	verification_failed="1"
 fi
 
-# TEMP: allow guest-components built from yousef/tdx-snp-nvidia-aa-v2 until
-# that AA variant is merged to cohere/main. Remove after merge.
-if [ "$workflow_ref" != "refs/heads/main" ] && [ "$workflow_ref" != "refs/heads/cohere" ] && [ "$workflow_ref" != "refs/heads/yousef/tdx-snp-nvidia-aa-v2" ]; then
-	echo "Workflow ref mismatch: expected refs/heads/main, refs/heads/cohere, or refs/heads/yousef/tdx-snp-nvidia-aa-v2, got $workflow_ref"
+if [ "$workflow_ref" != "refs/heads/main" ] && [ "$workflow_ref" != "refs/heads/cohere" ]; then
+	echo "Workflow ref mismatch: expected refs/heads/main or refs/heads/cohere, got $workflow_ref"
 	verification_failed="1"
 fi
 
