@@ -37,8 +37,8 @@ env:
   OCI_IMAGE: ghcr.io/${{ github.repository }}/podvm
   VERSIONS_YAML: src/cloud-api-adaptor/versions.yaml
   ORAS_SHA256: "5b3f1cbb86d869eee68120b9b45b9be983f3738442f87ee5f06b00edd0bab336"
-  UPLOSI_VERSION: "0.3.0"
-  UPLOSI_SHA256: "687bcab7398ab0fda65a3809492e8cd4d6a25aad1573927be5ec75ac1c4cbc35"
+  UPLOSI_VERSION: "0.4.0"
+  UPLOSI_SHA256: "ae6db020be6d1c72ab6138827629d7e89ad73f1e3998714ad3f29c2cfb410012"
 
 jobs:
   deploy:
