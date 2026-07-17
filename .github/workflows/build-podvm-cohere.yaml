@@ -282,6 +282,7 @@ jobs:
             --max-time 120 \
             "https://storage.googleapis.com/gce_tcb_integrity/ovmf_x64_csm/${FIRMWARE_SHA384}.fd" \
             -o "$FIRMWARE"
+          echo "${FIRMWARE_SHA384}  ${FIRMWARE}" | sha384sum -c -
 
           cvm-measure tdx \
             --firmware "$FIRMWARE" \
