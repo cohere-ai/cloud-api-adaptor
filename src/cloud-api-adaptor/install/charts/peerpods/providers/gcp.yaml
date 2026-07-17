@@ -6,6 +6,10 @@ provider: gcp
 
 providerConfigs:
   gcp:
+    # Comma-separated allowlist of cloud-specific pod annotations that may override operator VM configuration
+    # (default: "")
+    # ALLOWED_CLOUD_CONFIG_ANNOTATIONS: ""
+
     # CA certificate file for custom TLS (e.g. /etc/certificates/ca.crt)
     # (default: "")
     # CACERT_FILE: ""
@@ -82,6 +86,10 @@ providerConfigs:
     # (default: "")
     # INITDATA: ""
 
+    # Cap pod/VXLAN MTU when > 0 (e.g. 1200 for hybrid Azure VPN); 0 keeps the discovered interface MTU
+    # (default: "0")
+    # MTU: "0"
+
     # pause image to be used for the pods
     # (default: "")
     # PAUSE_IMAGE: ""
@@ -125,10 +133,6 @@ providerConfigs:
     # Tunnel provider
     # (default: "")
     # TUNNEL_TYPE: ""
-
-    # Cap pod/VXLAN MTU when set (0 = use discovered interface MTU).
-    # (default: "0")
-    # MTU: ""
 
     # Use Public IP for connecting to the kata-agent inside the Pod VM
     # (default: "false")

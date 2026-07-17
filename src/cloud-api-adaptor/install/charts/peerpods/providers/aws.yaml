@@ -6,6 +6,10 @@ provider: aws
 
 providerConfigs:
   aws:
+    # Comma-separated allowlist of cloud-specific pod annotations that may override operator VM configuration
+    # (default: "")
+    # ALLOWED_CLOUD_CONFIG_ANNOTATIONS: ""
+
     # Region
     # (default: "")
     # AWS_REGION: ""
@@ -53,6 +57,10 @@ providerConfigs:
     # Default initdata for all Pods
     # (default: "")
     # INITDATA: ""
+
+    # Cap pod/VXLAN MTU when > 0 (e.g. 1200 for hybrid Azure VPN); 0 keeps the discovered interface MTU
+    # (default: "0")
+    # MTU: "0"
 
     # pause image to be used for the pods
     # (default: "")

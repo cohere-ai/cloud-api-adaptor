@@ -166,6 +166,19 @@ true
 {{- end -}}
 {{- end -}}
 
+{{/*
+Check whether one multi-provider CAA instance uses custom TLS certificates.
+Accepts a dict containing the chart root as "root" and provider as "provider".
+*/}}
+{{- define "peerpods.providerHasTlsCerts" -}}
+{{- $root := .root -}}
+{{- $provider := .provider -}}
+{{- $config := $provider.config | default dict -}}
+{{- if and (index $config "CACERT_FILE") (include "peerpods.tlsSecretName" $root) -}}
+true
+{{- end -}}
+{{- end -}}
+
 {{- define "peerpods.remoteHandlerScript" -}}
 set -eu
 

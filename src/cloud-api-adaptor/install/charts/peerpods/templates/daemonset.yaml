@@ -276,11 +276,16 @@ spec:
         startupProbe:
           httpGet:
             path: /startup
-            port: {{ $provider.probePort | default 8000 }}
+            port: {{ $provider.probePort }}
           failureThreshold: 30
           periodSeconds: 20
           initialDelaySeconds: 20
         volumeMounts:
+{{- if include "peerpods.providerHasTlsCerts" (dict "root" $ "provider" $provider) }}
+        - mountPath: /etc/certificates
+          name: certs
+          readOnly: true
+{{- end }}
 {{- if and $provider.gcpWorkloadIdentity $provider.gcpWorkloadIdentity.enabled }}
         - mountPath: /var/run/secrets/gcp-wif
           name: gcp-wif
@@ -305,6 +310,13 @@ spec:
 {{ toYaml . | nindent 8 }}
 {{- end }}
       volumes:
+{{- if include "peerpods.providerHasTlsCerts" (dict "root" $ "provider" $provider) }}
+      - name: certs
+        secret:
+          defaultMode: 384
+          optional: true
+          secretName: {{ include "peerpods.tlsSecretName" $ }}
+{{- end }}
 {{- if and $provider.gcpWorkloadIdentity $provider.gcpWorkloadIdentity.enabled }}
       - name: gcp-wif
         projected:

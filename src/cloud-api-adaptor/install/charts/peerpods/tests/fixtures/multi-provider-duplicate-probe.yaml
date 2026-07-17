@@ -1,4 +1,3 @@
-# Expect render failure: same config key with different values across providers.
 resourceCtrl:
   enabled: false
 webhook:
@@ -15,14 +14,10 @@ providers:
     extendedResource: kata.peerpods.io/vm-gcp
     peerPodsLimitPerNode: "10"
     probePort: 8001
-    config:
-      PROXY_TIMEOUT: 30m
   - name: azure
     cloudProvider: azure
     runtimeClassName: kata-remote-azure
     socketPath: /run/peerpod/caa-azure.sock
     extendedResource: kata.peerpods.io/vm-azure
     peerPodsLimitPerNode: "10"
-    probePort: 8002
-    config:
-      PROXY_TIMEOUT: 45m
+    probePort: 8001

@@ -62,15 +62,29 @@ assert_contains "${HYBRID_OUT}" 'name: cloud-api-adaptor-gcp-gcp-wif'
 assert_contains "${HYBRID_OUT}" 'azure.workload.identity/client-id: 11111111-1111-1111-1111-111111111111'
 assert_contains "${HYBRID_OUT}" 'azure.workload.identity/use: "true"'
 assert_contains "${HYBRID_OUT}" 'GOOGLE_APPLICATION_CREDENTIALS'
+assert_contains "${HYBRID_OUT}" 'ALLOWED_CLOUD_CONFIG_ANNOTATIONS: "io.katacontainers.config.hypervisor.gcp_zone,io.katacontainers.config.hypervisor.use_spot"'
 assert_contains "${HYBRID_OUT}" 'kata-remote-gcp'
 assert_contains "${HYBRID_OUT}" 'kata-remote-azure'
 assert_contains "${HYBRID_OUT}" 'peer-pods-webhook-gcp-'
 assert_contains "${HYBRID_OUT}" 'peer-pods-webhook-azure-'
 assert_contains "${HYBRID_OUT}" 'name: fix-gke-node-config'
 assert_contains "${HYBRID_OUT}" 'name: reconcile-remote-handlers'
+assert_contains "${HYBRID_OUT}" 'mountPath: /etc/certificates'
+assert_contains "${HYBRID_OUT}" 'secretName: certs-for-tls'
 # Empty imports = [] must be replaced, not rewritten to imports = [, "..."].
 assert_contains "${HYBRID_OUT}" "imports = \\[[[:space:]]*\\]"
 assert_contains "${HYBRID_OUT}" 'replaced empty containerd imports'
+
+echo "Expecting duplicate probe port fixture to fail..."
+if render "${FIXTURES}/multi-provider-duplicate-probe.yaml" "${TMPDIR_ROOT}/duplicate-probe.yaml" 2>"${TMPDIR_ROOT}/duplicate-probe.err"; then
+  echo "FAIL: multi-provider-duplicate-probe.yaml rendered successfully" >&2
+  exit 1
+fi
+if ! grep -q 'require unique probe ports' "${TMPDIR_ROOT}/duplicate-probe.err"; then
+  echo "FAIL: expected duplicate probe port error, got:" >&2
+  cat "${TMPDIR_ROOT}/duplicate-probe.err" >&2
+  exit 1
+fi
 
 echo "Expecting conflict fixture to fail..."
 if render "${FIXTURES}/multi-provider-conflict.yaml" "${TMPDIR_ROOT}/conflict.yaml" 2>"${TMPDIR_ROOT}/conflict.err"; then

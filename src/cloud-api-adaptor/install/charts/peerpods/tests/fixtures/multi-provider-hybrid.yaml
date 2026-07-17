@@ -30,6 +30,10 @@ gkeNodeFix:
   enabled: true
 secrets:
   mode: create
+  tlsCerts:
+    caCert: test-ca
+    clientCert: test-cert
+    clientKey: test-key
 sharedConfig:
   PROXY_TIMEOUT: 30m
   DISABLECVM: "false"
@@ -41,6 +45,9 @@ providers:
     extendedResource: kata.peerpods.io/vm-gcp
     peerPodsLimitPerNode: "10"
     probePort: 8001
+    allowedCloudConfigAnnotations:
+      - io.katacontainers.config.hypervisor.gcp_zone
+      - io.katacontainers.config.hypervisor.use_spot
     serviceAccount:
       annotations:
         iam.gke.io/gcp-service-account: peerpods@example.iam.gserviceaccount.com
@@ -65,3 +72,6 @@ providers:
     config:
       AZURE_SUBSCRIPTION_ID: 33333333-3333-3333-3333-333333333333
       AZURE_REGION: eastus2
+      CACERT_FILE: /etc/certificates/ca.crt
+      CERT_FILE: /etc/certificates/client.crt
+      CERT_KEY: /etc/certificates/client.key

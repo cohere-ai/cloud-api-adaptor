@@ -95,10 +95,17 @@ provider: gcp
 #
 # Required fields per entry:
 #   name, cloudProvider, runtimeClassName, socketPath, extendedResource,
-#   peerPodsLimitPerNode
-# Optional: enabled (default true), probePort, config, nodeSelector,
+#   peerPodsLimitPerNode, probePort (must be unique across enabled providers)
+# Optional: enabled (default true), config, allowedCloudConfigAnnotations,
+#   nodeSelector,
 #   tolerations, podLabels, serviceAccount.annotations, gcpWorkloadIdentity,
 #   azureWorkloadIdentity
+#
+# Per-pod cloud configuration overrides are denied by default. Operators must
+# explicitly allow exact annotation keys for each provider, for example:
+#   allowedCloudConfigAnnotations:
+#     - io.katacontainers.config.hypervisor.gcp_zone
+#     - io.katacontainers.config.hypervisor.use_spot
 #
 # Example:
 # providers:

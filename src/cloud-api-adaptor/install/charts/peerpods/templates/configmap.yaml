@@ -70,7 +70,10 @@ data:
   POD_VM_EXTENDED_RESOURCE: {{ $provider.extendedResource | quote }}
   PEERPODS_LIMIT_PER_NODE: {{ $provider.peerPodsLimitPerNode | quote }}
   RUNTIMECLASS_NAME: {{ $provider.runtimeClassName | quote }}
-  PROBE_PORT: {{ ($provider.probePort | default 8000) | quote }}
+  PROBE_PORT: {{ $provider.probePort | quote }}
+{{- with $provider.allowedCloudConfigAnnotations }}
+  ALLOWED_CLOUD_CONFIG_ANNOTATIONS: {{ join "," . | quote }}
+{{- end }}
 {{- range $key, $value := ($provider.config | default dict) }}
   {{ $key }}: {{ $value | quote }}
 {{- end }}

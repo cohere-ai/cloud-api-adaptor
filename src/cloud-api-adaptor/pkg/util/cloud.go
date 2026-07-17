@@ -32,6 +32,26 @@ const (
 	UseSpotAnnotation = "io.katacontainers.config.hypervisor.use_spot"
 )
 
+var cloudConfigAnnotationKeys = map[string]struct{}{
+	GCPZoneAnnotation:               {},
+	GCPDiskTypeAnnotation:           {},
+	GCPDisableCVMAnnotation:         {},
+	GCPConfidentialTypeAnnotation:   {},
+	GCPRootVolumeSizeAnnotation:     {},
+	GCPUsePublicIPAnnotation:        {},
+	GCPNetworkTagsAnnotation:        {},
+	GCPTagsAnnotation:               {},
+	GCPInstanceTypesAnnotation:      {},
+	AzureZoneAnnotation:             {},
+	AzureDisableCVMAnnotation:       {},
+	AzureRootVolumeSizeAnnotation:   {},
+	AzureUsePublicIPAnnotation:      {},
+	AzureTagsAnnotation:             {},
+	AzureInstanceSizesAnnotation:    {},
+	AzureEnableSecureBootAnnotation: {},
+	UseSpotAnnotation:               {},
+}
+
 // CloudConfigAnnotations holds per-pod VM overrides from annotations.
 // Account/network placement (subscription, project, RG, VNet/subnet, NSG)
 // comes only from CAA ConfigMap/env — not from pod annotations.
@@ -166,7 +186,23 @@ func getStringMapAnnotation(annotations map[string]string, key string) map[strin
 	return result
 }
 
-func GetCloudConfigFromAnnotation(annotations map[string]string) CloudConfigAnnotations {
+func GetCloudConfigFromAnnotation(annotations map[string]string, allowedAnnotations string) CloudConfigAnnotations {
+	allowed := map[string]struct{}{}
+	for _, key := range strings.Split(allowedAnnotations, ",") {
+		key = strings.TrimSpace(key)
+		if _, supported := cloudConfigAnnotationKeys[key]; supported {
+			allowed[key] = struct{}{}
+		}
+	}
+
+	filtered := make(map[string]string, len(allowed))
+	for key := range allowed {
+		if value, present := annotations[key]; present {
+			filtered[key] = value
+		}
+	}
+	annotations = filtered
+
 	useSpot, useSpotSet := GetBoolAnnotation(annotations, UseSpotAnnotation)
 
 	// Prefer cloud-specific keys when both GCP and Azure variants are present.

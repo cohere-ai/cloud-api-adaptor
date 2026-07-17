@@ -6,6 +6,10 @@ provider: azure
 
 providerConfigs:
   azure:
+    # Comma-separated allowlist of cloud-specific pod annotations that may override operator VM configuration
+    # (default: "")
+    # ALLOWED_CLOUD_CONFIG_ANNOTATIONS: ""
+
     # Image Id
     # (required)
     AZURE_IMAGE_ID: ""
@@ -78,6 +82,10 @@ providerConfigs:
     # (default: "")
     # INITDATA: ""
 
+    # Cap pod/VXLAN MTU when > 0 (e.g. 1200 for hybrid Azure VPN); 0 keeps the discovered interface MTU
+    # (default: "0")
+    # MTU: "0"
+
     # pause image to be used for the pods
     # (default: "")
     # PAUSE_IMAGE: ""
@@ -121,11 +129,6 @@ providerConfigs:
     # Tunnel provider
     # (default: "")
     # TUNNEL_TYPE: ""
-
-    # Cap pod/VXLAN MTU when set (0 = use discovered interface MTU).
-    # Use 1200 for hybrid Azure↔GCP VPN underlays with VXLAN overhead.
-    # (default: "0")
-    # MTU: "1200"
 
     # Assign public IP to the PoD VM and use to connect to kata-agent
     # (default: "false")

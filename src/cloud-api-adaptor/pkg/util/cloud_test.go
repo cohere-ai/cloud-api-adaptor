@@ -1,10 +1,19 @@
 package util
 
 import (
+	"strings"
 	"testing"
 
 	hypannotations "github.com/kata-containers/kata-containers/src/runtime/virtcontainers/pkg/annotations"
 )
+
+func allCloudConfigAnnotations() string {
+	keys := make([]string, 0, len(cloudConfigAnnotationKeys))
+	for key := range cloudConfigAnnotationKeys {
+		keys = append(keys, key)
+	}
+	return strings.Join(keys, ",")
+}
 
 func TestGetPodvmResourcesFromAnnotation(t *testing.T) {
 	type args struct {
@@ -204,7 +213,7 @@ func TestGetCloudConfigFromAnnotation(t *testing.T) {
 		GCPInstanceTypesAnnotation:    "g4-standard-48,a3-highgpu-1g",
 	}
 
-	got := GetCloudConfigFromAnnotation(annotations)
+	got := GetCloudConfigFromAnnotation(annotations, allCloudConfigAnnotations())
 
 	if !got.UseSpot || !got.UseSpotSet {
 		t.Errorf("UseSpot = %v, UseSpotSet = %v, want true, true", got.UseSpot, got.UseSpotSet)
@@ -249,7 +258,7 @@ func TestGetCloudConfigFromAnnotationAzure(t *testing.T) {
 		AzureEnableSecureBootAnnotation: "true",
 	}
 
-	got := GetCloudConfigFromAnnotation(annotations)
+	got := GetCloudConfigFromAnnotation(annotations, allCloudConfigAnnotations())
 
 	if got.Zone != "2" {
 		t.Errorf("Zone = %q, want 2", got.Zone)
@@ -276,19 +285,19 @@ func TestGetCloudConfigFromAnnotationAzure(t *testing.T) {
 
 func TestGetCloudConfigFromAnnotationAzureOverridesGCP(t *testing.T) {
 	annotations := map[string]string{
-		GCPZoneAnnotation:           "us-central1-a",
-		AzureZoneAnnotation:         "3",
-		GCPDisableCVMAnnotation:     "false",
-		AzureDisableCVMAnnotation:   "true",
-		GCPRootVolumeSizeAnnotation: "50",
+		GCPZoneAnnotation:             "us-central1-a",
+		AzureZoneAnnotation:           "3",
+		GCPDisableCVMAnnotation:       "false",
+		AzureDisableCVMAnnotation:     "true",
+		GCPRootVolumeSizeAnnotation:   "50",
 		AzureRootVolumeSizeAnnotation: "120",
-		GCPTagsAnnotation:           "cloud=gcp",
-		AzureTagsAnnotation:         "cloud=azure",
-		GCPInstanceTypesAnnotation:  "c3-standard-4",
-		AzureInstanceSizesAnnotation: "Standard_DC2as_v5",
+		GCPTagsAnnotation:             "cloud=gcp",
+		AzureTagsAnnotation:           "cloud=azure",
+		GCPInstanceTypesAnnotation:    "c3-standard-4",
+		AzureInstanceSizesAnnotation:  "Standard_DC2as_v5",
 	}
 
-	got := GetCloudConfigFromAnnotation(annotations)
+	got := GetCloudConfigFromAnnotation(annotations, allCloudConfigAnnotations())
 	if got.Zone != "3" {
 		t.Errorf("Zone = %q, want Azure zone 3", got.Zone)
 	}
@@ -306,6 +315,30 @@ func TestGetCloudConfigFromAnnotationAzureOverridesGCP(t *testing.T) {
 	}
 }
 
+func TestGetCloudConfigFromAnnotationRequiresAllowlist(t *testing.T) {
+	annotations := map[string]string{
+		GCPZoneAnnotation:        "us-central1-b",
+		GCPDisableCVMAnnotation:  "true",
+		GCPUsePublicIPAnnotation: "true",
+		GCPNetworkTagsAnnotation: "peerpods-vm",
+	}
+
+	got := GetCloudConfigFromAnnotation(annotations, GCPZoneAnnotation)
+
+	if got.Zone != "us-central1-b" {
+		t.Errorf("Zone = %q, want us-central1-b", got.Zone)
+	}
+	if got.DisableCVM != nil {
+		t.Errorf("DisableCVM = %v, want nil", got.DisableCVM)
+	}
+	if got.UsePublicIP != nil {
+		t.Errorf("UsePublicIP = %v, want nil", got.UsePublicIP)
+	}
+	if len(got.NetworkTags) != 0 {
+		t.Errorf("NetworkTags = %v, want none", got.NetworkTags)
+	}
+}
+
 func TestGetCloudConfigFromAnnotationIgnoresInvalidValues(t *testing.T) {
 	annotations := map[string]string{
 		UseSpotAnnotation:           "invalid",
@@ -316,7 +349,7 @@ func TestGetCloudConfigFromAnnotationIgnoresInvalidValues(t *testing.T) {
 		AzureUsePublicIPAnnotation:  "invalid",
 	}
 
-	got := GetCloudConfigFromAnnotation(annotations)
+	got := GetCloudConfigFromAnnotation(annotations, allCloudConfigAnnotations())
 
 	if got.UseSpotSet {
 		t.Errorf("UseSpotSet = %v, want false", got.UseSpotSet)

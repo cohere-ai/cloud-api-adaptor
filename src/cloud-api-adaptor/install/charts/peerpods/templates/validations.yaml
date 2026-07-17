@@ -1,11 +1,20 @@
 {{- /* Multi-provider schema and identity validations. Emits no resources. */ -}}
+{{- $probePorts := dict }}
 {{- range $provider := .Values.providers }}
 {{- if include "peerpods.providerEnabled" $provider }}
-{{- range $field := list "name" "cloudProvider" "runtimeClassName" "socketPath" "extendedResource" }}
+{{- range $field := list "name" "cloudProvider" "runtimeClassName" "socketPath" "extendedResource" "probePort" }}
 {{- if not (get $provider $field) }}
 {{- fail (printf "providers[].%s is required for each enabled provider" $field) }}
 {{- end }}
 {{- end }}
+{{- if or (lt (int $provider.probePort) 1) (gt (int $provider.probePort) 65535) }}
+{{- fail (printf "providers.%s.probePort must be between 1 and 65535" $provider.name) }}
+{{- end }}
+{{- $probePort := printf "%v" $provider.probePort }}
+{{- if hasKey $probePorts $probePort }}
+{{- fail (printf "providers.%s.probePort=%s conflicts with providers.%s.probePort; enabled providers sharing hostNetwork require unique probe ports" $provider.name $probePort (index $probePorts $probePort)) }}
+{{- end }}
+{{- $_ := set $probePorts $probePort $provider.name }}
 {{- if not (hasKey $provider "peerPodsLimitPerNode") }}
 {{- fail (printf "providers.%s.peerPodsLimitPerNode is required" $provider.name) }}
 {{- end }}
