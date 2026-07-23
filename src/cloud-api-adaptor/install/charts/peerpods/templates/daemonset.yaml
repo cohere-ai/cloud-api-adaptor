@@ -60,7 +60,7 @@ spec:
           httpGet:
             path: /startup
             port: 8000
-          failureThreshold: 30
+          failureThreshold: {{ .Values.daemonset.startupProbe.failureThreshold }}
           periodSeconds: 20
           initialDelaySeconds: 20
         # TODO: We should think about a better patch strategy for keeping per provider

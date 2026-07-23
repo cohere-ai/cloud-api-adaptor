@@ -151,6 +151,10 @@ limit: "10"
 
 # DaemonSet configuration
 daemonset:
+  # Allow up to 30 minutes for peer pods on the node to become Ready.
+  # The startup probe runs every 20 seconds.
+  startupProbe:
+    failureThreshold: 90
   # Update strategy controls how the CAA DaemonSet performs rolling updates.
   # CAA uses hostNetwork, so two pods on the same node cause a port conflict.
   # maxSurge must be 0; roll one node at a time by killing old before starting new.
