@@ -79,12 +79,9 @@ secrets:
 #
 # Note: libvirt/docker provider files override this with the dev image.
 image:
-  # Cohere fork default. Published by .github/workflows/publish-cohere.yaml on
-  # every push to the cohere branch. Override with a short SHA (e.g. "a4a1c915")
-  # for immutable pins in production — `latest-cohere` is a floating tag and
-  # follows the tip of the cohere branch.
+  # This chart-only patch release keeps the CAA binary from v0.2.0-cohere.5.
   name: ghcr.io/cohere-ai/cloud-api-adaptor/cloud-api-adaptor
-  tag: latest-cohere
+  tag: v0.2.0-cohere.5
 
 # Cloud provider: libvirt, aws, azure, byom, gcp, ibmcloud, vsphere
 provider: gcp
@@ -154,7 +151,14 @@ daemonset:
   # Allow up to 30 minutes for peer pods on the node to become Ready.
   # The startup probe runs every 20 seconds.
   startupProbe:
+    httpGet:
+      path: /startup
+      port: 8000
     failureThreshold: 90
+    periodSeconds: 20
+    initialDelaySeconds: 20
+    timeoutSeconds: 1
+    successThreshold: 1
   # Update strategy controls how the CAA DaemonSet performs rolling updates.
   # CAA uses hostNetwork, so two pods on the same node cause a port conflict.
   # maxSurge must be 0; roll one node at a time by killing old before starting new.
@@ -185,11 +189,9 @@ daemonset:
 resourceCtrl:
   enabled: true
   image:
-    # Cohere fork default. Published by .github/workflows/publish-cohere.yaml on
-    # every push to the cohere branch. Override with a short SHA for immutable
-    # pins in production.
+    # This chart-only patch release keeps peerpod-ctrl from v0.2.0-cohere.5.
     repository: ghcr.io/cohere-ai/cloud-api-adaptor/peerpod-ctrl
-    tag: latest-cohere
+    tag: v0.2.0-cohere.5
 
 # peerpods-webhook subchart configuration
 # Mutating webhook that modifies pod specs to use peer pods runtime and resources
