@@ -7,13 +7,6 @@ DROPIN=/etc/containerd/coco-remote-handlers.toml
 TOML=/etc/containerd/config.toml
 CHANGED=0
 
-i=0
-while [ ! -f "$BASE" ] && [ "$i" -lt 60 ]; do
-  sleep 5
-  i=$((i + 1))
-done
-[ -f "$BASE" ] || { echo "base remote config missing at $BASE"; exit 1; }
-
 write_if_changed() {
   src="$1"
   dst="$2"
@@ -68,8 +61,20 @@ elif grep -Eq '^imports = \[[[:space:]]*\]' "$TOML"; then
   sed -i 's#^imports = \[[[:space:]]*\]#imports = ["/etc/containerd/coco-remote-handlers.toml"]#' "$TOML"
   CHANGED=1
   echo "replaced empty containerd imports with $DROPIN"
-elif grep -q '^imports = \[' "$TOML"; then
+elif grep -Eq '^imports = \[[[:space:]]*$' "$TOML"; then
+  sed -i '/^imports = \[[[:space:]]*$/a\  "/etc/containerd/coco-remote-handlers.toml",' "$TOML"
+  grep -q 'coco-remote-handlers.toml' "$TOML" || {
+    echo "failed to add $DROPIN to multi-line containerd imports" >&2
+    exit 1
+  }
+  CHANGED=1
+  echo "added $DROPIN to multi-line containerd imports"
+elif grep -Eq '^imports = \[[^]]*\][[:space:]]*$' "$TOML"; then
   sed -i 's#^imports = \[\(.*\)\]#imports = [\1, "/etc/containerd/coco-remote-handlers.toml"]#' "$TOML"
+  grep -q 'coco-remote-handlers.toml' "$TOML" || {
+    echo "failed to add $DROPIN to containerd imports" >&2
+    exit 1
+  }
   CHANGED=1
   echo "added $DROPIN to containerd imports"
 else

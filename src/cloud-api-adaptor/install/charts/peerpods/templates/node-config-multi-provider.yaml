@@ -97,6 +97,13 @@ spec:
         - /bin/sh
         - -c
         - |
+          BASE=/opt/kata/share/defaults/kata-containers/runtimes/remote/configuration-remote.toml
+          i=0
+          while [ ! -f "$BASE" ] && [ "$i" -lt 60 ]; do
+            sleep 5
+            i=$((i + 1))
+          done
+          [ -f "$BASE" ] || { echo "base remote config missing at $BASE"; exit 1; }
 {{ include "peerpods.remoteHandlerScript" . | indent 10 }}
       containers:
       - name: reconcile-remote-handlers
@@ -114,6 +121,12 @@ spec:
         - |
           set -eu
           while true; do
+            BASE=/opt/kata/share/defaults/kata-containers/runtimes/remote/configuration-remote.toml
+            if [ ! -f "$BASE" ]; then
+              echo "base remote config missing at $BASE; retrying"
+              sleep {{ .Values.remoteHandlers.reconcileIntervalSeconds | default 60 }}
+              continue
+            fi
 {{ include "peerpods.remoteHandlerScript" . | indent 12 }}
             sleep {{ .Values.remoteHandlers.reconcileIntervalSeconds | default 60 }}
           done
@@ -131,5 +144,5 @@ spec:
       - name: host-opt-kata
         hostPath:
           path: /opt/kata
-          type: Directory
+          type: DirectoryOrCreate
 {{- end }}
