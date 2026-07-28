@@ -1,3 +1,4 @@
+{{- if not .Values.providers }}
 {{- if include "peerpods.gcpWorkloadIdentityEnabled" . }}
 {{- if not .Values.gcpWorkloadIdentity.audience }}
 {{- fail "gcpWorkloadIdentity.enabled=true requires gcpWorkloadIdentity.audience" }}
@@ -31,4 +32,32 @@ data:
       },
       "service_account_impersonation_url": "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/{{ .Values.gcpWorkloadIdentity.serviceAccountEmail }}:generateAccessToken"
     }
+{{- end }}
+{{- else }}
+{{- range $provider := .Values.providers }}
+{{- if and (include "peerpods.providerEnabled" $provider) $provider.gcpWorkloadIdentity $provider.gcpWorkloadIdentity.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cloud-api-adaptor-{{ $provider.name }}-gcp-wif
+  namespace: {{ $.Release.Namespace }}
+  labels:
+{{ include "peerpods.providerLabels" (dict "root" $ "provider" $provider) | nindent 4 }}
+data:
+  credentials.json: |
+    {
+      "universe_domain": "googleapis.com",
+      "type": "external_account",
+      "audience": {{ $provider.gcpWorkloadIdentity.audience | quote }},
+      "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+      "token_url": "https://sts.googleapis.com/v1/token",
+      "credential_source": {
+        "file": "/var/run/secrets/gcp-wif/token",
+        "format": { "type": "text" }
+      },
+      "service_account_impersonation_url": "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/{{ $provider.gcpWorkloadIdentity.serviceAccountEmail }}:generateAccessToken"
+    }
+{{- end }}
+{{- end }}
 {{- end }}

@@ -1,0 +1,74 @@
+# Hybrid GCP+Azure fixture with WIF / Azure WI and webhook aliases.
+resourceCtrl:
+  enabled: true
+  podLabels:
+    azure.workload.identity/use: "true"
+  serviceAccount:
+    annotations:
+      azure.workload.identity/client-id: 11111111-1111-1111-1111-111111111111
+webhook:
+  enabled: false
+webhookGcp:
+  enabled: true
+  namePrefix: peer-pods-webhook-gcp-
+  namespaceOverride: peer-pods-webhook-gcp-system
+  webhook:
+    targetRuntimeClass: kata-remote-gcp
+    podVMExtendedResource: kata.peerpods.io/vm-gcp
+    failurePolicy: Ignore
+webhookAzure:
+  enabled: true
+  namePrefix: peer-pods-webhook-azure-
+  namespaceOverride: peer-pods-webhook-azure-system
+  webhook:
+    targetRuntimeClass: kata-remote-azure
+    podVMExtendedResource: kata.peerpods.io/vm-azure
+    failurePolicy: Ignore
+kata-deploy:
+  enabled: false
+gkeNodeFix:
+  enabled: true
+secrets:
+  mode: create
+  tlsCerts:
+    caCert: test-ca
+    clientCert: test-cert
+    clientKey: test-key
+sharedConfig:
+  PROXY_TIMEOUT: 30m
+  DISABLECVM: "false"
+providers:
+  - name: gcp
+    cloudProvider: gcp
+    runtimeClassName: kata-remote-gcp
+    socketPath: /run/peerpod/caa-gcp.sock
+    extendedResource: kata.peerpods.io/vm-gcp
+    peerPodsLimitPerNode: "10"
+    probePort: 8001
+    serviceAccount:
+      annotations:
+        iam.gke.io/gcp-service-account: peerpods@example.iam.gserviceaccount.com
+    gcpWorkloadIdentity:
+      enabled: true
+      audience: "//iam.googleapis.com/projects/123456789012/locations/global/workloadIdentityPools/test-pool/providers/test-provider"
+      serviceAccountEmail: peerpods@example.iam.gserviceaccount.com
+    config:
+      GCP_PROJECT_ID: example
+      GCP_ZONE: us-central1-a
+  - name: azure
+    cloudProvider: azure
+    runtimeClassName: kata-remote-azure
+    socketPath: /run/peerpod/caa-azure.sock
+    extendedResource: kata.peerpods.io/vm-azure
+    peerPodsLimitPerNode: "10"
+    probePort: 8002
+    azureWorkloadIdentity:
+      enabled: true
+      tenantId: 22222222-2222-2222-2222-222222222222
+      clientId: 11111111-1111-1111-1111-111111111111
+    config:
+      AZURE_SUBSCRIPTION_ID: 33333333-3333-3333-3333-333333333333
+      AZURE_REGION: eastus2
+      CACERT_FILE: /etc/certificates/ca.crt
+      CERT_FILE: /etc/certificates/client.crt
+      CERT_KEY: /etc/certificates/client.key

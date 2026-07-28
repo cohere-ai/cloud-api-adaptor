@@ -14,6 +14,7 @@
 # Tags produced (release `v0.1.4-cohere.2`):
 #   ghcr.io/cohere-ai/cloud-api-adaptor/cloud-api-adaptor:v0.1.4-cohere.2
 #   ghcr.io/cohere-ai/cloud-api-adaptor/peerpod-ctrl:v0.1.4-cohere.2
+#     (built with GOFLAGS=-tags=gcp,azure — same as publish-cohere.yaml)
 #   ghcr.io/cohere-ai/cloud-api-adaptor/charts/peerpods:0.1.4-cohere.2
 #
 # The chart is self-contained: values.yaml is patched at package time so
@@ -169,7 +170,7 @@ jobs:
           file: src/peerpod-ctrl/Dockerfile
           platforms: linux/amd64
           build-args: |
-            GOFLAGS=-tags=gcp
+            GOFLAGS=-tags=gcp,azure
 
   chart:
     name: Publish peerpods Helm chart
