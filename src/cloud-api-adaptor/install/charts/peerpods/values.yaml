@@ -172,6 +172,9 @@ gcpWorkloadIdentity:
 gkeNodeFix:
   enabled: true
   runtimeRequestTimeout: "15m"
+
+# Reconciles provider-specific kata-remote containerd handlers on each node.
+remoteHandlers:
   reconcileIntervalSeconds: 60
 
 # Maximum number of peer pods allowed to run simultaneously

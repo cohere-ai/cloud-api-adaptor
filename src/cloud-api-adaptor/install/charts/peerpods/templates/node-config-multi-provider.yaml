@@ -1,19 +1,20 @@
-{{- if and .Values.gkeNodeFix.enabled (not .Values.providers) }}
+{{- if .Values.providers }}
+{{- $name := ternary "fix-gke-node-config" "configure-remote-handlers" .Values.gkeNodeFix.enabled }}
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: fix-gke-node-config
+  name: {{ $name }}
   namespace: {{ .Release.Namespace }}
   labels:
-    app: fix-gke-node-config
+    app: {{ $name }}
 spec:
   selector:
     matchLabels:
-      app: fix-gke-node-config
+      app: {{ $name }}
   template:
     metadata:
       labels:
-        app: fix-gke-node-config
+        app: {{ $name }}
     spec:
       hostPID: true
       nodeSelector:
@@ -23,6 +24,7 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       initContainers:
+{{- if .Values.gkeNodeFix.enabled }}
       - name: fix-containerd
         image: alpine:3.21
         securityContext:
@@ -81,16 +83,53 @@ spec:
 
           nsenter -t 1 -m -u -i -n -p -- systemctl restart kubelet
           echo "kubelet: restarted"
+{{- end }}
+      - name: install-remote-handlers
+        image: alpine:3.21
+        securityContext:
+          privileged: true
+        volumeMounts:
+        - name: host-containerd-config
+          mountPath: /etc/containerd
+        - name: host-opt-kata
+          mountPath: /opt/kata
+        command:
+        - /bin/sh
+        - -c
+        - |
+{{ include "peerpods.remoteHandlerScript" . | indent 10 }}
       containers:
-      - name: pause
-        image: registry.k8s.io/pause:3.10
+      - name: reconcile-remote-handlers
+        image: alpine:3.21
+        securityContext:
+          privileged: true
+        volumeMounts:
+        - name: host-containerd-config
+          mountPath: /etc/containerd
+        - name: host-opt-kata
+          mountPath: /opt/kata
+        command:
+        - /bin/sh
+        - -c
+        - |
+          set -eu
+          while true; do
+{{ include "peerpods.remoteHandlerScript" . | indent 12 }}
+            sleep {{ .Values.remoteHandlers.reconcileIntervalSeconds | default 60 }}
+          done
       volumes:
       - name: host-containerd-config
         hostPath:
           path: /etc/containerd
           type: Directory
+{{- if .Values.gkeNodeFix.enabled }}
       - name: host-kubelet-config
         hostPath:
           path: /home/kubernetes
+          type: Directory
+{{- end }}
+      - name: host-opt-kata
+        hostPath:
+          path: /opt/kata
           type: Directory
 {{- end }}
