@@ -1,0 +1,59 @@
+{{- if .Values.providers }}
+{{/*
+The shared ConfigMap is consumed by peerpod-ctrl. It unions enabled provider
+configuration, rejects conflicting values, then applies sharedConfig.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: peer-pods-cm
+  namespace: {{ .Release.Namespace }}
+  labels:
+{{ include "peerpods.labels" . | nindent 4 }}
+data:
+{{- $data := dict }}
+{{- $owners := dict }}
+{{- range $provider := .Values.providers }}
+{{- if include "peerpods.providerEnabled" $provider }}
+{{- range $key, $value := ($provider.config | default dict) }}
+{{- if hasKey $data $key }}
+{{- if ne (printf "%v" (index $data $key)) (printf "%v" $value) }}
+{{- fail (printf "providers.%s.config.%s=%v conflicts with providers.%s.config.%s=%v; move shared keys to sharedConfig" (index $owners $key) $key (index $data $key) $provider.name $key $value) }}
+{{- end }}
+{{- else }}
+{{- $_ := set $data $key $value }}
+{{- $_ := set $owners $key $provider.name }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- range $key, $value := (.Values.sharedConfig | default dict) }}
+{{- $_ := set $data $key $value }}
+{{- end }}
+{{- range $key, $value := $data }}
+  {{ $key }}: {{ $value | quote }}
+{{- end }}
+{{- range $provider := .Values.providers }}
+{{- if include "peerpods.providerEnabled" $provider }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: peer-pods-cm-{{ $provider.name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+{{ include "peerpods.providerLabels" (dict "root" $ "provider" $provider) | nindent 4 }}
+data:
+  CLOUD_PROVIDER: {{ $provider.cloudProvider | quote }}
+  REMOTE_HYPERVISOR_ENDPOINT: {{ $provider.socketPath | quote }}
+  POD_VM_EXTENDED_RESOURCE: {{ $provider.extendedResource | quote }}
+  PEERPODS_LIMIT_PER_NODE: {{ $provider.peerPodsLimitPerNode | quote }}
+  RUNTIMECLASS_NAME: {{ $provider.runtimeClassName | quote }}
+  PROBE_PORT: {{ $provider.probePort | quote }}
+{{- $config := mergeOverwrite (deepCopy ($provider.config | default dict)) ($.Values.sharedConfig | default dict) }}
+{{- range $key, $value := $config }}
+  {{ $key }}: {{ $value | quote }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
