@@ -74,7 +74,8 @@ data:
 {{- with $provider.allowedCloudConfigAnnotations }}
   ALLOWED_CLOUD_CONFIG_ANNOTATIONS: {{ join "," . | quote }}
 {{- end }}
-{{- range $key, $value := ($provider.config | default dict) }}
+{{- $config := mergeOverwrite (deepCopy ($provider.config | default dict)) ($.Values.sharedConfig | default dict) }}
+{{- range $key, $value := $config }}
   {{ $key }}: {{ $value | quote }}
 {{- end }}
 {{- end }}
