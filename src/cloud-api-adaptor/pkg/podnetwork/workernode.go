@@ -170,8 +170,8 @@ func (n *workerNode) Inspect(nsPath string) (*tunneler.Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get MTU size of %s: %w", podInterface, err)
 	}
-	config.MTU = resolveMTU(mtu, n.MTU)
-	if config.MTU > 0 && config.MTU < mtu {
+	config.MTU, config.MTUOverride = resolveMTU(mtu, n.MTU)
+	if config.MTUOverride {
 		if err := podLink.SetMTU(config.MTU); err != nil {
 			return nil, fmt.Errorf("failed to set MTU of %s to %d: %w", podInterface, config.MTU, err)
 		}
@@ -287,14 +287,13 @@ func getPodIP(podLink netops.Link) (netip.Prefix, error) {
 	return ips[0], nil
 }
 
-// resolveMTU returns the MTU to advertise/apply. A configured value > 0 acts as
-// a cap over the discovered interface MTU (never raises it).
-func resolveMTU(discovered, configured int) int {
-	if configured <= 0 {
-		return discovered
-	}
+// resolveMTU returns the advertised MTU and whether an explicit lower cap
+// should be applied to the worker pod and VXLAN interfaces.
+func resolveMTU(discovered, configured int) (int, bool) {
 	if discovered <= 0 || configured < discovered {
-		return configured
+		if configured > 0 {
+			return configured, true
+		}
 	}
-	return discovered
+	return discovered, false
 }

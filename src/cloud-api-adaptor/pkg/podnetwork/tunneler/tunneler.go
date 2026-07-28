@@ -24,6 +24,7 @@ type Config struct {
 	Routes              []*Route     `json:"routes"`
 	Neighbors           []*Neighbor  `json:"neighbors"`
 	MTU                 int          `json:"mtu"`
+	MTUOverride         bool         `json:"-"`
 	Index               int          `json:"index"`
 	VXLANPort           int          `json:"vxlan-port,omitempty"`
 	VXLANID             int          `json:"vxlan-id,omitempty"`

@@ -138,7 +138,7 @@ func (t *workerNodeTunneler) Setup(nsPath string, podNodeIPs []netip.Addr, confi
 		return fmt.Errorf("failed to change vxlan interface name %s on netns %s to %s: %w", hostVxlanInterface, podNS.Path(), secondPodInterface, err)
 	}
 
-	if config.MTU > 0 {
+	if config.MTUOverride {
 		mtu := config.MTU
 		if mtu > maxMTU {
 			mtu = maxMTU
