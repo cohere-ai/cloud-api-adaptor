@@ -69,6 +69,17 @@ func SelectInstanceTypeToUse(spec InstanceTypeSpec, specList []InstanceTypeSpec,
 	var err error
 
 	if len(spec.InstanceTypes) > 0 {
+		requestedTypes := make([]string, 0, len(spec.InstanceTypes))
+		for _, candidate := range spec.InstanceTypes {
+			if candidate == defaultInstanceType || util.Contains(validInstanceTypes, candidate) {
+				requestedTypes = append(requestedTypes, candidate)
+			}
+		}
+		if len(requestedTypes) == 0 {
+			return "", fmt.Errorf("none of the requested instance types are part of the supported instance types list")
+		}
+		spec.InstanceTypes = requestedTypes
+
 		// Restrict best-fit selection to the per-pod candidate list.
 		filteredSpecList := make([]InstanceTypeSpec, 0, len(spec.InstanceTypes))
 		for _, candidate := range specList {

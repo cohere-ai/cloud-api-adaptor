@@ -291,9 +291,6 @@ func parseInstanceID(instanceID, configuredProject, configuredZone string) (stri
 // Select a machine type based on the memory, vcpu, and GPU requirements
 func (p *gcpProvider) selectMachineType(ctx context.Context, spec provider.InstanceTypeSpec) (string, error) {
 	machineTypes := []string(p.serviceConfig.MachineTypes)
-	if len(spec.InstanceTypes) > 0 {
-		machineTypes = spec.InstanceTypes
-	}
 	return provider.SelectInstanceTypeToUse(spec, p.serviceConfig.MachineTypeSpecList, machineTypes, p.serviceConfig.MachineType)
 }
 

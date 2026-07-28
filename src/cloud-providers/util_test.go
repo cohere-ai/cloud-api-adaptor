@@ -754,6 +754,30 @@ func TestSelectInstanceTypeToUse(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name: "exclude per-pod instance types outside the operator allowlist",
+			args: args{
+				spec: InstanceTypeSpec{
+					InstanceTypes: []string{"t3.2xlarge", "t3.large"},
+				},
+				validInstanceTypes:  []string{"t3.large", "t3.xlarge"},
+				defaultInstanceType: "t3.medium",
+			},
+			want:    "t3.large",
+			wantErr: false,
+		},
+		{
+			name: "reject per-pod instance types outside the operator allowlist",
+			args: args{
+				spec: InstanceTypeSpec{
+					InstanceTypes: []string{"t3.2xlarge"},
+				},
+				validInstanceTypes:  []string{"t3.large", "t3.xlarge"},
+				defaultInstanceType: "t3.medium",
+			},
+			want:    "",
+			wantErr: true,
+		},
+		{
 			name: "exact instance type takes priority over per-pod list",
 			args: args{
 				spec: InstanceTypeSpec{

@@ -404,9 +404,6 @@ func (p *azureProvider) ConfigVerifier() error {
 // Add SelectInstanceType method to select an instance type based on the memory and vcpu requirements
 func (p *azureProvider) selectInstanceType(ctx context.Context, spec provider.InstanceTypeSpec) (string, error) {
 	instanceSizes := []string(p.serviceConfig.InstanceSizes)
-	if len(spec.InstanceTypes) > 0 {
-		instanceSizes = spec.InstanceTypes
-	}
 	return provider.SelectInstanceTypeToUse(spec, p.serviceConfig.InstanceSizeSpecList, instanceSizes, p.serviceConfig.Size)
 }
 
