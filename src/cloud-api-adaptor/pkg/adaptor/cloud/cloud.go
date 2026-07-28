@@ -36,17 +36,18 @@ const (
 )
 
 type ServerConfig struct {
-	TLSConfig               *tlsutil.TLSConfig
-	SocketPath              string
-	PauseImage              string
-	PodsDir                 string
-	ForwarderPort           string
-	ProxyTimeout            time.Duration
-	Initdata                string
-	EnableCloudConfigVerify bool
-	PeerPodsLimitPerNode    int
-	RootVolumeSize          int
-	EnableScratchSpace      bool
+	TLSConfig                     *tlsutil.TLSConfig
+	SocketPath                    string
+	PauseImage                    string
+	PodsDir                       string
+	ForwarderPort                 string
+	ProxyTimeout                  time.Duration
+	Initdata                      string
+	EnableCloudConfigVerify       bool
+	PeerPodsLimitPerNode          int
+	RootVolumeSize                int
+	EnableScratchSpace            bool
+	AllowedCloudConfigAnnotations string
 }
 
 var logger = log.New(log.Writer(), "[adaptor/cloud] ", log.LstdFlags|log.Lmsgprefix)
@@ -193,6 +194,12 @@ func (s *cloudService) CreateVM(ctx context.Context, req *pb.CreateVMRequest) (r
 	// Get Pod VM image from annotations
 	image := util.GetImageFromAnnotation(req.Annotations)
 
+	// Get inline VM config overrides from annotations
+	inlineConfig := util.GetCloudConfigFromAnnotation(
+		req.Annotations,
+		s.serverConfig.AllowedCloudConfigAnnotations,
+	)
+
 	netNSPath := req.NetworkNamespacePath
 
 	podNetworkConfig, err := s.workerNode.Inspect(netNSPath)
@@ -206,12 +213,24 @@ func (s *cloudService) CreateVM(ctx context.Context, req *pb.CreateVMRequest) (r
 
 	// Pod VM spec
 	vmSpec := provider.InstanceTypeSpec{
-		InstanceType: instanceType,
-		VCPUs:        vcpus,
-		Memory:       memory,
-		GPUs:         gpus,
-		Image:        image,
-		MultiNic:     podNetworkConfig.ExternalNetViaPodVM,
+		InstanceType:     instanceType,
+		VCPUs:            vcpus,
+		Memory:           memory,
+		GPUs:             gpus,
+		Image:            image,
+		MultiNic:         podNetworkConfig.ExternalNetViaPodVM,
+		UseSpot:          inlineConfig.UseSpot,
+		UseSpotSet:       inlineConfig.UseSpotSet,
+		Zone:             inlineConfig.Zone,
+		DiskType:         inlineConfig.DiskType,
+		DisableCVM:       inlineConfig.DisableCVM,
+		ConfidentialType: inlineConfig.ConfidentialType,
+		RootVolumeSize:   inlineConfig.RootVolumeSize,
+		UsePublicIP:      inlineConfig.UsePublicIP,
+		NetworkTags:      inlineConfig.NetworkTags,
+		Tags:             inlineConfig.Tags,
+		InstanceTypes:    inlineConfig.InstanceTypes,
+		EnableSecureBoot: inlineConfig.EnableSecureBoot,
 	}
 
 	// TODO: server name is also generated in each cloud provider, and possibly inconsistent

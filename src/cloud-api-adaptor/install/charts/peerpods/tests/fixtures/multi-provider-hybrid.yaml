@@ -45,6 +45,9 @@ providers:
     extendedResource: kata.peerpods.io/vm-gcp
     peerPodsLimitPerNode: "10"
     probePort: 8001
+    allowedCloudConfigAnnotations:
+      - io.katacontainers.config.hypervisor.gcp_zone
+      - io.katacontainers.config.hypervisor.use_spot
     serviceAccount:
       annotations:
         iam.gke.io/gcp-service-account: peerpods@example.iam.gserviceaccount.com

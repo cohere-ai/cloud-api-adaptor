@@ -110,12 +110,11 @@ func generateSSHPublicKey() ([]byte, error) {
 	return publicKeyBytes, nil
 }
 
-func (p *azureProvider) getIPs(ctx context.Context, vm *armcompute.VirtualMachine) ([]netip.Addr, error) {
-	nicClient, err := armnetwork.NewInterfacesClient(p.serviceConfig.SubscriptionID, p.azureClient, nil)
+func (p *azureProvider) getIPs(ctx context.Context, vm *armcompute.VirtualMachine, subscriptionID, rgName string, usePublicIP bool) ([]netip.Addr, error) {
+	nicClient, err := armnetwork.NewInterfacesClient(subscriptionID, p.azureClient, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create network interfaces client: %w", err)
 	}
-	rgName := p.serviceConfig.ResourceGroupName
 	nicRefs := vm.Properties.NetworkProfile.NetworkInterfaces
 
 	var ips []netip.Addr
@@ -133,8 +132,8 @@ func (p *azureProvider) getIPs(ctx context.Context, vm *armcompute.VirtualMachin
 	}
 
 	// we add the public ip addresses as first elements, if available
-	if p.serviceConfig.UsePublicIP {
-		publicIPClient, err := armnetwork.NewPublicIPAddressesClient(p.serviceConfig.SubscriptionID, p.azureClient, nil)
+	if usePublicIP {
+		publicIPClient, err := armnetwork.NewPublicIPAddressesClient(subscriptionID, p.azureClient, nil)
 		if err != nil {
 			return nil, fmt.Errorf("create public ip client: %w", err)
 		}
@@ -177,15 +176,15 @@ func (p *azureProvider) getIPs(ctx context.Context, vm *armcompute.VirtualMachin
 	return ips, nil
 }
 
-func (p *azureProvider) create(ctx context.Context, parameters *armcompute.VirtualMachine) (*armcompute.VirtualMachine, error) {
-	vmClient, err := armcompute.NewVirtualMachinesClient(p.serviceConfig.SubscriptionID, p.azureClient, nil)
+func (p *azureProvider) create(ctx context.Context, subscriptionID, resourceGroup string, parameters *armcompute.VirtualMachine) (*armcompute.VirtualMachine, error) {
+	vmClient, err := armcompute.NewVirtualMachinesClient(subscriptionID, p.azureClient, nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating VM client: %w", err)
 	}
 
 	vmName := *parameters.Properties.OSProfile.ComputerName
 
-	pollerResponse, err := vmClient.BeginCreateOrUpdate(ctx, p.serviceConfig.ResourceGroupName, vmName, *parameters, nil)
+	pollerResponse, err := vmClient.BeginCreateOrUpdate(ctx, resourceGroup, vmName, *parameters, nil)
 	if err != nil {
 		return nil, fmt.Errorf("beginning VM creation or update: %w", err)
 	}
@@ -200,17 +199,17 @@ func (p *azureProvider) create(ctx context.Context, parameters *armcompute.Virtu
 	return &resp.VirtualMachine, nil
 }
 
-func (p *azureProvider) buildNetworkConfig(nicName string) *armcompute.VirtualMachineNetworkInterfaceConfiguration {
+func (p *azureProvider) buildNetworkConfig(nicName, subnetID, securityGroupID string, usePublicIP bool) *armcompute.VirtualMachineNetworkInterfaceConfiguration {
 	ipConfig := armcompute.VirtualMachineNetworkInterfaceIPConfiguration{
 		Name: to.Ptr("ip-config"),
 		Properties: &armcompute.VirtualMachineNetworkInterfaceIPConfigurationProperties{
 			Subnet: &armcompute.SubResource{
-				ID: to.Ptr(p.serviceConfig.SubnetID),
+				ID: to.Ptr(subnetID),
 			},
 		},
 	}
 
-	if p.serviceConfig.UsePublicIP {
+	if usePublicIP {
 		publicIPConfig := armcompute.VirtualMachinePublicIPAddressConfiguration{
 			Name: to.Ptr(nicName),
 			Properties: &armcompute.VirtualMachinePublicIPAddressConfigurationProperties{
@@ -228,13 +227,45 @@ func (p *azureProvider) buildNetworkConfig(nicName string) *armcompute.VirtualMa
 		},
 	}
 
-	if p.serviceConfig.SecurityGroupID != "" {
+	if securityGroupID != "" {
 		config.Properties.NetworkSecurityGroup = &armcompute.SubResource{
-			ID: to.Ptr(p.serviceConfig.SecurityGroupID),
+			ID: to.Ptr(securityGroupID),
 		}
 	}
 
 	return &config
+}
+
+func chooseString(annotationValue, defaultValue string) string {
+	if annotationValue != "" {
+		return annotationValue
+	}
+	return defaultValue
+}
+
+func chooseBool(annotationValue *bool, defaultValue bool) bool {
+	if annotationValue != nil {
+		return *annotationValue
+	}
+	return defaultValue
+}
+
+func chooseInt64(annotationValue int64, defaultValue int) int64 {
+	if annotationValue > 0 {
+		return annotationValue
+	}
+	return int64(defaultValue)
+}
+
+func chooseTags(annotationValue map[string]string, defaultValue provider.KeyValueFlag) map[string]string {
+	if len(annotationValue) > 0 {
+		return annotationValue
+	}
+	tags := make(map[string]string, len(defaultValue))
+	for key, value := range defaultValue {
+		tags[key] = value
+	}
+	return tags
 }
 
 func (p *azureProvider) CreateInstance(ctx context.Context, podName, sandboxID string, cloudConfig cloudinit.CloudConfigGenerator, spec provider.InstanceTypeSpec) (instance *provider.Instance, err error) {
@@ -283,14 +314,21 @@ func (p *azureProvider) CreateInstance(ctx context.Context, podName, sandboxID s
 		imageID = spec.Image
 	}
 
-	vmParameters, err := p.getVMParameters(instanceSize, diskName, cloudConfigData, sshBytes, instanceName, nicName, imageID)
+	zone := chooseString(spec.Zone, p.serviceConfig.Zone)
+	disableCVM := chooseBool(spec.DisableCVM, p.serviceConfig.DisableCVM)
+	enableSecureBoot := chooseBool(spec.EnableSecureBoot, p.serviceConfig.EnableSecureBoot)
+	usePublicIP := chooseBool(spec.UsePublicIP, p.serviceConfig.UsePublicIP)
+	rootVolumeSize := chooseInt64(spec.RootVolumeSize, p.serviceConfig.RootVolumeSize)
+	tags := chooseTags(spec.Tags, p.serviceConfig.Tags)
+
+	vmParameters, err := p.getVMParameters(instanceSize, diskName, cloudConfigData, sshBytes, instanceName, nicName, imageID, zone, disableCVM, enableSecureBoot, usePublicIP, rootVolumeSize, tags)
 	if err != nil {
 		return nil, err
 	}
 
 	logger.Printf("CreateInstance: name: %q", instanceName)
 
-	vm, err := p.create(ctx, vmParameters)
+	vm, err := p.create(ctx, p.serviceConfig.SubscriptionID, p.serviceConfig.ResourceGroupName, vmParameters)
 	if err != nil {
 		return nil, fmt.Errorf("Creating instance (%v): %s", vm, err)
 	}
@@ -303,7 +341,7 @@ func (p *azureProvider) CreateInstance(ctx context.Context, podName, sandboxID s
 		Name: instanceName,
 	}
 
-	ips, err := p.getIPs(ctx, vm)
+	ips, err := p.getIPs(ctx, vm, p.serviceConfig.SubscriptionID, p.serviceConfig.ResourceGroupName, usePublicIP)
 	if err != nil {
 		logger.Printf("getting IPs for the instance : %v ", err)
 		return instance, err
@@ -365,8 +403,11 @@ func (p *azureProvider) ConfigVerifier() error {
 
 // Add SelectInstanceType method to select an instance type based on the memory and vcpu requirements
 func (p *azureProvider) selectInstanceType(ctx context.Context, spec provider.InstanceTypeSpec) (string, error) {
-
-	return provider.SelectInstanceTypeToUse(spec, p.serviceConfig.InstanceSizeSpecList, p.serviceConfig.InstanceSizes, p.serviceConfig.Size)
+	instanceSizes := []string(p.serviceConfig.InstanceSizes)
+	if len(spec.InstanceTypes) > 0 {
+		instanceSizes = spec.InstanceTypes
+	}
+	return provider.SelectInstanceTypeToUse(spec, p.serviceConfig.InstanceSizeSpecList, instanceSizes, p.serviceConfig.Size)
 }
 
 // Add a method to populate InstanceSizeSpecList for all the instanceSizes
@@ -412,17 +453,15 @@ func (p *azureProvider) updateInstanceSizeSpecList() error {
 	return nil
 }
 
-func (p *azureProvider) getResourceTags() map[string]*string {
-	tags := map[string]*string{}
-
-	// Add custom tags from serviceConfig.Tags
-	for k, v := range p.serviceConfig.Tags {
-		tags[k] = to.Ptr(v)
+func (p *azureProvider) getResourceTags(tags map[string]string) map[string]*string {
+	result := map[string]*string{}
+	for k, v := range tags {
+		result[k] = to.Ptr(v)
 	}
-	return tags
+	return result
 }
 
-func (p *azureProvider) getVMParameters(instanceSize, diskName, cloudConfig string, sshBytes []byte, instanceName, nicName string, imageID string) (*armcompute.VirtualMachine, error) {
+func (p *azureProvider) getVMParameters(instanceSize, diskName, cloudConfig string, sshBytes []byte, instanceName, nicName, imageID, zone string, disableCVM, enableSecureBoot, usePublicIP bool, rootVolumeSize int64, tags map[string]string) (*armcompute.VirtualMachine, error) {
 	userDataB64 := base64.StdEncoding.EncodeToString([]byte(cloudConfig))
 
 	// Azure limits the base64 encrypted userData to 64KB.
@@ -433,7 +472,7 @@ func (p *azureProvider) getVMParameters(instanceSize, diskName, cloudConfig stri
 	}
 	var managedDiskParams *armcompute.ManagedDiskParameters
 	var securityProfile *armcompute.SecurityProfile
-	if !p.serviceConfig.DisableCVM {
+	if !disableCVM {
 		managedDiskParams = &armcompute.ManagedDiskParameters{
 			StorageAccountType: to.Ptr(armcompute.StorageAccountTypesPremiumLRS),
 			SecurityProfile: &armcompute.VMDiskSecurityProfile{
@@ -444,7 +483,7 @@ func (p *azureProvider) getVMParameters(instanceSize, diskName, cloudConfig stri
 		securityProfile = &armcompute.SecurityProfile{
 			SecurityType: to.Ptr(armcompute.SecurityTypesConfidentialVM),
 			UefiSettings: &armcompute.UefiSettings{
-				SecureBootEnabled: to.Ptr(p.serviceConfig.EnableSecureBoot),
+				SecureBootEnabled: to.Ptr(enableSecureBoot),
 				VTpmEnabled:       to.Ptr(true),
 			},
 		}
@@ -465,7 +504,7 @@ func (p *azureProvider) getVMParameters(instanceSize, diskName, cloudConfig stri
 		}
 	}
 
-	networkConfig := p.buildNetworkConfig(nicName)
+	networkConfig := p.buildNetworkConfig(nicName, p.serviceConfig.SubnetID, p.serviceConfig.SecurityGroupID, usePublicIP)
 
 	// Configure OS disk with optional root volume size
 	osDisk := &armcompute.OSDisk{
@@ -477,9 +516,9 @@ func (p *azureProvider) getVMParameters(instanceSize, diskName, cloudConfig stri
 	}
 
 	// Set disk size if RootVolumeSize is configured
-	if p.serviceConfig.RootVolumeSize > 0 {
-		osDisk.DiskSizeGB = to.Ptr(int32(p.serviceConfig.RootVolumeSize))
-		logger.Printf("Setting root volume size to %d GB", p.serviceConfig.RootVolumeSize)
+	if rootVolumeSize > 0 {
+		osDisk.DiskSizeGB = to.Ptr(int32(rootVolumeSize))
+		logger.Printf("Setting root volume size to %d GB", rootVolumeSize)
 	}
 
 	vmParameters := armcompute.VirtualMachine{
@@ -518,7 +557,11 @@ func (p *azureProvider) getVMParameters(instanceSize, diskName, cloudConfig stri
 			},
 			UserData: to.Ptr(userDataB64),
 		},
-		Tags: p.getResourceTags(),
+		Tags: p.getResourceTags(tags),
+	}
+
+	if zone != "" {
+		vmParameters.Zones = []*string{to.Ptr(zone)}
 	}
 
 	return &vmParameters, nil

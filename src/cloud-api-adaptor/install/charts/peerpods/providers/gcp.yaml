@@ -6,6 +6,10 @@ provider: gcp
 
 providerConfigs:
   gcp:
+    # Comma-separated allowlist of cloud-specific pod annotations that may override operator VM configuration
+    # (default: "")
+    # ALLOWED_CLOUD_CONFIG_ANNOTATIONS: ""
+
     # CA certificate file for custom TLS (e.g. /etc/certificates/ca.crt)
     # (default: "")
     # CACERT_FILE: ""

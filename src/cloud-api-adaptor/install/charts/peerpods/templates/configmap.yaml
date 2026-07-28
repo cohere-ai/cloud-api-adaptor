@@ -71,6 +71,9 @@ data:
   PEERPODS_LIMIT_PER_NODE: {{ $provider.peerPodsLimitPerNode | quote }}
   RUNTIMECLASS_NAME: {{ $provider.runtimeClassName | quote }}
   PROBE_PORT: {{ $provider.probePort | quote }}
+{{- with $provider.allowedCloudConfigAnnotations }}
+  ALLOWED_CLOUD_CONFIG_ANNOTATIONS: {{ join "," . | quote }}
+{{- end }}
 {{- $config := mergeOverwrite (deepCopy ($provider.config | default dict)) ($.Values.sharedConfig | default dict) }}
 {{- range $key, $value := $config }}
   {{ $key }}: {{ $value | quote }}
