@@ -741,6 +741,50 @@ func TestSelectInstanceTypeToUse(t *testing.T) {
 			want:    "t3.medium",
 			wantErr: false,
 		},
+		{
+			name: "use first per-pod instance type when list is the only override",
+			args: args{
+				spec: InstanceTypeSpec{
+					InstanceTypes: []string{"t3.large", "t3.xlarge"},
+				},
+				validInstanceTypes:  []string{"t3.large", "t3.xlarge"},
+				defaultInstanceType: "t3.medium",
+			},
+			want:    "t3.large",
+			wantErr: false,
+		},
+		{
+			name: "exact instance type takes priority over per-pod list",
+			args: args{
+				spec: InstanceTypeSpec{
+					InstanceType:  "t3.xlarge",
+					InstanceTypes: []string{"t3.large", "t3.xlarge"},
+				},
+				validInstanceTypes:  []string{"t3.large", "t3.xlarge"},
+				defaultInstanceType: "t3.medium",
+			},
+			want:    "t3.xlarge",
+			wantErr: false,
+		},
+		{
+			name: "resource selection is restricted to per-pod instance types",
+			args: args{
+				spec: InstanceTypeSpec{
+					VCPUs:         4,
+					Memory:        16,
+					InstanceTypes: []string{"t3.xlarge", "t3.2xlarge"},
+				},
+				specList: []InstanceTypeSpec{
+					{InstanceType: "t3.large", VCPUs: 4, Memory: 16},
+					{InstanceType: "t3.xlarge", VCPUs: 4, Memory: 32},
+					{InstanceType: "t3.2xlarge", VCPUs: 8, Memory: 64},
+				},
+				validInstanceTypes:  []string{"t3.xlarge", "t3.2xlarge"},
+				defaultInstanceType: "t3.medium",
+			},
+			want:    "t3.xlarge",
+			wantErr: false,
+		},
 	}
 
 	for _, tt := range tests {

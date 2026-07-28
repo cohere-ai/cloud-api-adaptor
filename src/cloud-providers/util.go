@@ -68,6 +68,25 @@ func SelectInstanceTypeToUse(spec InstanceTypeSpec, specList []InstanceTypeSpec,
 	var instanceType string
 	var err error
 
+	if len(spec.InstanceTypes) > 0 {
+		// Restrict best-fit selection to the per-pod candidate list.
+		filteredSpecList := make([]InstanceTypeSpec, 0, len(spec.InstanceTypes))
+		for _, candidate := range specList {
+			if util.Contains(spec.InstanceTypes, candidate.InstanceType) {
+				filteredSpecList = append(filteredSpecList, candidate)
+			}
+		}
+		specList = filteredSpecList
+
+		// A per-pod list without resource requirements is ordered by preference.
+		// Select its first entry instead of silently falling back to the operator
+		// default.
+		hasResourceRequirements := spec.GPUs > 0 || (spec.VCPUs != 0 && spec.Memory != 0)
+		if spec.InstanceType == "" && !hasResourceRequirements {
+			spec.InstanceType = spec.InstanceTypes[0]
+		}
+	}
+
 	// spec.InstanceType gets the highest priority
 	if spec.InstanceType != "" {
 		instanceType = spec.InstanceType

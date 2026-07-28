@@ -244,6 +244,50 @@ func chooseTags(annotationValue map[string]string, defaultValue provider.KeyValu
 	return tags
 }
 
+func regionFromZone(zone string) (string, error) {
+	separator := strings.LastIndex(zone, "-")
+	if separator <= 0 || separator == len(zone)-1 {
+		return "", fmt.Errorf("invalid GCP zone %q", zone)
+	}
+	return zone[:separator], nil
+}
+
+func validateZoneScope(configuredZone, requestedZone string) (string, error) {
+	configuredRegion, err := regionFromZone(configuredZone)
+	if err != nil {
+		return "", err
+	}
+	requestedRegion, err := regionFromZone(requestedZone)
+	if err != nil {
+		return "", err
+	}
+	if requestedRegion != configuredRegion {
+		return "", fmt.Errorf("GCP zone %q is outside the configured subnet region %q", requestedZone, configuredRegion)
+	}
+	return configuredRegion, nil
+}
+
+func parseInstanceID(instanceID, configuredProject, configuredZone string) (string, string, error) {
+	if !strings.Contains(instanceID, "/") {
+		if instanceID == "" {
+			return "", "", fmt.Errorf("instance ID is empty")
+		}
+		return instanceID, configuredZone, nil
+	}
+
+	parts := strings.Split(strings.Trim(instanceID, "/"), "/")
+	if len(parts) != 6 || parts[0] != "projects" || parts[2] != "zones" || parts[4] != "instances" || parts[5] == "" {
+		return "", "", fmt.Errorf("invalid GCP instance ID %q", instanceID)
+	}
+	if parts[1] != configuredProject {
+		return "", "", fmt.Errorf("instance project %q does not match configured project %q", parts[1], configuredProject)
+	}
+	if _, err := validateZoneScope(configuredZone, parts[3]); err != nil {
+		return "", "", err
+	}
+	return parts[5], parts[3], nil
+}
+
 // Select a machine type based on the memory, vcpu, and GPU requirements
 func (p *gcpProvider) selectMachineType(ctx context.Context, spec provider.InstanceTypeSpec) (string, error) {
 	machineTypes := []string(p.serviceConfig.MachineTypes)
@@ -260,6 +304,10 @@ func (p *gcpProvider) CreateInstance(ctx context.Context, podName, sandboxID str
 
 	projectID := p.serviceConfig.ProjectID
 	zone := chooseString(spec.Zone, p.serviceConfig.Zone)
+	subnetworkRegion, err := validateZoneScope(p.serviceConfig.Zone, zone)
+	if err != nil {
+		return nil, err
+	}
 	network := p.serviceConfig.Network
 	subnetwork := p.serviceConfig.Subnetwork
 	diskType := chooseString(spec.DiskType, p.serviceConfig.DiskType)
@@ -350,16 +398,8 @@ func (p *gcpProvider) CreateInstance(ctx context.Context, podName, sandboxID str
 		if hasAnyPrefix(subnetworkName, "projects/", "/projects", "regions/", "https") {
 			subnetworkValue = proto.String(subnetworkName)
 		} else {
-			// Extract region from zone (format: "region-zone" e.g., "us-central1-a")
-			zoneParts := strings.Split(zone, "-")
-			if len(zoneParts) >= 2 {
-				region := strings.Join(zoneParts[:len(zoneParts)-1], "-")
-				formattedSubnetwork := fmt.Sprintf("projects/%s/regions/%s/subnetworks/%s", projectID, region, subnetworkName)
-				subnetworkValue = proto.String(formattedSubnetwork)
-			} else {
-				// Fallback: assume zone format is invalid, try to use as-is
-				subnetworkValue = proto.String(subnetworkName)
-			}
+			formattedSubnetwork := fmt.Sprintf("projects/%s/regions/%s/subnetworks/%s", projectID, subnetworkRegion, subnetworkName)
+			subnetworkValue = proto.String(formattedSubnetwork)
 		}
 	}
 
@@ -543,19 +583,9 @@ func (p *gcpProvider) CreateInstance(ctx context.Context, podName, sandboxID str
 
 func (p *gcpProvider) DeleteInstance(ctx context.Context, instanceID string) error {
 	projectID := p.serviceConfig.ProjectID
-	zone := p.serviceConfig.Zone
-	instanceName := instanceID
-
-	parts := strings.Split(instanceID, "/")
-	for i := 0; i < len(parts)-1; i++ {
-		switch parts[i] {
-		case "projects":
-			projectID = parts[i+1]
-		case "zones":
-			zone = parts[i+1]
-		case "instances":
-			instanceName = parts[i+1]
-		}
+	instanceName, zone, err := parseInstanceID(instanceID, projectID, p.serviceConfig.Zone)
+	if err != nil {
+		return err
 	}
 
 	req := &computepb.DeleteInstanceRequest{
