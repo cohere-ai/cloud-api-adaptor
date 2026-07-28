@@ -37,6 +37,9 @@ secrets:
 sharedConfig:
   PROXY_TIMEOUT: 30m
   DISABLECVM: "false"
+  CACERT_FILE: /etc/certificates/ca.crt
+  CERT_FILE: /etc/certificates/client.crt
+  CERT_KEY: /etc/certificates/client.key
 providers:
   - name: gcp
     cloudProvider: gcp
@@ -72,6 +75,3 @@ providers:
     config:
       AZURE_SUBSCRIPTION_ID: 33333333-3333-3333-3333-333333333333
       AZURE_REGION: eastus2
-      CACERT_FILE: /etc/certificates/ca.crt
-      CERT_FILE: /etc/certificates/client.crt
-      CERT_KEY: /etc/certificates/client.key
