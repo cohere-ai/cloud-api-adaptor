@@ -170,7 +170,13 @@ func (n *workerNode) Inspect(nsPath string) (*tunneler.Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get MTU size of %s: %w", podInterface, err)
 	}
-	config.MTU = mtu
+	config.MTU = resolveMTU(mtu, n.MTU)
+	if config.MTU > 0 && config.MTU < mtu {
+		if err := podLink.SetMTU(config.MTU); err != nil {
+			return nil, fmt.Errorf("failed to set MTU of %s to %d: %w", podInterface, config.MTU, err)
+		}
+		logger.Printf("capped MTU of %s from %d to %d", podInterface, mtu, config.MTU)
+	}
 
 	neighbors, err := podNS.NeighborList(&netops.Neighbor{Dev: podInterface, State: netops.NeighborStatePermanent})
 	if err != nil {
@@ -279,4 +285,16 @@ func getPodIP(podLink netops.Link) (netip.Prefix, error) {
 		return netip.Prefix{}, fmt.Errorf("more than one IPv4 addresses found on %s of netns %s", podLink.Name(), podLink.Namespace().Path())
 	}
 	return ips[0], nil
+}
+
+// resolveMTU returns the MTU to advertise/apply. A configured value > 0 acts as
+// a cap over the discovered interface MTU (never raises it).
+func resolveMTU(discovered, configured int) int {
+	if configured <= 0 {
+		return discovered
+	}
+	if discovered <= 0 || configured < discovered {
+		return configured
+	}
+	return discovered
 }

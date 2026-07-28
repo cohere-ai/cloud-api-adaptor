@@ -16,6 +16,10 @@ type NetworkConfig struct {
 	VXLAN               VXLANConfig
 	ExternalNetViaPodVM bool
 	PodSubnetCIDRs      SubnetCIDRs
+	// MTU, when > 0, caps the overlay/pod interface MTU advertised to the
+	// peer pod (and applied on the worker pod veth). Useful for lower path
+	// MTU underlays such as hybrid Azure↔GCP VPN VXLAN (e.g. 1200).
+	MTU int
 }
 
 type VXLANConfig struct {
