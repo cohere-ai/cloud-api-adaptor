@@ -1,19 +1,20 @@
-{{- if .Values.gkeNodeFix.enabled }}
+{{- if or .Values.gkeNodeFix.enabled .Values.providers }}
+{{- $name := ternary "fix-gke-node-config" "configure-remote-handlers" .Values.gkeNodeFix.enabled }}
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: fix-gke-node-config
+  name: {{ $name }}
   namespace: {{ .Release.Namespace }}
   labels:
-    app: fix-gke-node-config
+    app: {{ $name }}
 spec:
   selector:
     matchLabels:
-      app: fix-gke-node-config
+      app: {{ $name }}
   template:
     metadata:
       labels:
-        app: fix-gke-node-config
+        app: {{ $name }}
     spec:
       hostPID: true
       nodeSelector:
@@ -23,6 +24,7 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       initContainers:
+{{- if .Values.gkeNodeFix.enabled }}
       - name: fix-containerd
         image: alpine:3.21
         securityContext:
@@ -81,6 +83,7 @@ spec:
 
           nsenter -t 1 -m -u -i -n -p -- systemctl restart kubelet
           echo "kubelet: restarted"
+{{- end }}
 {{- if .Values.providers }}
       - name: install-remote-handlers
         image: alpine:3.21
@@ -126,10 +129,12 @@ spec:
         hostPath:
           path: /etc/containerd
           type: Directory
+{{- if .Values.gkeNodeFix.enabled }}
       - name: host-kubelet-config
         hostPath:
           path: /home/kubernetes
           type: Directory
+{{- end }}
 {{- if .Values.providers }}
       - name: host-opt-kata
         hostPath:

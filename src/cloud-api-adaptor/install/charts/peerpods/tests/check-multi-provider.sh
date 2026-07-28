@@ -10,7 +10,7 @@ trap 'rm -rf "${TMPDIR_ROOT}"' EXIT
 render() {
   local fixture="$1"
   local out="$2"
-  helm template test-release "${CHART_DIR}" -f "${fixture}" >"${out}"
+  helm template test-release "${CHART_DIR}" -f "${fixture}" "${@:3}" >"${out}"
 }
 
 assert_contains() {
@@ -54,6 +54,8 @@ assert_contains "${MINIMAL_OUT}" 'name: kata-remote-gcp'
 assert_contains "${MINIMAL_OUT}" 'name: kata-remote-azure'
 assert_contains "${MINIMAL_OUT}" 'REMOTE_HYPERVISOR_ENDPOINT: "/run/peerpod/caa-gcp.sock"'
 assert_contains "${MINIMAL_OUT}" 'POD_VM_EXTENDED_RESOURCE: "kata.peerpods.io/vm-gcp"'
+assert_contains "${MINIMAL_OUT}" 'name: configure-remote-handlers'
+assert_contains "${MINIMAL_OUT}" 'name: reconcile-remote-handlers'
 # Optional serviceAccount must not be required; no empty annotations key.
 if awk '
   $0 ~ /^kind: ServiceAccount$/ { in_sa=1; next }
@@ -94,9 +96,21 @@ if render "${FIXTURES}/multi-provider-duplicate-probe.yaml" "${TMPDIR_ROOT}/dupl
   echo "FAIL: multi-provider-duplicate-probe.yaml rendered successfully" >&2
   exit 1
 fi
-if ! grep -q 'require unique probe ports' "${TMPDIR_ROOT}/duplicate-probe.err"; then
+if ! grep -Fq 'providers[].probePort must be unique' "${TMPDIR_ROOT}/duplicate-probe.err"; then
   echo "FAIL: expected duplicate probe port error, got:" >&2
   cat "${TMPDIR_ROOT}/duplicate-probe.err" >&2
+  exit 1
+fi
+
+echo "Expecting managed ConfigMap key override to fail..."
+if render "${FIXTURES}/multi-provider-minimal.yaml" "${TMPDIR_ROOT}/reserved-key.yaml" \
+  --set 'sharedConfig.PROBE_PORT=9000' 2>"${TMPDIR_ROOT}/reserved-key.err"; then
+  echo "FAIL: managed ConfigMap key override rendered successfully" >&2
+  exit 1
+fi
+if ! grep -q 'sharedConfig.PROBE_PORT is managed by the chart' "${TMPDIR_ROOT}/reserved-key.err"; then
+  echo "FAIL: expected managed ConfigMap key error, got:" >&2
+  cat "${TMPDIR_ROOT}/reserved-key.err" >&2
   exit 1
 fi
 

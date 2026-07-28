@@ -1,5 +1,11 @@
 {{- /* Multi-provider schema and identity validations. Emits no resources. */ -}}
-{{- $probePorts := dict }}
+{{- $unique := dict "name" (dict) "runtimeClassName" (dict) "socketPath" (dict) "extendedResource" (dict) "probePort" (dict) }}
+{{- $reservedConfigKeys := list "CLOUD_PROVIDER" "REMOTE_HYPERVISOR_ENDPOINT" "POD_VM_EXTENDED_RESOURCE" "PEERPODS_LIMIT_PER_NODE" "RUNTIMECLASS_NAME" "PROBE_PORT" "ALLOWED_CLOUD_CONFIG_ANNOTATIONS" }}
+{{- range $key := $reservedConfigKeys }}
+{{- if hasKey ($.Values.sharedConfig | default dict) $key }}
+{{- fail (printf "sharedConfig.%s is managed by the chart and cannot be overridden" $key) }}
+{{- end }}
+{{- end }}
 {{- range $provider := .Values.providers }}
 {{- if include "peerpods.providerEnabled" $provider }}
 {{- range $field := list "name" "cloudProvider" "runtimeClassName" "socketPath" "extendedResource" "probePort" }}
@@ -7,16 +13,23 @@
 {{- fail (printf "providers[].%s is required for each enabled provider" $field) }}
 {{- end }}
 {{- end }}
+{{- range $field, $seen := $unique }}
+{{- $value := printf "%v" (get $provider $field) }}
+{{- if hasKey $seen $value }}
+{{- fail (printf "providers[].%s must be unique; %q is used by both %s and %s" $field $value (index $seen $value) $provider.name) }}
+{{- end }}
+{{- $_ := set $seen $value $provider.name }}
+{{- end }}
 {{- if or (lt (int $provider.probePort) 1) (gt (int $provider.probePort) 65535) }}
 {{- fail (printf "providers.%s.probePort must be between 1 and 65535" $provider.name) }}
 {{- end }}
-{{- $probePort := printf "%v" $provider.probePort }}
-{{- if hasKey $probePorts $probePort }}
-{{- fail (printf "providers.%s.probePort=%s conflicts with providers.%s.probePort; enabled providers sharing hostNetwork require unique probe ports" $provider.name $probePort (index $probePorts $probePort)) }}
-{{- end }}
-{{- $_ := set $probePorts $probePort $provider.name }}
 {{- if not (hasKey $provider "peerPodsLimitPerNode") }}
 {{- fail (printf "providers.%s.peerPodsLimitPerNode is required" $provider.name) }}
+{{- end }}
+{{- range $key := $reservedConfigKeys }}
+{{- if hasKey ($provider.config | default dict) $key }}
+{{- fail (printf "providers.%s.config.%s is managed by the chart and cannot be overridden" $provider.name $key) }}
+{{- end }}
 {{- end }}
 {{- if and $provider.azureWorkloadIdentity $provider.azureWorkloadIdentity.enabled }}
 {{- if not $provider.azureWorkloadIdentity.clientId }}
