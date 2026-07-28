@@ -81,9 +81,46 @@ spec:
 
           nsenter -t 1 -m -u -i -n -p -- systemctl restart kubelet
           echo "kubelet: restarted"
+{{- if .Values.providers }}
+      - name: install-remote-handlers
+        image: alpine:3.21
+        securityContext:
+          privileged: true
+        volumeMounts:
+        - name: host-containerd-config
+          mountPath: /etc/containerd
+        - name: host-opt-kata
+          mountPath: /opt/kata
+        command:
+        - /bin/sh
+        - -c
+        - |
+{{ include "peerpods.remoteHandlerScript" . | indent 10 }}
+{{- end }}
       containers:
+{{- if .Values.providers }}
+      - name: reconcile-remote-handlers
+        image: alpine:3.21
+        securityContext:
+          privileged: true
+        volumeMounts:
+        - name: host-containerd-config
+          mountPath: /etc/containerd
+        - name: host-opt-kata
+          mountPath: /opt/kata
+        command:
+        - /bin/sh
+        - -c
+        - |
+          set -eu
+          while true; do
+{{ include "peerpods.remoteHandlerScript" . | indent 12 }}
+            sleep {{ .Values.gkeNodeFix.reconcileIntervalSeconds | default 60 }}
+          done
+{{- else }}
       - name: pause
         image: registry.k8s.io/pause:3.10
+{{- end }}
       volumes:
       - name: host-containerd-config
         hostPath:
@@ -93,4 +130,10 @@ spec:
         hostPath:
           path: /home/kubernetes
           type: Directory
+{{- if .Values.providers }}
+      - name: host-opt-kata
+        hostPath:
+          path: /opt/kata
+          type: Directory
+{{- end }}
 {{- end }}
