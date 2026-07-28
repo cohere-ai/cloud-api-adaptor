@@ -56,7 +56,7 @@ annotations:
 
 {{/* Return "true" when this provider mounts custom TLS certificates. */}}
 {{- define "peerpods.providerHasTlsCerts" -}}
-{{- $config := .provider.config | default dict -}}
+{{- $config := mergeOverwrite (deepCopy (.provider.config | default dict)) (.root.Values.sharedConfig | default dict) -}}
 {{- if and (index $config "CACERT_FILE") (include "peerpods.tlsSecretName" .root) -}}
 true
 {{- end -}}

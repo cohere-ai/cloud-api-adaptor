@@ -82,11 +82,15 @@ assert_contains "${HYBRID_OUT}" 'peer-pods-webhook-gcp-'
 assert_contains "${HYBRID_OUT}" 'peer-pods-webhook-azure-'
 assert_contains "${HYBRID_OUT}" 'name: fix-gke-node-config'
 assert_contains "${HYBRID_OUT}" 'name: reconcile-remote-handlers'
-assert_contains "${HYBRID_OUT}" 'mountPath: /etc/certificates'
-assert_contains "${HYBRID_OUT}" 'secretName: certs-for-tls'
+assert_count "${HYBRID_OUT}" 'mountPath: /etc/certificates' 2
+assert_count "${HYBRID_OUT}" 'secretName: certs-for-tls' 2
+assert_contains "${HYBRID_OUT}" 'type: DirectoryOrCreate'
+assert_contains "${HYBRID_OUT}" 'base remote config missing at \$BASE; retrying'
+assert_contains "${HYBRID_OUT}" 'added \$DROPIN to multi-line containerd imports'
 # Shared config is present in the controller and both provider ConfigMaps.
 assert_count "${HYBRID_OUT}" 'PROXY_TIMEOUT: "30m"' 3
 assert_count "${HYBRID_OUT}" 'DISABLECVM: "false"' 3
+assert_count "${HYBRID_OUT}" 'CACERT_FILE: "/etc/certificates/ca.crt"' 3
 # Empty imports = [] must be replaced, not rewritten to imports = [, "..."].
 assert_contains "${HYBRID_OUT}" "imports = \\[[[:space:]]*\\]"
 assert_contains "${HYBRID_OUT}" 'replaced empty containerd imports'
