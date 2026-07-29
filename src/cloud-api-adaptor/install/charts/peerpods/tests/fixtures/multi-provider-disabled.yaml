@@ -17,6 +17,7 @@ providers:
     extendedResource: kata.peerpods.io/vm-gcp
     peerPodsLimitPerNode: "10"
     probePort: 8001
+    vxlanPort: 4789
     config:
       GCP_PROJECT_ID: test-project
   - name: azure
@@ -27,5 +28,6 @@ providers:
     extendedResource: kata.peerpods.io/vm-azure
     peerPodsLimitPerNode: "10"
     probePort: 8002
+    vxlanPort: 4790
     config:
       AZURE_SUBSCRIPTION_ID: 00000000-0000-0000-0000-000000000000

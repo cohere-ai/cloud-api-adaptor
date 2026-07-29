@@ -58,12 +58,7 @@ spec:
             - NET_ADMIN
             - SYS_ADMIN
         startupProbe:
-          httpGet:
-            path: /startup
-            port: 8000
-          failureThreshold: 30
-          periodSeconds: 20
-          initialDelaySeconds: 20
+{{- toYaml .Values.daemonset.startupProbe | nindent 10 }}
         # TODO: We should think about a better patch strategy for keeping per provider
         # patches in different files, otherwise this template might get bloated.
         volumeMounts:

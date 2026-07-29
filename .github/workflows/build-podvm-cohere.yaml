@@ -261,15 +261,28 @@ jobs:
           cvm-measure extract-uki --disk /tmp/disk.raw --output /tmp/BOOTX64.EFI
 
           mkdir -p /tmp/cvm-artifacts
+          DEFAULTS="/tmp/cvm-artifacts/defaults.json"
+          gh api "/repos/${BASELINES_REPO}/contents/baselines/gcp/tdx/defaults.json" \
+            --jq .content | base64 -d > "$DEFAULTS"
+
+          FIRMWARE_SHA384=$(jq -er --arg machine "$SMOKE_MACHINE_TYPE" \
+            '.[$machine].firmware_sha384 | select(test("^[0-9a-f]{96}$"))' "$DEFAULTS")
+          BASELINE_VERSION=$(jq -er --arg machine "$SMOKE_MACHINE_TYPE" \
+            '.[$machine].version | select(test("^v[1-9][0-9]*$"))' "$DEFAULTS")
+          BASELINE_PATH="baselines/gcp/tdx/versions/${FIRMWARE_SHA384}/${BASELINE_VERSION}/${SMOKE_MACHINE_TYPE}.json"
           BASELINE="/tmp/cvm-artifacts/${SMOKE_MACHINE_TYPE}.json"
-          gh api "/repos/${BASELINES_REPO}/contents/baselines/gcp/tdx/${SMOKE_MACHINE_TYPE}.json" \
+          gh api "/repos/${BASELINES_REPO}/contents/${BASELINE_PATH}" \
             --jq .content | base64 -d > "$BASELINE"
 
-          FIRMWARE_SHA384=$(jq -r '.firmware_sha384' "$BASELINE")
+          jq -e --arg machine "$SMOKE_MACHINE_TYPE" --arg firmware "$FIRMWARE_SHA384" \
+            '.machine_type == $machine and .firmware_sha384 == $firmware' "$BASELINE"
           FIRMWARE="/tmp/cvm-artifacts/${FIRMWARE_SHA384}.fd"
           curl -fsSL \
+            --connect-timeout 10 \
+            --max-time 120 \
             "https://storage.googleapis.com/gce_tcb_integrity/ovmf_x64_csm/${FIRMWARE_SHA384}.fd" \
             -o "$FIRMWARE"
+          echo "${FIRMWARE_SHA384}  ${FIRMWARE}" | sha384sum -c -
 
           cvm-measure tdx \
             --firmware "$FIRMWARE" \

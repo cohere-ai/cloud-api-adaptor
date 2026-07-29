@@ -50,6 +50,7 @@ data:
   PEERPODS_LIMIT_PER_NODE: {{ $provider.peerPodsLimitPerNode | quote }}
   RUNTIMECLASS_NAME: {{ $provider.runtimeClassName | quote }}
   PROBE_PORT: {{ $provider.probePort | quote }}
+  VXLAN_PORT: {{ $provider.vxlanPort | quote }}
 {{- with $provider.allowedCloudConfigAnnotations }}
   ALLOWED_CLOUD_CONFIG_ANNOTATIONS: {{ join "," . | quote }}
 {{- end }}

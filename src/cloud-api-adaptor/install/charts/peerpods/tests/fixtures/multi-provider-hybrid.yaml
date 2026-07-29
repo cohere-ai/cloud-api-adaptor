@@ -48,6 +48,7 @@ providers:
     extendedResource: kata.peerpods.io/vm-gcp
     peerPodsLimitPerNode: "10"
     probePort: 8001
+    vxlanPort: 4789
     allowedCloudConfigAnnotations:
       - io.katacontainers.config.hypervisor.gcp_zone
       - io.katacontainers.config.hypervisor.use_spot
@@ -68,6 +69,7 @@ providers:
     extendedResource: kata.peerpods.io/vm-azure
     peerPodsLimitPerNode: "10"
     probePort: 8002
+    vxlanPort: 4790
     azureWorkloadIdentity:
       enabled: true
       tenantId: 22222222-2222-2222-2222-222222222222

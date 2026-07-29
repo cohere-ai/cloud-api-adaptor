@@ -56,6 +56,9 @@ assert_contains "${MINIMAL_OUT}" 'REMOTE_HYPERVISOR_ENDPOINT: "/run/peerpod/caa-
 assert_contains "${MINIMAL_OUT}" 'POD_VM_EXTENDED_RESOURCE: "kata.peerpods.io/vm-gcp"'
 assert_contains "${MINIMAL_OUT}" 'name: configure-remote-handlers'
 assert_contains "${MINIMAL_OUT}" 'name: reconcile-remote-handlers'
+assert_count "${MINIMAL_OUT}" 'failureThreshold: 90' 2
+assert_contains "${MINIMAL_OUT}" 'VXLAN_PORT: "4789"'
+assert_contains "${MINIMAL_OUT}" 'VXLAN_PORT: "4790"'
 # Optional serviceAccount must not be required; no empty annotations key.
 if awk '
   $0 ~ /^kind: ServiceAccount$/ { in_sa=1; next }
@@ -104,6 +107,18 @@ fi
 if ! grep -Fq 'providers[].probePort must be unique' "${TMPDIR_ROOT}/duplicate-probe.err"; then
   echo "FAIL: expected duplicate probe port error, got:" >&2
   cat "${TMPDIR_ROOT}/duplicate-probe.err" >&2
+  exit 1
+fi
+
+echo "Expecting duplicate VXLAN port configuration to fail..."
+if render "${FIXTURES}/multi-provider-hybrid.yaml" "${TMPDIR_ROOT}/duplicate-vxlan.yaml" \
+  --set 'providers[1].vxlanPort=4789' 2>"${TMPDIR_ROOT}/duplicate-vxlan.err"; then
+  echo "FAIL: duplicate VXLAN ports rendered successfully" >&2
+  exit 1
+fi
+if ! grep -Fq 'providers[].vxlanPort must be unique' "${TMPDIR_ROOT}/duplicate-vxlan.err"; then
+  echo "FAIL: expected duplicate VXLAN port error, got:" >&2
+  cat "${TMPDIR_ROOT}/duplicate-vxlan.err" >&2
   exit 1
 fi
 

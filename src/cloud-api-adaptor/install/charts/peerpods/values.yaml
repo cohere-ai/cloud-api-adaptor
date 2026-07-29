@@ -95,7 +95,8 @@ provider: gcp
 #
 # Required fields per entry:
 #   name, cloudProvider, runtimeClassName, socketPath, extendedResource,
-#   peerPodsLimitPerNode, probePort (must be unique across enabled providers)
+#   peerPodsLimitPerNode, probePort, vxlanPort (ports must be unique across
+#   enabled providers)
 # Optional: enabled (default true), config, allowedCloudConfigAnnotations,
 #   nodeSelector,
 #   tolerations, podLabels, serviceAccount.annotations, gcpWorkloadIdentity,
@@ -115,6 +116,8 @@ provider: gcp
 #     socketPath: /run/peerpod/caa-gcp.sock
 #     extendedResource: kata.peerpods.io/vm-gcp
 #     peerPodsLimitPerNode: "10"
+#     probePort: 8001
+#     vxlanPort: 4789
 #     config:
 #       GCP_PROJECT_ID: my-project
 providers: []
@@ -191,6 +194,17 @@ limit: "10"
 
 # DaemonSet configuration
 daemonset:
+  # Allow up to 30 minutes for peer pods on the node to become Ready.
+  # The startup probe runs every 20 seconds.
+  startupProbe:
+    httpGet:
+      path: /startup
+      port: 8000
+    failureThreshold: 90
+    periodSeconds: 20
+    initialDelaySeconds: 20
+    timeoutSeconds: 1
+    successThreshold: 1
   # Update strategy controls how the CAA DaemonSet performs rolling updates.
   # CAA uses hostNetwork, so two pods on the same node cause a port conflict.
   # maxSurge must be 0; roll one node at a time by killing old before starting new.

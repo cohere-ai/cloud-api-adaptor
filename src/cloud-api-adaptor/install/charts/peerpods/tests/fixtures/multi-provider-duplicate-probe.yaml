@@ -14,6 +14,7 @@ providers:
     extendedResource: kata.peerpods.io/vm-gcp
     peerPodsLimitPerNode: "10"
     probePort: 8001
+    vxlanPort: 4789
   - name: azure
     cloudProvider: azure
     runtimeClassName: kata-remote-azure
@@ -21,3 +22,4 @@ providers:
     extendedResource: kata.peerpods.io/vm-azure
     peerPodsLimitPerNode: "10"
     probePort: 8001
+    vxlanPort: 4790

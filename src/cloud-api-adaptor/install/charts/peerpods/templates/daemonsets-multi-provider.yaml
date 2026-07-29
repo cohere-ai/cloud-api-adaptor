@@ -63,13 +63,10 @@ spec:
             add:
             - NET_ADMIN
             - SYS_ADMIN
+{{- $startupProbe := deepCopy $.Values.daemonset.startupProbe }}
+{{- $_ := set (index $startupProbe "httpGet") "port" $provider.probePort }}
         startupProbe:
-          httpGet:
-            path: /startup
-            port: {{ $provider.probePort }}
-          failureThreshold: 30
-          periodSeconds: 20
-          initialDelaySeconds: 20
+{{ toYaml $startupProbe | nindent 10 }}
         volumeMounts:
 {{- if include "peerpods.providerHasTlsCerts" (dict "root" $ "provider" $provider) }}
         - mountPath: /etc/certificates
