@@ -809,6 +809,20 @@ func TestSelectInstanceTypeToUse(t *testing.T) {
 			want:    "t3.xlarge",
 			wantErr: false,
 		},
+		{
+			name: "use first per-pod instance type with resources when metadata is unavailable",
+			args: args{
+				spec: InstanceTypeSpec{
+					VCPUs:         4,
+					Memory:        16,
+					InstanceTypes: []string{"n2-standard-4", "n2-standard-8"},
+				},
+				validInstanceTypes:  []string{"n2-standard-4", "n2-standard-8"},
+				defaultInstanceType: "e2-medium",
+			},
+			want:    "n2-standard-4",
+			wantErr: false,
+		},
 	}
 
 	for _, tt := range tests {

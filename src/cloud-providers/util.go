@@ -90,10 +90,10 @@ func SelectInstanceTypeToUse(spec InstanceTypeSpec, specList []InstanceTypeSpec,
 		specList = filteredSpecList
 
 		// A per-pod list without resource requirements is ordered by preference.
-		// Select its first entry instead of silently falling back to the operator
-		// default.
+		// Providers without resource metadata (currently GCP) also use the first
+		// candidate, because best-fit selection cannot run against an empty list.
 		hasResourceRequirements := spec.GPUs > 0 || (spec.VCPUs != 0 && spec.Memory != 0)
-		if spec.InstanceType == "" && !hasResourceRequirements {
+		if spec.InstanceType == "" && (!hasResourceRequirements || len(specList) == 0) {
 			spec.InstanceType = spec.InstanceTypes[0]
 		}
 	}
