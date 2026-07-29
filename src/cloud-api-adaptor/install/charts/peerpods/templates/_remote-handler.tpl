@@ -5,6 +5,7 @@ REMOTE_DIR=/opt/kata/share/defaults/kata-containers/runtimes/remote
 BASE="$REMOTE_DIR/configuration-remote.toml"
 DROPIN=/etc/containerd/coco-remote-handlers.toml
 TOML=/etc/containerd/config.toml
+RESTART_REQUIRED=/etc/containerd/.coco-remote-handlers-restart-required
 CHANGED=0
 
 write_if_changed() {
@@ -85,7 +86,12 @@ fi
 grep '^imports' "$TOML" || true
 
 if [ "$CHANGED" = "1" ]; then
+  touch "$RESTART_REQUIRED"
+fi
+
+if [ -f "$RESTART_REQUIRED" ]; then
   nsenter -t 1 -m -u -i -n -p -- systemctl restart containerd
+  rm -f "$RESTART_REQUIRED"
   echo "containerd restarted after remote handler reconciliation"
 else
   echo "remote handler config already current"
