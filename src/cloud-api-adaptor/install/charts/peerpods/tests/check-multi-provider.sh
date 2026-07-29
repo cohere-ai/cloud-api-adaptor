@@ -90,6 +90,8 @@ assert_count "${HYBRID_OUT}" 'secretName: certs-for-tls' 2
 assert_contains "${HYBRID_OUT}" 'type: DirectoryOrCreate'
 assert_contains "${HYBRID_OUT}" 'base remote config missing at \$BASE; retrying'
 assert_contains "${HYBRID_OUT}" 'added \$DROPIN to multi-line containerd imports'
+assert_contains "${HYBRID_OUT}" 'RESTART_REQUIRED=/etc/containerd/.coco-remote-handlers-restart-required'
+assert_contains "${HYBRID_OUT}" '\[ -f "\$RESTART_REQUIRED" \]'
 # Shared config is present in the controller and both provider ConfigMaps.
 assert_count "${HYBRID_OUT}" 'PROXY_TIMEOUT: "30m"' 3
 assert_count "${HYBRID_OUT}" 'DISABLECVM: "false"' 3
