@@ -95,7 +95,8 @@ provider: gcp
 #
 # Required fields per entry:
 #   name, cloudProvider, runtimeClassName, socketPath, extendedResource,
-#   peerPodsLimitPerNode, probePort (must be unique across enabled providers)
+#   peerPodsLimitPerNode, probePort, vxlanPort (ports must be unique across
+#   enabled providers)
 # Optional: enabled (default true), config, nodeSelector,
 #   tolerations, podLabels, serviceAccount.annotations, gcpWorkloadIdentity,
 #   azureWorkloadIdentity
@@ -108,6 +109,8 @@ provider: gcp
 #     socketPath: /run/peerpod/caa-gcp.sock
 #     extendedResource: kata.peerpods.io/vm-gcp
 #     peerPodsLimitPerNode: "10"
+#     probePort: 8001
+#     vxlanPort: 4789
 #     config:
 #       GCP_PROJECT_ID: my-project
 providers: []
