@@ -89,6 +89,10 @@ image:
 # Cloud provider: libvirt, aws, azure, byom, gcp, ibmcloud, vsphere
 provider: gcp
 
+# Per-pod cloud overrides for legacy single-provider mode. Denied by default.
+# Use exact annotation keys from the security table in README.md.
+allowedCloudConfigAnnotations: []
+
 # Optional multi-provider mode. Leave empty to use the legacy single-provider
 # chart behavior above. When set, the chart renders one CAA DaemonSet,
 # ConfigMap, ServiceAccount/RBAC set, and RuntimeClass per provider entry.

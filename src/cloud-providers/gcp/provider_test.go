@@ -77,9 +77,10 @@ func TestParseInstanceID(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:    "reject different region",
-			id:      "projects/operator-project/zones/us-east1-b/instances/podvm-example",
-			wantErr: true,
+			name:     "canonical ID preserves recorded region",
+			id:       "projects/operator-project/zones/us-east1-b/instances/podvm-example",
+			wantName: "podvm-example",
+			wantZone: "us-east1-b",
 		},
 		{
 			name:    "reject malformed ID",

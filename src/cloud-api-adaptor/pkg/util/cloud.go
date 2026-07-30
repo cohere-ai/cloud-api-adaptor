@@ -2,6 +2,7 @@ package util
 
 import (
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 
@@ -33,28 +34,49 @@ const (
 )
 
 var cloudConfigAnnotationKeys = map[string]struct{}{
-	GCPZoneAnnotation:               {},
-	GCPDiskTypeAnnotation:           {},
+	GCPZoneAnnotation:             {},
+	GCPDiskTypeAnnotation:         {},
+	GCPConfidentialTypeAnnotation: {},
+	GCPRootVolumeSizeAnnotation:   {},
+	GCPUsePublicIPAnnotation:      {},
+	GCPNetworkTagsAnnotation:      {},
+	GCPTagsAnnotation:             {},
+	GCPInstanceTypesAnnotation:    {},
+	AzureZoneAnnotation:           {},
+	AzureRootVolumeSizeAnnotation: {},
+	AzureUsePublicIPAnnotation:    {},
+	AzureTagsAnnotation:           {},
+	AzureInstanceSizesAnnotation:  {},
+	UseSpotAnnotation:             {},
+}
+
+var blockedCloudConfigAnnotationKeys = map[string]struct{}{
 	GCPDisableCVMAnnotation:         {},
-	GCPConfidentialTypeAnnotation:   {},
-	GCPRootVolumeSizeAnnotation:     {},
-	GCPUsePublicIPAnnotation:        {},
-	GCPNetworkTagsAnnotation:        {},
-	GCPTagsAnnotation:               {},
-	GCPInstanceTypesAnnotation:      {},
-	AzureZoneAnnotation:             {},
 	AzureDisableCVMAnnotation:       {},
-	AzureRootVolumeSizeAnnotation:   {},
-	AzureUsePublicIPAnnotation:      {},
-	AzureTagsAnnotation:             {},
-	AzureInstanceSizesAnnotation:    {},
 	AzureEnableSecureBootAnnotation: {},
-	UseSpotAnnotation:               {},
+}
+
+func ValidateAllowedCloudConfigAnnotations(allowedAnnotations string) error {
+	for _, key := range strings.Split(allowedAnnotations, ",") {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		if _, supported := cloudConfigAnnotationKeys[key]; supported {
+			continue
+		}
+		if _, blocked := blockedCloudConfigAnnotationKeys[key]; blocked {
+			return fmt.Errorf("cloud config annotation %q cannot be allowlisted because it weakens confidential VM guarantees", key)
+		}
+		return fmt.Errorf("unsupported cloud config annotation %q in ALLOWED_CLOUD_CONFIG_ANNOTATIONS", key)
+	}
+	return nil
 }
 
 // CloudConfigAnnotations holds per-pod VM overrides from annotations.
-// Account/network placement (subscription, project, RG, VNet/subnet, NSG)
-// comes only from CAA ConfigMap/env — not from pod annotations.
+// Account and network placement IDs (subscription, project, RG, VNet/subnet,
+// NSG) come only from CAA ConfigMap/env. Explicitly allowlisted annotations may
+// still add public IPs, network tags, or resource tags.
 type CloudConfigAnnotations struct {
 	UseSpot          bool
 	UseSpotSet       bool
@@ -192,10 +214,26 @@ func GetCloudConfigFromAnnotation(annotations map[string]string, allowedAnnotati
 		key = strings.TrimSpace(key)
 		if _, supported := cloudConfigAnnotationKeys[key]; supported {
 			allowed[key] = struct{}{}
+		} else if _, blocked := blockedCloudConfigAnnotationKeys[key]; blocked {
+			log.Printf("cloud config annotation %q cannot be allowlisted because it weakens confidential VM guarantees", key)
+		} else if key != "" {
+			log.Printf("ignoring unsupported cloud config annotation %q in ALLOWED_CLOUD_CONFIG_ANNOTATIONS", key)
 		}
 	}
 
 	filtered := make(map[string]string, len(allowed))
+	for key := range cloudConfigAnnotationKeys {
+		if _, requested := annotations[key]; requested {
+			if _, permitted := allowed[key]; !permitted {
+				log.Printf("ignoring cloud config annotation %q because it is not allowlisted", key)
+			}
+		}
+	}
+	for key := range blockedCloudConfigAnnotationKeys {
+		if _, requested := annotations[key]; requested {
+			log.Printf("ignoring blocked cloud config annotation %q", key)
+		}
+	}
 	for key := range allowed {
 		if value, present := annotations[key]; present {
 			filtered[key] = value

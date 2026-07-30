@@ -19,6 +19,7 @@ import (
 	"github.com/confidential-containers/cloud-api-adaptor/src/cloud-api-adaptor/pkg/initdata"
 	"github.com/confidential-containers/cloud-api-adaptor/src/cloud-api-adaptor/pkg/podnetwork/tunneler"
 	"github.com/confidential-containers/cloud-api-adaptor/src/cloud-api-adaptor/pkg/podnetwork/tunneler/vxlan"
+	"github.com/confidential-containers/cloud-api-adaptor/src/cloud-api-adaptor/pkg/util"
 	"github.com/confidential-containers/cloud-api-adaptor/src/cloud-api-adaptor/pkg/util/tlsutil"
 	provider "github.com/confidential-containers/cloud-api-adaptor/src/cloud-providers"
 
@@ -136,6 +137,10 @@ func (cfg *daemonConfig) Setup() (cmd.Starter, error) {
 	// Environment variables are loaded during ParseCmd() via FlagRegistrar.
 	// This call will be removed in a future release.
 	cloud.LoadEnv()
+
+	if err := util.ValidateAllowedCloudConfigAnnotations(cfg.serverConfig.AllowedCloudConfigAnnotations); err != nil {
+		return nil, err
+	}
 
 	workerNode, err := podnetwork.NewWorkerNode(&cfg.networkConfig)
 	if err != nil {

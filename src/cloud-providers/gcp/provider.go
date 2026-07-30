@@ -118,7 +118,7 @@ func getIPs(intfcs []*computepb.NetworkInterface, usePublicIPs bool) ([]netip.Ad
 	return podNodeIPs, nil
 }
 
-func (p *gcpProvider) ListAllTags(ctx context.Context, projectID string) (map[string]map[string]*resourcemanagerpb.TagValue, error) {
+func (p *gcpProvider) ListAllTags(ctx context.Context) (map[string]map[string]*resourcemanagerpb.TagValue, error) {
 	tagKeysClient, err := crm.NewTagKeysClient(ctx)
 	if err != nil {
 		return nil, err
@@ -131,7 +131,7 @@ func (p *gcpProvider) ListAllTags(ctx context.Context, projectID string) (map[st
 	}
 	defer tagValuesClient.Close()
 
-	parent := fmt.Sprintf("projects/%s", projectID)
+	parent := fmt.Sprintf("projects/%s", p.serviceConfig.ProjectID)
 	tags := make(map[string]map[string]*resourcemanagerpb.TagValue)
 
 	it := tagKeysClient.ListTagKeys(ctx, &resourcemanagerpb.ListTagKeysRequest{Parent: parent})
@@ -203,47 +203,6 @@ func (p *gcpProvider) getImageSizeGB(ctx context.Context, image string) (int64, 
 	return img.GetDiskSizeGb(), nil
 }
 
-func chooseString(annotationValue, defaultValue string) string {
-	if annotationValue != "" {
-		return annotationValue
-	}
-	return defaultValue
-}
-
-func chooseBool(annotationValue *bool, defaultValue bool) bool {
-	if annotationValue != nil {
-		return *annotationValue
-	}
-	return defaultValue
-}
-
-func chooseInt64(annotationValue int64, defaultValue int) int64 {
-	if annotationValue > 0 {
-		return annotationValue
-	}
-	return int64(defaultValue)
-}
-
-func chooseNetworkTags(annotationValue []string, defaultValue networkTags) []string {
-	if len(annotationValue) > 0 {
-		return annotationValue
-	}
-	items := make([]string, len(defaultValue))
-	copy(items, defaultValue)
-	return items
-}
-
-func chooseTags(annotationValue map[string]string, defaultValue provider.KeyValueFlag) map[string]string {
-	if len(annotationValue) > 0 {
-		return annotationValue
-	}
-	tags := make(map[string]string, len(defaultValue))
-	for key, value := range defaultValue {
-		tags[key] = value
-	}
-	return tags
-}
-
 func regionFromZone(zone string) (string, error) {
 	separator := strings.LastIndex(zone, "-")
 	if separator <= 0 || separator == len(zone)-1 {
@@ -282,9 +241,6 @@ func parseInstanceID(instanceID, configuredProject, configuredZone string) (stri
 	if parts[1] != configuredProject {
 		return "", "", fmt.Errorf("instance project %q does not match configured project %q", parts[1], configuredProject)
 	}
-	if _, err := validateZoneScope(configuredZone, parts[3]); err != nil {
-		return "", "", err
-	}
 	return parts[5], parts[3], nil
 }
 
@@ -299,25 +255,22 @@ func (p *gcpProvider) CreateInstance(ctx context.Context, podName, sandboxID str
 	instanceName := util.GenerateInstanceName(podName, sandboxID, maxInstanceNameLen)
 	logger.Printf("CreateInstance: name: %q", instanceName)
 
-	projectID := p.serviceConfig.ProjectID
-	zone := chooseString(spec.Zone, p.serviceConfig.Zone)
+	zone := provider.ChooseString(spec.Zone, p.serviceConfig.Zone)
 	subnetworkRegion, err := validateZoneScope(p.serviceConfig.Zone, zone)
 	if err != nil {
 		return nil, err
 	}
-	network := p.serviceConfig.Network
-	subnetwork := p.serviceConfig.Subnetwork
-	diskType := chooseString(spec.DiskType, p.serviceConfig.DiskType)
-	disableCVM := chooseBool(spec.DisableCVM, p.serviceConfig.DisableCVM)
-	confidentialType := chooseString(spec.ConfidentialType, p.serviceConfig.ConfidentialType)
-	rootVolumeSize := chooseInt64(spec.RootVolumeSize, p.serviceConfig.RootVolumeSize)
-	usePublicIP := chooseBool(spec.UsePublicIP, p.serviceConfig.UsePublicIP)
+	diskType := provider.ChooseString(spec.DiskType, p.serviceConfig.DiskType)
+	disableCVM := provider.ChooseBool(spec.DisableCVM, p.serviceConfig.DisableCVM)
+	confidentialType := provider.ChooseString(spec.ConfidentialType, p.serviceConfig.ConfidentialType)
+	rootVolumeSize := provider.ChooseInt64(spec.RootVolumeSize, p.serviceConfig.RootVolumeSize)
+	usePublicIP := provider.ChooseBool(spec.UsePublicIP, p.serviceConfig.UsePublicIP)
 	useSpot := p.serviceConfig.UseSpotInstances
 	if spec.UseSpotSet {
 		useSpot = spec.UseSpot
 	}
-	networkTags := chooseNetworkTags(spec.NetworkTags, p.serviceConfig.NetworkTags)
-	tags := chooseTags(spec.Tags, p.serviceConfig.Tags)
+	networkTags := provider.MergeStringSlices(spec.NetworkTags, p.serviceConfig.NetworkTags)
+	tags := provider.MergeStringMap(spec.Tags, p.serviceConfig.Tags)
 
 	userData, err := cloudConfig.Generate()
 	if err != nil {
@@ -328,7 +281,7 @@ func (p *gcpProvider) CreateInstance(ctx context.Context, podName, sandboxID str
 	// Otherwise, abort the instance creation
 	allTagValues := make([]*resourcemanagerpb.TagValue, 0)
 	if len(tags) > 0 {
-		allTags, err := p.ListAllTags(ctx, projectID)
+		allTags, err := p.ListAllTags(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("Aborting: Failed to list tags: %w", err)
 		}
@@ -355,16 +308,12 @@ func (p *gcpProvider) CreateInstance(ctx context.Context, podName, sandboxID str
 	if hasAnyPrefix(p.serviceConfig.ImageName, "projects/", "/projects", "https") {
 		srcImage = proto.String(p.serviceConfig.ImageName)
 	} else {
-		srcImage = proto.String(fmt.Sprintf("projects/%s/global/images/%s", projectID, p.serviceConfig.ImageName))
+		srcImage = proto.String(fmt.Sprintf("projects/%s/global/images/%s", p.serviceConfig.ProjectID, p.serviceConfig.ImageName))
 	}
 
 	if spec.Image != "" {
 		logger.Printf("Choosing %s from annotation as the GCP image for the PodVM image", spec.Image)
-		if hasAnyPrefix(spec.Image, "projects/", "/projects", "https") {
-			srcImage = proto.String(spec.Image)
-		} else {
-			srcImage = proto.String(fmt.Sprintf("projects/%s/global/images/%s", projectID, spec.Image))
-		}
+		srcImage = proto.String(spec.Image)
 	}
 
 	// Select and validate machine type
@@ -390,18 +339,18 @@ func (p *gcpProvider) CreateInstance(ctx context.Context, podName, sandboxID str
 	// - "<subnetwork>" (short name, will be formatted as full path)
 	// Extract region from zone (e.g., "us-central1-a" -> "us-central1")
 	var subnetworkValue *string
-	if subnetwork != "" {
-		subnetworkName := subnetwork
+	if p.serviceConfig.Subnetwork != "" {
+		subnetworkName := p.serviceConfig.Subnetwork
 		if hasAnyPrefix(subnetworkName, "projects/", "/projects", "regions/", "https") {
 			subnetworkValue = proto.String(subnetworkName)
 		} else {
-			formattedSubnetwork := fmt.Sprintf("projects/%s/regions/%s/subnetworks/%s", projectID, subnetworkRegion, subnetworkName)
+			formattedSubnetwork := fmt.Sprintf("projects/%s/regions/%s/subnetworks/%s", p.serviceConfig.ProjectID, subnetworkRegion, subnetworkName)
 			subnetworkValue = proto.String(formattedSubnetwork)
 		}
 	}
 
 	networkInterface := &computepb.NetworkInterface{
-		Network:   proto.String(network),
+		Network:   proto.String(p.serviceConfig.Network),
 		StackType: proto.String("IPV4_Only"),
 	}
 	// Only attach an ephemeral public IP (1:1 External NAT) when the operator
@@ -491,7 +440,7 @@ func (p *gcpProvider) CreateInstance(ctx context.Context, podName, sandboxID str
 	}
 
 	insertReq := &computepb.InsertInstanceRequest{
-		Project:          projectID,
+		Project:          p.serviceConfig.ProjectID,
 		Zone:             zone,
 		InstanceResource: instanceResource,
 	}
@@ -511,12 +460,12 @@ func (p *gcpProvider) CreateInstance(ctx context.Context, podName, sandboxID str
 		ID:   instanceName,
 		Name: instanceName,
 	}
-	if projectID != p.serviceConfig.ProjectID || zone != p.serviceConfig.Zone {
-		instance.ID = fmt.Sprintf("projects/%s/zones/%s/instances/%s", projectID, zone, instanceName)
+	if zone != p.serviceConfig.Zone {
+		instance.ID = fmt.Sprintf("projects/%s/zones/%s/instances/%s", p.serviceConfig.ProjectID, zone, instanceName)
 	}
 
 	getReq := &computepb.GetInstanceRequest{
-		Project:  projectID,
+		Project:  p.serviceConfig.ProjectID,
 		Zone:     zone,
 		Instance: instanceName,
 	}
@@ -538,7 +487,7 @@ func (p *gcpProvider) CreateInstance(ctx context.Context, podName, sandboxID str
 	}
 	defer tagBindingsClient.Close()
 
-	parent := fmt.Sprintf("//compute.googleapis.com/projects/%s/zones/%s/instances/%d", projectID, zone, gcpInstance.GetId())
+	parent := fmt.Sprintf("//compute.googleapis.com/projects/%s/zones/%s/instances/%d", p.serviceConfig.ProjectID, zone, gcpInstance.GetId())
 
 	for _, tagValue := range allTagValues {
 		logger.Printf("Creating tag binding for %s on %s", tagValue.Name, parent)

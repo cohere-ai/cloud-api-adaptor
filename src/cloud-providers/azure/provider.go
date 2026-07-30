@@ -110,8 +110,8 @@ func generateSSHPublicKey() ([]byte, error) {
 	return publicKeyBytes, nil
 }
 
-func (p *azureProvider) getIPs(ctx context.Context, vm *armcompute.VirtualMachine, subscriptionID, rgName string, usePublicIP bool) ([]netip.Addr, error) {
-	nicClient, err := armnetwork.NewInterfacesClient(subscriptionID, p.azureClient, nil)
+func (p *azureProvider) getIPs(ctx context.Context, vm *armcompute.VirtualMachine, usePublicIP bool) ([]netip.Addr, error) {
+	nicClient, err := armnetwork.NewInterfacesClient(p.serviceConfig.SubscriptionID, p.azureClient, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create network interfaces client: %w", err)
 	}
@@ -124,7 +124,7 @@ func (p *azureProvider) getIPs(ctx context.Context, vm *armcompute.VirtualMachin
 		nicID := *nicRef.ID
 		// the last segment of a nic id is the name
 		nicName := nicID[strings.LastIndex(nicID, "/")+1:]
-		nic, err := nicClient.Get(ctx, rgName, nicName, nil)
+		nic, err := nicClient.Get(ctx, p.serviceConfig.ResourceGroupName, nicName, nil)
 		if err != nil {
 			return nil, fmt.Errorf("get network interface: %w", err)
 		}
@@ -133,7 +133,7 @@ func (p *azureProvider) getIPs(ctx context.Context, vm *armcompute.VirtualMachin
 
 	// we add the public ip addresses as first elements, if available
 	if usePublicIP {
-		publicIPClient, err := armnetwork.NewPublicIPAddressesClient(subscriptionID, p.azureClient, nil)
+		publicIPClient, err := armnetwork.NewPublicIPAddressesClient(p.serviceConfig.SubscriptionID, p.azureClient, nil)
 		if err != nil {
 			return nil, fmt.Errorf("create public ip client: %w", err)
 		}
@@ -144,7 +144,7 @@ func (p *azureProvider) getIPs(ctx context.Context, vm *armcompute.VirtualMachin
 			ipID := *ipc.Properties.PublicIPAddress.ID
 			// the last segment of a ip id is the name
 			ipName := ipID[strings.LastIndex(ipID, "/")+1:]
-			publicIP, err := publicIPClient.Get(ctx, rgName, ipName, nil)
+			publicIP, err := publicIPClient.Get(ctx, p.serviceConfig.ResourceGroupName, ipName, nil)
 			if err != nil {
 				return nil, fmt.Errorf("get public ip: %w", err)
 			}
@@ -176,15 +176,15 @@ func (p *azureProvider) getIPs(ctx context.Context, vm *armcompute.VirtualMachin
 	return ips, nil
 }
 
-func (p *azureProvider) create(ctx context.Context, subscriptionID, resourceGroup string, parameters *armcompute.VirtualMachine) (*armcompute.VirtualMachine, error) {
-	vmClient, err := armcompute.NewVirtualMachinesClient(subscriptionID, p.azureClient, nil)
+func (p *azureProvider) create(ctx context.Context, parameters *armcompute.VirtualMachine) (*armcompute.VirtualMachine, error) {
+	vmClient, err := armcompute.NewVirtualMachinesClient(p.serviceConfig.SubscriptionID, p.azureClient, nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating VM client: %w", err)
 	}
 
 	vmName := *parameters.Properties.OSProfile.ComputerName
 
-	pollerResponse, err := vmClient.BeginCreateOrUpdate(ctx, resourceGroup, vmName, *parameters, nil)
+	pollerResponse, err := vmClient.BeginCreateOrUpdate(ctx, p.serviceConfig.ResourceGroupName, vmName, *parameters, nil)
 	if err != nil {
 		return nil, fmt.Errorf("beginning VM creation or update: %w", err)
 	}
@@ -199,12 +199,12 @@ func (p *azureProvider) create(ctx context.Context, subscriptionID, resourceGrou
 	return &resp.VirtualMachine, nil
 }
 
-func (p *azureProvider) buildNetworkConfig(nicName, subnetID, securityGroupID string, usePublicIP bool) *armcompute.VirtualMachineNetworkInterfaceConfiguration {
+func (p *azureProvider) buildNetworkConfig(nicName string, usePublicIP bool) *armcompute.VirtualMachineNetworkInterfaceConfiguration {
 	ipConfig := armcompute.VirtualMachineNetworkInterfaceIPConfiguration{
 		Name: to.Ptr("ip-config"),
 		Properties: &armcompute.VirtualMachineNetworkInterfaceIPConfigurationProperties{
 			Subnet: &armcompute.SubResource{
-				ID: to.Ptr(subnetID),
+				ID: to.Ptr(p.serviceConfig.SubnetID),
 			},
 		},
 	}
@@ -227,45 +227,21 @@ func (p *azureProvider) buildNetworkConfig(nicName, subnetID, securityGroupID st
 		},
 	}
 
-	if securityGroupID != "" {
+	if p.serviceConfig.SecurityGroupID != "" {
 		config.Properties.NetworkSecurityGroup = &armcompute.SubResource{
-			ID: to.Ptr(securityGroupID),
+			ID: to.Ptr(p.serviceConfig.SecurityGroupID),
 		}
 	}
 
 	return &config
 }
 
-func chooseString(annotationValue, defaultValue string) string {
-	if annotationValue != "" {
-		return annotationValue
+func applySpotConfig(parameters *armcompute.VirtualMachine, useSpot bool) {
+	if !useSpot {
+		return
 	}
-	return defaultValue
-}
-
-func chooseBool(annotationValue *bool, defaultValue bool) bool {
-	if annotationValue != nil {
-		return *annotationValue
-	}
-	return defaultValue
-}
-
-func chooseInt64(annotationValue int64, defaultValue int) int64 {
-	if annotationValue > 0 {
-		return annotationValue
-	}
-	return int64(defaultValue)
-}
-
-func chooseTags(annotationValue map[string]string, defaultValue provider.KeyValueFlag) map[string]string {
-	if len(annotationValue) > 0 {
-		return annotationValue
-	}
-	tags := make(map[string]string, len(defaultValue))
-	for key, value := range defaultValue {
-		tags[key] = value
-	}
-	return tags
+	parameters.Properties.Priority = to.Ptr(armcompute.VirtualMachinePriorityTypesSpot)
+	parameters.Properties.EvictionPolicy = to.Ptr(armcompute.VirtualMachineEvictionPolicyTypesDelete)
 }
 
 func (p *azureProvider) CreateInstance(ctx context.Context, podName, sandboxID string, cloudConfig cloudinit.CloudConfigGenerator, spec provider.InstanceTypeSpec) (instance *provider.Instance, err error) {
@@ -314,21 +290,27 @@ func (p *azureProvider) CreateInstance(ctx context.Context, podName, sandboxID s
 		imageID = spec.Image
 	}
 
-	zone := chooseString(spec.Zone, p.serviceConfig.Zone)
-	disableCVM := chooseBool(spec.DisableCVM, p.serviceConfig.DisableCVM)
-	enableSecureBoot := chooseBool(spec.EnableSecureBoot, p.serviceConfig.EnableSecureBoot)
-	usePublicIP := chooseBool(spec.UsePublicIP, p.serviceConfig.UsePublicIP)
-	rootVolumeSize := chooseInt64(spec.RootVolumeSize, p.serviceConfig.RootVolumeSize)
-	tags := chooseTags(spec.Tags, p.serviceConfig.Tags)
+	// AZURE_ZONE was previously inert; only opt into zonal placement when a
+	// per-pod annotation explicitly requests it.
+	zone := spec.Zone
+	disableCVM := provider.ChooseBool(spec.DisableCVM, p.serviceConfig.DisableCVM)
+	enableSecureBoot := provider.ChooseBool(spec.EnableSecureBoot, p.serviceConfig.EnableSecureBoot)
+	usePublicIP := provider.ChooseBool(spec.UsePublicIP, p.serviceConfig.UsePublicIP)
+	rootVolumeSize := provider.ChooseInt64(spec.RootVolumeSize, p.serviceConfig.RootVolumeSize)
+	tags := provider.MergeStringMap(spec.Tags, p.serviceConfig.Tags)
 
 	vmParameters, err := p.getVMParameters(instanceSize, diskName, cloudConfigData, sshBytes, instanceName, nicName, imageID, zone, disableCVM, enableSecureBoot, usePublicIP, rootVolumeSize, tags)
 	if err != nil {
 		return nil, err
 	}
+	if spec.UseSpotSet && spec.UseSpot {
+		applySpotConfig(vmParameters, true)
+		logger.Printf("Spot instance requested, setting priority to Spot with Delete eviction policy")
+	}
 
 	logger.Printf("CreateInstance: name: %q", instanceName)
 
-	vm, err := p.create(ctx, p.serviceConfig.SubscriptionID, p.serviceConfig.ResourceGroupName, vmParameters)
+	vm, err := p.create(ctx, vmParameters)
 	if err != nil {
 		return nil, fmt.Errorf("Creating instance (%v): %s", vm, err)
 	}
@@ -341,7 +323,7 @@ func (p *azureProvider) CreateInstance(ctx context.Context, podName, sandboxID s
 		Name: instanceName,
 	}
 
-	ips, err := p.getIPs(ctx, vm, p.serviceConfig.SubscriptionID, p.serviceConfig.ResourceGroupName, usePublicIP)
+	ips, err := p.getIPs(ctx, vm, usePublicIP)
 	if err != nil {
 		logger.Printf("getting IPs for the instance : %v ", err)
 		return instance, err
@@ -501,7 +483,7 @@ func (p *azureProvider) getVMParameters(instanceSize, diskName, cloudConfig stri
 		}
 	}
 
-	networkConfig := p.buildNetworkConfig(nicName, p.serviceConfig.SubnetID, p.serviceConfig.SecurityGroupID, usePublicIP)
+	networkConfig := p.buildNetworkConfig(nicName, usePublicIP)
 
 	// Configure OS disk with optional root volume size
 	osDisk := &armcompute.OSDisk{

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	provider "github.com/confidential-containers/cloud-api-adaptor/src/cloud-providers"
+	armcompute "github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/compute/armcompute/v4"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -59,36 +59,17 @@ func TestGenerateSSHKeyPair(t *testing.T) {
 	}
 }
 
-func TestChooseHelpersPreferAnnotation(t *testing.T) {
-	if got := chooseString("from-annotation", "from-config"); got != "from-annotation" {
-		t.Fatalf("chooseString = %q, want from-annotation", got)
-	}
-	if got := chooseString("", "from-config"); got != "from-config" {
-		t.Fatalf("chooseString empty = %q, want from-config", got)
-	}
+func TestApplySpotConfig(t *testing.T) {
+	parameters := &armcompute.VirtualMachine{Properties: &armcompute.VirtualMachineProperties{}}
+	applySpotConfig(parameters, true)
 
-	trueVal := true
-	if got := chooseBool(&trueVal, false); !got {
-		t.Fatal("chooseBool should prefer annotation true")
+	if parameters.Properties.Priority == nil ||
+		*parameters.Properties.Priority != armcompute.VirtualMachinePriorityTypesSpot {
+		t.Fatalf("spot priority was not configured: %v", parameters.Properties.Priority)
 	}
-	if got := chooseBool(nil, true); !got {
-		t.Fatal("chooseBool nil should keep default true")
-	}
-
-	if got := chooseInt64(80, 10); got != 80 {
-		t.Fatalf("chooseInt64 = %d, want 80", got)
-	}
-	if got := chooseInt64(0, 10); got != 10 {
-		t.Fatalf("chooseInt64 zero = %d, want 10", got)
-	}
-
-	tags := chooseTags(map[string]string{"a": "1"}, provider.KeyValueFlag{"a": "0", "b": "2"})
-	if tags["a"] != "1" || len(tags) != 1 {
-		t.Fatalf("chooseTags annotation = %v", tags)
-	}
-	tags = chooseTags(nil, provider.KeyValueFlag{"b": "2"})
-	if tags["b"] != "2" {
-		t.Fatalf("chooseTags default = %v", tags)
+	if parameters.Properties.EvictionPolicy == nil ||
+		*parameters.Properties.EvictionPolicy != armcompute.VirtualMachineEvictionPolicyTypesDelete {
+		t.Fatalf("spot eviction policy was not configured: %v", parameters.Properties.EvictionPolicy)
 	}
 }
 

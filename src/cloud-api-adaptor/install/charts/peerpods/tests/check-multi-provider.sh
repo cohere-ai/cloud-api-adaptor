@@ -137,6 +137,13 @@ EOF
 }
 
 echo "Rendering multi-provider-minimal.yaml..."
+LEGACY_OUT="${TMPDIR_ROOT}/legacy.yaml"
+helm template test-release "${CHART_DIR}" \
+  -f "${CHART_DIR}/providers/gcp.yaml" \
+  --set 'allowedCloudConfigAnnotations[0]=io.katacontainers.config.hypervisor.gcp_zone' \
+  >"${LEGACY_OUT}"
+assert_contains "${LEGACY_OUT}" 'ALLOWED_CLOUD_CONFIG_ANNOTATIONS: "io.katacontainers.config.hypervisor.gcp_zone"'
+
 MINIMAL_OUT="${TMPDIR_ROOT}/minimal.yaml"
 render "${FIXTURES}/multi-provider-minimal.yaml" "${MINIMAL_OUT}"
 assert_contains "${MINIMAL_OUT}" 'name: cloud-api-adaptor-gcp'

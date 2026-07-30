@@ -20,6 +20,9 @@
 {{- if .Values.providerConfigs }}
 {{- fail "providerConfigs is a legacy single-provider value; configure providers[].config in multi-provider mode" }}
 {{- end }}
+{{- if .Values.allowedCloudConfigAnnotations }}
+{{- fail "allowedCloudConfigAnnotations is a legacy single-provider value; configure providers[].allowedCloudConfigAnnotations in multi-provider mode" }}
+{{- end }}
 {{- if ne (.Values.provider | default "gcp") "gcp" }}
 {{- fail "provider is a legacy single-provider value; configure providers[].cloudProvider in multi-provider mode" }}
 {{- end }}

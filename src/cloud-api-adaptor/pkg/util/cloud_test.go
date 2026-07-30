@@ -15,6 +15,27 @@ func allCloudConfigAnnotations() string {
 	return strings.Join(keys, ",")
 }
 
+func TestValidateAllowedCloudConfigAnnotations(t *testing.T) {
+	tests := []struct {
+		name    string
+		allowed string
+		wantErr bool
+	}{
+		{name: "empty"},
+		{name: "supported", allowed: GCPZoneAnnotation + "," + UseSpotAnnotation},
+		{name: "unknown", allowed: "io.katacontainers.config.hypervisor.typo", wantErr: true},
+		{name: "blocked", allowed: GCPDisableCVMAnnotation, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := ValidateAllowedCloudConfigAnnotations(tt.allowed); (err != nil) != tt.wantErr {
+				t.Fatalf("ValidateAllowedCloudConfigAnnotations() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestGetPodvmResourcesFromAnnotation(t *testing.T) {
 	type args struct {
 		annotations map[string]string
@@ -224,8 +245,8 @@ func TestGetCloudConfigFromAnnotation(t *testing.T) {
 	if got.DiskType != "hyperdisk-balanced" {
 		t.Errorf("DiskType = %q, want hyperdisk-balanced", got.DiskType)
 	}
-	if got.DisableCVM == nil || *got.DisableCVM {
-		t.Errorf("DisableCVM = %v, want pointer to false", got.DisableCVM)
+	if got.DisableCVM != nil {
+		t.Errorf("DisableCVM = %v, want blocked annotation to be ignored", got.DisableCVM)
 	}
 	if got.ConfidentialType != "SEV" {
 		t.Errorf("ConfidentialType = %q, want SEV", got.ConfidentialType)
@@ -263,8 +284,8 @@ func TestGetCloudConfigFromAnnotationAzure(t *testing.T) {
 	if got.Zone != "2" {
 		t.Errorf("Zone = %q, want 2", got.Zone)
 	}
-	if got.DisableCVM == nil || !*got.DisableCVM {
-		t.Errorf("DisableCVM = %v, want pointer to true", got.DisableCVM)
+	if got.DisableCVM != nil {
+		t.Errorf("DisableCVM = %v, want blocked annotation to be ignored", got.DisableCVM)
 	}
 	if got.RootVolumeSize != 200 {
 		t.Errorf("RootVolumeSize = %d, want 200", got.RootVolumeSize)
@@ -278,8 +299,8 @@ func TestGetCloudConfigFromAnnotationAzure(t *testing.T) {
 	if len(got.InstanceTypes) != 2 || got.InstanceTypes[0] != "Standard_DC2as_v5" {
 		t.Errorf("InstanceTypes = %v, want Azure sizes", got.InstanceTypes)
 	}
-	if got.EnableSecureBoot == nil || !*got.EnableSecureBoot {
-		t.Errorf("EnableSecureBoot = %v, want pointer to true", got.EnableSecureBoot)
+	if got.EnableSecureBoot != nil {
+		t.Errorf("EnableSecureBoot = %v, want blocked annotation to be ignored", got.EnableSecureBoot)
 	}
 }
 
@@ -301,8 +322,8 @@ func TestGetCloudConfigFromAnnotationAzureOverridesGCP(t *testing.T) {
 	if got.Zone != "3" {
 		t.Errorf("Zone = %q, want Azure zone 3", got.Zone)
 	}
-	if got.DisableCVM == nil || !*got.DisableCVM {
-		t.Errorf("DisableCVM = %v, want Azure override true", got.DisableCVM)
+	if got.DisableCVM != nil {
+		t.Errorf("DisableCVM = %v, want blocked annotation to be ignored", got.DisableCVM)
 	}
 	if got.RootVolumeSize != 120 {
 		t.Errorf("RootVolumeSize = %d, want 120", got.RootVolumeSize)
@@ -323,7 +344,7 @@ func TestGetCloudConfigFromAnnotationRequiresAllowlist(t *testing.T) {
 		GCPNetworkTagsAnnotation: "peerpods-vm",
 	}
 
-	got := GetCloudConfigFromAnnotation(annotations, GCPZoneAnnotation)
+	got := GetCloudConfigFromAnnotation(annotations, GCPZoneAnnotation+","+GCPDisableCVMAnnotation)
 
 	if got.Zone != "us-central1-b" {
 		t.Errorf("Zone = %q, want us-central1-b", got.Zone)
