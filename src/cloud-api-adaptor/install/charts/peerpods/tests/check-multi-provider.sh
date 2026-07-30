@@ -43,6 +43,71 @@ assert_count() {
   fi
 }
 
+extract_remote_handler_script() {
+  local rendered="$1"
+  local script="$2"
+  awk '
+    /name: install-remote-handlers/ { in_container=1 }
+    in_container && /- \|/ { in_block=1; next }
+    in_block && /^      containers:/ { exit }
+    in_block {
+      sub(/^          /, "")
+      if ($0 == "set -eu") {
+        emit=1
+      }
+      if (emit) {
+        print
+      }
+    }
+  ' "${rendered}" >"${script}"
+  chmod +x "${script}"
+}
+
+test_remote_handler_imports() {
+  local script="$1"
+  local case_name="$2"
+  local initial_config="$3"
+  local expected_import="$4"
+  local case_dir="${TMPDIR_ROOT}/remote-handler-${case_name}"
+  local remote_dir="${case_dir}/remote"
+  local containerd_dir="${case_dir}/containerd"
+  local mock_bin="${case_dir}/bin"
+  local restart_log="${case_dir}/restarts"
+
+  mkdir -p "${remote_dir}" "${containerd_dir}" "${mock_bin}"
+  printf '%s\n' 'remote_hypervisor_socket = "/run/peerpod/caa.sock"' \
+    >"${remote_dir}/configuration-remote.toml"
+  printf '%s\n' "${initial_config}" >"${containerd_dir}/config.toml"
+  cat >"${mock_bin}/nsenter" <<'EOF'
+#!/bin/sh
+printf 'restart\n' >>"${RESTART_LOG}"
+EOF
+  chmod +x "${mock_bin}/nsenter"
+
+  PATH="${mock_bin}:${PATH}" RESTART_LOG="${restart_log}" \
+    REMOTE_DIR="${remote_dir}" CONTAINERD_DIR="${containerd_dir}" \
+    "${script}" >/dev/null
+  assert_contains "${containerd_dir}/config.toml" "${expected_import}"
+  assert_count "${restart_log}" '^restart$' 1
+
+  # A second reconciliation must be idempotent and must not restart containerd.
+  PATH="${mock_bin}:${PATH}" RESTART_LOG="${restart_log}" \
+    REMOTE_DIR="${remote_dir}" CONTAINERD_DIR="${containerd_dir}" \
+    "${script}" >/dev/null
+  assert_count "${restart_log}" '^restart$' 1
+
+  # A pending marker from a failed restart must trigger a retry and then clear.
+  touch "${containerd_dir}/.coco-remote-handlers-restart-required"
+  PATH="${mock_bin}:${PATH}" RESTART_LOG="${restart_log}" \
+    REMOTE_DIR="${remote_dir}" CONTAINERD_DIR="${containerd_dir}" \
+    "${script}" >/dev/null
+  assert_count "${restart_log}" '^restart$' 2
+  if [[ -e "${containerd_dir}/.coco-remote-handlers-restart-required" ]]; then
+    echo "FAIL: restart marker was not cleared after a successful retry" >&2
+    exit 1
+  fi
+}
+
 echo "Rendering multi-provider-minimal.yaml..."
 MINIMAL_OUT="${TMPDIR_ROOT}/minimal.yaml"
 render "${FIXTURES}/multi-provider-minimal.yaml" "${MINIMAL_OUT}"
@@ -71,6 +136,36 @@ if awk '
 fi
 # Shared CM keeps identical PROXY_TIMEOUT from both providers.
 assert_contains "${MINIMAL_OUT}" 'PROXY_TIMEOUT: "30m"'
+assert_count "${MINIMAL_OUT}" 'name: peer-pods-secret-gcp' 2
+assert_count "${MINIMAL_OUT}" 'name: peer-pods-secret-azure' 2
+
+echo "Rendering provider-specific credentials..."
+SECRETS_OUT="${TMPDIR_ROOT}/provider-secrets.yaml"
+render "${FIXTURES}/multi-provider-minimal.yaml" "${SECRETS_OUT}" \
+  --set-string 'providerSecrets.gcp.GCP_CREDENTIALS=gcp-test-credentials' \
+  --set-string 'providerSecrets.azure.AZURE_CLIENT_SECRET=azure-test-secret'
+assert_contains "${SECRETS_OUT}" 'GCP_CREDENTIALS: "gcp-test-credentials"'
+assert_contains "${SECRETS_OUT}" 'AZURE_CLIENT_SECRET: "azure-test-secret"'
+
+echo "Rendering a shared externally-managed credentials Secret..."
+REFERENCE_SECRET_OUT="${TMPDIR_ROOT}/reference-secret.yaml"
+render "${FIXTURES}/multi-provider-minimal.yaml" "${REFERENCE_SECRET_OUT}" \
+  --set 'secrets.mode=reference' \
+  --set 'secrets.existingSecretName=cloud-credentials'
+assert_count "${REFERENCE_SECRET_OUT}" 'name: cloud-credentials' 2
+assert_missing "${REFERENCE_SECRET_OUT}" 'optional: true'
+
+echo "Rendering explicit maxUnavailable=0..."
+ZERO_UNAVAILABLE_OUT="${TMPDIR_ROOT}/zero-unavailable.yaml"
+render "${FIXTURES}/multi-provider-minimal.yaml" "${ZERO_UNAVAILABLE_OUT}" \
+  --set 'providers[0].maxUnavailable=0'
+assert_count "${ZERO_UNAVAILABLE_OUT}" 'maxUnavailable: 0' 1
+
+echo "Rendering webhook alias from its chart defaults..."
+WEBHOOK_DEFAULTS_OUT="${TMPDIR_ROOT}/webhook-defaults.yaml"
+render "${FIXTURES}/multi-provider-minimal.yaml" "${WEBHOOK_DEFAULTS_OUT}" \
+  --set 'webhookGcp.enabled=true'
+assert_contains "${WEBHOOK_DEFAULTS_OUT}" 'peer-pods-webhook-gcp-'
 
 echo "Rendering multi-provider-hybrid.yaml..."
 HYBRID_OUT="${TMPDIR_ROOT}/hybrid.yaml"
@@ -88,17 +183,29 @@ assert_contains "${HYBRID_OUT}" 'name: reconcile-remote-handlers'
 assert_count "${HYBRID_OUT}" 'mountPath: /etc/certificates' 2
 assert_count "${HYBRID_OUT}" 'secretName: certs-for-tls' 2
 assert_contains "${HYBRID_OUT}" 'type: DirectoryOrCreate'
-assert_contains "${HYBRID_OUT}" 'base remote config missing at \$BASE; retrying'
-assert_contains "${HYBRID_OUT}" 'added \$DROPIN to multi-line containerd imports'
-assert_contains "${HYBRID_OUT}" 'RESTART_REQUIRED=/etc/containerd/.coco-remote-handlers-restart-required'
-assert_contains "${HYBRID_OUT}" '\[ -f "\$RESTART_REQUIRED" \]'
 # Shared config is present in the controller and both provider ConfigMaps.
 assert_count "${HYBRID_OUT}" 'PROXY_TIMEOUT: "30m"' 3
 assert_count "${HYBRID_OUT}" 'DISABLECVM: "false"' 3
 assert_count "${HYBRID_OUT}" 'CACERT_FILE: "/etc/certificates/ca.crt"' 3
-# Empty imports = [] must be replaced, not rewritten to imports = [, "..."].
-assert_contains "${HYBRID_OUT}" "imports = \\[[[:space:]]*\\]"
-assert_contains "${HYBRID_OUT}" 'replaced empty containerd imports'
+
+echo "Executing rendered remote-handler script against containerd fixtures..."
+HANDLER_SCRIPT="${TMPDIR_ROOT}/remote-handler.sh"
+extract_remote_handler_script "${HYBRID_OUT}" "${HANDLER_SCRIPT}"
+test_remote_handler_imports "${HANDLER_SCRIPT}" "missing" \
+  'version = 2' \
+  '^imports = \["/etc/containerd/coco-remote-handlers.toml"\]$'
+test_remote_handler_imports "${HANDLER_SCRIPT}" "empty" \
+  'imports = []' \
+  '^imports = \["/etc/containerd/coco-remote-handlers.toml"\]$'
+test_remote_handler_imports "${HANDLER_SCRIPT}" "single-line" \
+  'imports = ["/etc/containerd/existing.toml"]' \
+  '^imports = \["/etc/containerd/existing.toml", "/etc/containerd/coco-remote-handlers.toml"\]$'
+test_remote_handler_imports "${HANDLER_SCRIPT}" "multi-line" \
+  $'imports = [\n  "/etc/containerd/existing.toml",\n]' \
+  '^[[:space:]]*"/etc/containerd/coco-remote-handlers.toml",$'
+test_remote_handler_imports "${HANDLER_SCRIPT}" "already-patched" \
+  'imports = ["/etc/containerd/coco-remote-handlers.toml"]' \
+  '^imports = \["/etc/containerd/coco-remote-handlers.toml"\]$'
 
 echo "Expecting duplicate probe port fixture to fail..."
 if render "${FIXTURES}/multi-provider-duplicate-probe.yaml" "${TMPDIR_ROOT}/duplicate-probe.yaml" 2>"${TMPDIR_ROOT}/duplicate-probe.err"; then
@@ -135,6 +242,67 @@ if ! grep -q 'sharedConfig.PROBE_PORT is managed by the chart' "${TMPDIR_ROOT}/r
   exit 1
 fi
 
+echo "Expecting maxSurge>0 to fail..."
+if render "${FIXTURES}/multi-provider-minimal.yaml" "${TMPDIR_ROOT}/max-surge.yaml" \
+  --set 'providers[0].maxSurge=1' 2>"${TMPDIR_ROOT}/max-surge.err"; then
+  echo "FAIL: maxSurge=1 rendered successfully" >&2
+  exit 1
+fi
+assert_contains "${TMPDIR_ROOT}/max-surge.err" 'maxSurge must be 0'
+
+echo "Expecting invalid provider name to fail..."
+if render "${FIXTURES}/multi-provider-minimal.yaml" "${TMPDIR_ROOT}/invalid-name.yaml" \
+  --set 'providers[0].name=GCP_bad' 2>"${TMPDIR_ROOT}/invalid-name.err"; then
+  echo "FAIL: invalid provider name rendered successfully" >&2
+  exit 1
+fi
+assert_contains "${TMPDIR_ROOT}/invalid-name.err" 'name must be a valid DNS-1123 label'
+
+echo "Expecting unsupported cloud provider to fail..."
+if render "${FIXTURES}/multi-provider-minimal.yaml" "${TMPDIR_ROOT}/unsupported-provider.yaml" \
+  --set 'providers[0].cloudProvider=aws' 2>"${TMPDIR_ROOT}/unsupported-provider.err"; then
+  echo "FAIL: unsupported cloud provider rendered successfully" >&2
+  exit 1
+fi
+assert_contains "${TMPDIR_ROOT}/unsupported-provider.err" 'cloudProvider must be one of: gcp, azure'
+
+echo "Expecting legacy Workload Identity settings to fail..."
+if render "${FIXTURES}/multi-provider-minimal.yaml" "${TMPDIR_ROOT}/legacy-wif.yaml" \
+  --set 'gcpWorkloadIdentity.enabled=true' 2>"${TMPDIR_ROOT}/legacy-wif.err"; then
+  echo "FAIL: legacy Workload Identity setting rendered successfully" >&2
+  exit 1
+fi
+assert_contains "${TMPDIR_ROOT}/legacy-wif.err" 'gcpWorkloadIdentity is a legacy single-provider value'
+
+echo "Expecting a missing referenced credentials Secret name to fail..."
+if render "${FIXTURES}/multi-provider-minimal.yaml" "${TMPDIR_ROOT}/missing-reference.yaml" \
+  --set 'secrets.mode=reference' 2>"${TMPDIR_ROOT}/missing-reference.err"; then
+  echo "FAIL: empty secrets.existingSecretName rendered successfully" >&2
+  exit 1
+fi
+assert_contains "${TMPDIR_ROOT}/missing-reference.err" 'secrets.existingSecretName is required'
+
+echo "Expecting an unknown webhook RuntimeClass to fail..."
+if render "${FIXTURES}/multi-provider-minimal.yaml" "${TMPDIR_ROOT}/webhook-runtime.yaml" \
+  --set 'webhookGcp.enabled=true' \
+  --set 'webhookGcp.webhook.targetRuntimeClass=kata-remote-unknown' \
+  2>"${TMPDIR_ROOT}/webhook-runtime.err"; then
+  echo "FAIL: unknown webhook RuntimeClass rendered successfully" >&2
+  exit 1
+fi
+assert_contains "${TMPDIR_ROOT}/webhook-runtime.err" 'must match an enabled providers\[\].runtimeClassName'
+
+echo "Expecting duplicate webhook prefixes to fail..."
+if render "${FIXTURES}/multi-provider-minimal.yaml" "${TMPDIR_ROOT}/webhook-prefix.yaml" \
+  --set 'webhookGcp.enabled=true' \
+  --set 'webhookAzure.enabled=true' \
+  --set 'webhookAzure.namePrefix=peer-pods-webhook-gcp-' \
+  2>"${TMPDIR_ROOT}/webhook-prefix.err"; then
+  echo "FAIL: duplicate webhook namePrefix rendered successfully" >&2
+  exit 1
+fi
+assert_contains "${TMPDIR_ROOT}/webhook-prefix.err" 'namePrefix must be unique'
+
 echo "Expecting conflict fixture to fail..."
 if render "${FIXTURES}/multi-provider-conflict.yaml" "${TMPDIR_ROOT}/conflict.yaml" 2>"${TMPDIR_ROOT}/conflict.err"; then
   echo "FAIL: multi-provider-conflict.yaml rendered successfully" >&2
@@ -154,5 +322,15 @@ assert_contains "${DISABLED_OUT}" 'name: kata-remote-gcp'
 assert_missing "${DISABLED_OUT}" 'name: cloud-api-adaptor-azure'
 assert_missing "${DISABLED_OUT}" 'name: peer-pods-cm-azure'
 assert_missing "${DISABLED_OUT}" 'name: kata-remote-azure'
+
+echo "Verifying tests are excluded from the packaged chart..."
+helm package "${CHART_DIR}" --destination "${TMPDIR_ROOT}" >/dev/null
+PACKAGES=("${TMPDIR_ROOT}"/peerpods-*.tgz)
+PACKAGE="${PACKAGES[0]}"
+tar -tzf "${PACKAGE}" >"${TMPDIR_ROOT}/package-contents"
+if grep -q '/tests/' "${TMPDIR_ROOT}/package-contents"; then
+  echo "FAIL: chart package contains tests/" >&2
+  exit 1
+fi
 
 echo "Multi-provider chart checks passed"

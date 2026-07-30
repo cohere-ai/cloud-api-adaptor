@@ -1,9 +1,36 @@
 {{- /* Multi-provider schema and identity validations. Emits no resources. */ -}}
 {{- $unique := dict "name" (dict) "runtimeClassName" (dict) "socketPath" (dict) "extendedResource" (dict) "probePort" (dict) "vxlanPort" (dict) }}
-{{- $reservedConfigKeys := list "CLOUD_PROVIDER" "REMOTE_HYPERVISOR_ENDPOINT" "POD_VM_EXTENDED_RESOURCE" "PEERPODS_LIMIT_PER_NODE" "RUNTIMECLASS_NAME" "PROBE_PORT" "VXLAN_PORT" "ALLOWED_CLOUD_CONFIG_ANNOTATIONS" }}
+{{- $runtimeResources := dict }}
+{{- $reservedConfigKeys := list "CLOUD_PROVIDER" "REMOTE_HYPERVISOR_ENDPOINT" "POD_VM_EXTENDED_RESOURCE" "PEERPODS_LIMIT_PER_NODE" "RUNTIMECLASS_NAME" "PROBE_PORT" "VXLAN_PORT" }}
 {{- range $key := $reservedConfigKeys }}
 {{- if hasKey ($.Values.sharedConfig | default dict) $key }}
 {{- fail (printf "sharedConfig.%s is managed by the chart and cannot be overridden" $key) }}
+{{- end }}
+{{- end }}
+{{- if .Values.providers }}
+{{- if and (eq .Values.secrets.mode "reference") (not .Values.secrets.existingSecretName) }}
+{{- fail "secrets.existingSecretName is required when multi-provider secrets.mode is reference" }}
+{{- end }}
+{{- if and .Values.gcpWorkloadIdentity .Values.gcpWorkloadIdentity.enabled }}
+{{- fail "gcpWorkloadIdentity is a legacy single-provider value; configure providers[].gcpWorkloadIdentity in multi-provider mode" }}
+{{- end }}
+{{- if .Values.providerConfigs }}
+{{- fail "providerConfigs is a legacy single-provider value; configure providers[].config in multi-provider mode" }}
+{{- end }}
+{{- if ne (.Values.provider | default "gcp") "gcp" }}
+{{- fail "provider is a legacy single-provider value; configure providers[].cloudProvider in multi-provider mode" }}
+{{- end }}
+{{- if ne (toJson (.Values.command | default list)) (toJson (list "/bin/sh" "-c" "exec cloud-api-adaptor gcp")) }}
+{{- fail "command is a legacy single-provider value and cannot be used with providers" }}
+{{- end }}
+{{- if ne (printf "%v" (.Values.limit | default "10")) "10" }}
+{{- fail "limit is a legacy single-provider value; configure providers[].peerPodsLimitPerNode in multi-provider mode" }}
+{{- end }}
+{{- if (.Values.daemonset.podLabels | default dict) }}
+{{- fail "daemonset.podLabels is a legacy single-provider value; configure providers[].podLabels in multi-provider mode" }}
+{{- end }}
+{{- if (((.Values.daemonset.serviceAccount | default dict).annotations) | default dict) }}
+{{- fail "daemonset.serviceAccount.annotations is a legacy single-provider value; configure providers[].serviceAccount.annotations in multi-provider mode" }}
 {{- end }}
 {{- end }}
 {{- range $provider := .Values.providers }}
@@ -13,6 +40,12 @@
 {{- fail (printf "providers[].%s is required for each enabled provider" $field) }}
 {{- end }}
 {{- end }}
+{{- if or (gt (len $provider.name) 63) (not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" $provider.name)) }}
+{{- fail (printf "providers.%s.name must be a valid DNS-1123 label" $provider.name) }}
+{{- end }}
+{{- if not (has $provider.cloudProvider (list "gcp" "azure")) }}
+{{- fail (printf "providers.%s.cloudProvider must be one of: gcp, azure" $provider.name) }}
+{{- end }}
 {{- range $field, $seen := $unique }}
 {{- $value := printf "%v" (get $provider $field) }}
 {{- if hasKey $seen $value }}
@@ -20,6 +53,7 @@
 {{- end }}
 {{- $_ := set $seen $value $provider.name }}
 {{- end }}
+{{- $_ := set $runtimeResources $provider.runtimeClassName $provider.extendedResource }}
 {{- if or (lt (int $provider.probePort) 1) (gt (int $provider.probePort) 65535) }}
 {{- fail (printf "providers.%s.probePort must be between 1 and 65535" $provider.name) }}
 {{- end }}
@@ -28,6 +62,11 @@
 {{- end }}
 {{- if not (hasKey $provider "peerPodsLimitPerNode") }}
 {{- fail (printf "providers.%s.peerPodsLimitPerNode is required" $provider.name) }}
+{{- end }}
+{{- $maxSurge := $.Values.daemonset.updateStrategy.maxSurge }}
+{{- if hasKey $provider "maxSurge" }}{{- $maxSurge = $provider.maxSurge }}{{- end }}
+{{- if not (has (printf "%v" $maxSurge) (list "0" "0%")) }}
+{{- fail (printf "providers.%s.maxSurge must be 0 because CAA uses hostNetwork" $provider.name) }}
 {{- end }}
 {{- range $key := $reservedConfigKeys }}
 {{- if hasKey ($provider.config | default dict) $key }}
@@ -46,6 +85,28 @@
 {{- if not $provider.gcpWorkloadIdentity.serviceAccountEmail }}
 {{- fail (printf "providers.%s.gcpWorkloadIdentity.serviceAccountEmail is required" $provider.name) }}
 {{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{- $webhookPrefixes := dict }}
+{{- range $alias := list "webhookGcp" "webhookAzure" }}
+{{- $webhookValues := index $.Values $alias }}
+{{- if and $webhookValues $webhookValues.enabled }}
+{{- if not $webhookValues.namePrefix }}
+{{- fail (printf "%s.namePrefix is required when the webhook alias is enabled" $alias) }}
+{{- end }}
+{{- if hasKey $webhookPrefixes $webhookValues.namePrefix }}
+{{- fail (printf "%s.namePrefix must be unique; %q is also used by %s" $alias $webhookValues.namePrefix (index $webhookPrefixes $webhookValues.namePrefix)) }}
+{{- end }}
+{{- $_ := set $webhookPrefixes $webhookValues.namePrefix $alias }}
+{{- $targetRuntimeClass := (($webhookValues.webhook | default dict).targetRuntimeClass) | default "" }}
+{{- if not (hasKey $runtimeResources $targetRuntimeClass) }}
+{{- fail (printf "%s.webhook.targetRuntimeClass %q must match an enabled providers[].runtimeClassName" $alias $targetRuntimeClass) }}
+{{- end }}
+{{- $extendedResource := (($webhookValues.webhook | default dict).podVMExtendedResource) | default "" }}
+{{- if ne $extendedResource (index $runtimeResources $targetRuntimeClass) }}
+{{- fail (printf "%s.webhook.podVMExtendedResource %q must match provider runtime class %q" $alias $extendedResource $targetRuntimeClass) }}
 {{- end }}
 {{- end }}
 {{- end }}

@@ -28,6 +28,15 @@ true
 {{- end -}}
 {{- end -}}
 
+{{/* Resolve the provider credentials Secret used by a multi-provider CAA. */}}
+{{- define "peerpods.providerSecretName" -}}
+{{- if eq .root.Values.secrets.mode "reference" -}}
+{{- .root.Values.secrets.existingSecretName -}}
+{{- else -}}
+peer-pods-secret-{{ .provider.name }}
+{{- end -}}
+{{- end -}}
+
 {{/* Merge provider ServiceAccount annotations with Azure identity metadata. */}}
 {{- define "peerpods.providerServiceAccountAnnotations" -}}
 {{- $sa := .serviceAccount | default dict -}}
