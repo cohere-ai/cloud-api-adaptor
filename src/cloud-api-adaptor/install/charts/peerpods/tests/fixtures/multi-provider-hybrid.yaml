@@ -15,7 +15,6 @@ webhookGcp:
   webhook:
     targetRuntimeClass: kata-remote-gcp
     podVMExtendedResource: kata.peerpods.io/vm-gcp
-    failurePolicy: Ignore
 webhookAzure:
   enabled: true
   namePrefix: peer-pods-webhook-azure-
@@ -23,7 +22,6 @@ webhookAzure:
   webhook:
     targetRuntimeClass: kata-remote-azure
     podVMExtendedResource: kata.peerpods.io/vm-azure
-    failurePolicy: Ignore
 kata-deploy:
   enabled: false
 gkeNodeFix:

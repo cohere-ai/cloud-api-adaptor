@@ -98,9 +98,22 @@ provider: gcp
 #   peerPodsLimitPerNode, probePort, vxlanPort (ports must be unique across
 #   enabled providers)
 # Optional: enabled (default true), config, allowedCloudConfigAnnotations,
-#   nodeSelector,
-#   tolerations, podLabels, serviceAccount.annotations, gcpWorkloadIdentity,
-#   azureWorkloadIdentity
+#   nodeSelector, tolerations, podLabels, serviceAccount.annotations,
+#   gcpWorkloadIdentity, azureWorkloadIdentity, maxUnavailable,
+#   maxSurge (must remain 0)
+#
+# Multi-provider mode does not consume the legacy top-level provider,
+# providerConfigs, command, limit, gcpWorkloadIdentity, daemonset.podLabels, or
+# daemonset.serviceAccount.annotations values. Move any customizations from
+# those fields into the corresponding providers[] entry before enabling this
+# mode; validation rejects non-default legacy settings.
+#
+# With secrets.mode=create, providerSecrets.<name> supplies credentials for
+# that provider's dedicated Secret. If <name> is absent, the chart falls back
+# to providerSecrets.<cloudProvider> for compatibility with provider values
+# files. When resourceCtrl is enabled, the chart also merges non-conflicting
+# credentials into peer-pods-secret for peerpod-ctrl. In reference mode,
+# resourceCtrl currently requires existingSecretName: peer-pods-secret.
 #
 # Per-pod cloud configuration overrides are denied by default. Operators must
 # explicitly allow exact annotation keys for each provider, for example:
@@ -186,6 +199,13 @@ gkeNodeFix:
 # Reconciles provider-specific kata-remote containerd handlers on each node.
 remoteHandlers:
   reconcileIntervalSeconds: 60
+  resources:
+    requests:
+      cpu: 10m
+      memory: 16Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi
 
 # Maximum number of peer pods allowed to run simultaneously
 # This limit prevents resource exhaustion on the cloud provider
@@ -256,9 +276,19 @@ webhook:
 # webhook.podVMExtendedResource per alias.
 webhookGcp:
   enabled: false
+  namePrefix: peer-pods-webhook-gcp-
+  namespaceOverride: peer-pods-webhook-gcp-system
+  webhook:
+    targetRuntimeClass: kata-remote-gcp
+    podVMExtendedResource: kata.peerpods.io/vm-gcp
 
 webhookAzure:
   enabled: false
+  namePrefix: peer-pods-webhook-azure-
+  namespaceOverride: peer-pods-webhook-azure-system
+  webhook:
+    targetRuntimeClass: kata-remote-azure
+    podVMExtendedResource: kata.peerpods.io/vm-azure
 
 # kata-deploy subchart configuration
 kata-deploy:

@@ -1,12 +1,19 @@
 {{- define "peerpods.remoteHandlerScript" -}}
 set -eu
 
-REMOTE_DIR=/opt/kata/share/defaults/kata-containers/runtimes/remote
+REMOTE_DIR="${REMOTE_DIR:-/opt/kata/share/defaults/kata-containers/runtimes/remote}"
 BASE="$REMOTE_DIR/configuration-remote.toml"
-DROPIN=/etc/containerd/coco-remote-handlers.toml
-TOML=/etc/containerd/config.toml
-RESTART_REQUIRED=/etc/containerd/.coco-remote-handlers-restart-required
+CONTAINERD_DIR="${CONTAINERD_DIR:-/etc/containerd}"
+DROPIN="$CONTAINERD_DIR/coco-remote-handlers.toml"
+TOML="$CONTAINERD_DIR/config.toml"
+RESTART_REQUIRED="$CONTAINERD_DIR/.coco-remote-handlers-restart-required"
+RESTART_IN_PROGRESS="$CONTAINERD_DIR/.coco-remote-handlers-restart-in-progress"
 CHANGED=0
+
+if [ -f "$RESTART_IN_PROGRESS" ]; then
+  rm -f "$RESTART_IN_PROGRESS"
+  echo "previous containerd restart was interrupted; assuming the queued restart completed"
+fi
 
 write_if_changed() {
   src="$1"
@@ -59,11 +66,15 @@ if grep -q 'coco-remote-handlers.toml' "$TOML"; then
   echo "containerd imports already include $DROPIN"
 elif grep -Eq '^imports = \[[[:space:]]*\]' "$TOML"; then
   # Empty imports = [] must be replaced, not appended into (avoids imports = [, "..."]).
-  sed -i 's#^imports = \[[[:space:]]*\]#imports = ["/etc/containerd/coco-remote-handlers.toml"]#' "$TOML"
+  sed -i.bak 's#^imports = \[[[:space:]]*\]#imports = ["/etc/containerd/coco-remote-handlers.toml"]#' "$TOML"
+  rm -f "$TOML.bak"
   CHANGED=1
   echo "replaced empty containerd imports with $DROPIN"
 elif grep -Eq '^imports = \[[[:space:]]*$' "$TOML"; then
-  sed -i '/^imports = \[[[:space:]]*$/a\  "/etc/containerd/coco-remote-handlers.toml",' "$TOML"
+  sed -i.bak '/^imports = \[[[:space:]]*$/a\
+  "/etc/containerd/coco-remote-handlers.toml",
+' "$TOML"
+  rm -f "$TOML.bak"
   grep -q 'coco-remote-handlers.toml' "$TOML" || {
     echo "failed to add $DROPIN to multi-line containerd imports" >&2
     exit 1
@@ -71,7 +82,8 @@ elif grep -Eq '^imports = \[[[:space:]]*$' "$TOML"; then
   CHANGED=1
   echo "added $DROPIN to multi-line containerd imports"
 elif grep -Eq '^imports = \[[^]]*\][[:space:]]*$' "$TOML"; then
-  sed -i 's#^imports = \[\(.*\)\]#imports = [\1, "/etc/containerd/coco-remote-handlers.toml"]#' "$TOML"
+  sed -i.bak 's#^imports = \[\(.*\)\]#imports = [\1, "/etc/containerd/coco-remote-handlers.toml"]#' "$TOML"
+  rm -f "$TOML.bak"
   grep -q 'coco-remote-handlers.toml' "$TOML" || {
     echo "failed to add $DROPIN to containerd imports" >&2
     exit 1
@@ -90,9 +102,15 @@ if [ "$CHANGED" = "1" ]; then
 fi
 
 if [ -f "$RESTART_REQUIRED" ]; then
-  nsenter -t 1 -m -u -i -n -p -- systemctl restart containerd
-  rm -f "$RESTART_REQUIRED"
-  echo "containerd restarted after remote handler reconciliation"
+  mv "$RESTART_REQUIRED" "$RESTART_IN_PROGRESS"
+  if nsenter -t 1 -m -u -i -n -p -- systemctl restart containerd; then
+    rm -f "$RESTART_IN_PROGRESS"
+    echo "containerd restarted after remote handler reconciliation"
+  else
+    mv "$RESTART_IN_PROGRESS" "$RESTART_REQUIRED"
+    echo "containerd restart failed; retry remains pending" >&2
+    exit 1
+  fi
 else
   echo "remote handler config already current"
 fi

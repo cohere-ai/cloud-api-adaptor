@@ -1,5 +1,9 @@
 {{- range $provider := .Values.providers }}
 {{- if include "peerpods.providerEnabled" $provider }}
+{{- $maxUnavailable := $.Values.daemonset.updateStrategy.maxUnavailable }}
+{{- if hasKey $provider "maxUnavailable" }}{{- $maxUnavailable = $provider.maxUnavailable }}{{- end }}
+{{- $maxSurge := $.Values.daemonset.updateStrategy.maxSurge }}
+{{- if hasKey $provider "maxSurge" }}{{- $maxSurge = $provider.maxSurge }}{{- end }}
 ---
 apiVersion: apps/v1
 kind: DaemonSet
@@ -16,8 +20,8 @@ spec:
   updateStrategy:
     type: RollingUpdate
     rollingUpdate:
-      maxUnavailable: {{ default $.Values.daemonset.updateStrategy.maxUnavailable $provider.maxUnavailable }}
-      maxSurge: {{ default $.Values.daemonset.updateStrategy.maxSurge $provider.maxSurge }}
+      maxUnavailable: {{ $maxUnavailable }}
+      maxSurge: {{ $maxSurge }}
   template:
     metadata:
       labels:
@@ -52,8 +56,7 @@ spec:
             name: peer-pods-cm-{{ $provider.name }}
 {{- if include "peerpods.secretName" $ }}
         - secretRef:
-            name: {{ include "peerpods.secretName" $ }}
-            optional: true
+            name: {{ include "peerpods.providerSecretName" (dict "root" $ "provider" $provider) }}
 {{- end }}
         image: {{ $.Values.image.name | default "quay.io/confidential-containers/cloud-api-adaptor" }}:{{ $.Values.image.tag | default "latest" }}
         imagePullPolicy: Always
