@@ -288,6 +288,19 @@ if ! grep -q 'sharedConfig.PROBE_PORT is managed by the chart' "${TMPDIR_ROOT}/r
   exit 1
 fi
 
+echo "Expecting raw multi-provider allowlist override to fail..."
+if render "${FIXTURES}/multi-provider-minimal.yaml" "${TMPDIR_ROOT}/raw-allowlist.yaml" \
+  --set-string 'providers[0].config.ALLOWED_CLOUD_CONFIG_ANNOTATIONS=io.katacontainers.config.hypervisor.gcp_zone' \
+  2>"${TMPDIR_ROOT}/raw-allowlist.err"; then
+  echo "FAIL: raw multi-provider allowlist rendered successfully" >&2
+  exit 1
+fi
+if ! grep -q 'config.ALLOWED_CLOUD_CONFIG_ANNOTATIONS is managed by the chart' "${TMPDIR_ROOT}/raw-allowlist.err"; then
+  echo "FAIL: expected managed allowlist error, got:" >&2
+  cat "${TMPDIR_ROOT}/raw-allowlist.err" >&2
+  exit 1
+fi
+
 echo "Expecting maxSurge>0 to fail..."
 if render "${FIXTURES}/multi-provider-minimal.yaml" "${TMPDIR_ROOT}/max-surge.yaml" \
   --set 'providers[0].maxSurge=1' 2>"${TMPDIR_ROOT}/max-surge.err"; then
