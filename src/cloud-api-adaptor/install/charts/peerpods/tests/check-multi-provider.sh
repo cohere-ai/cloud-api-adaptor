@@ -166,6 +166,8 @@ fi
 assert_contains "${MINIMAL_OUT}" 'PROXY_TIMEOUT: "30m"'
 assert_count "${MINIMAL_OUT}" 'name: peer-pods-secret-gcp' 2
 assert_count "${MINIMAL_OUT}" 'name: peer-pods-secret-azure' 2
+assert_missing "${MINIMAL_OUT}" 'resources: \["pods", "secrets", "serviceaccounts"\]'
+assert_missing "${MINIMAL_OUT}" 'name: cloud-api-adaptor-(gcp|azure)-pp-secrets'
 
 echo "Rendering provider-specific credentials..."
 SECRETS_OUT="${TMPDIR_ROOT}/provider-secrets.yaml"
@@ -295,6 +297,22 @@ if render "${FIXTURES}/multi-provider-minimal.yaml" "${TMPDIR_ROOT}/invalid-name
   exit 1
 fi
 assert_contains "${TMPDIR_ROOT}/invalid-name.err" 'name must be a valid DNS-1123 label'
+
+echo "Expecting invalid RuntimeClass name to fail..."
+if render "${FIXTURES}/multi-provider-minimal.yaml" "${TMPDIR_ROOT}/invalid-runtime-class.yaml" \
+  --set 'providers[0].runtimeClassName=Invalid_Name' 2>"${TMPDIR_ROOT}/invalid-runtime-class.err"; then
+  echo "FAIL: invalid RuntimeClass name rendered successfully" >&2
+  exit 1
+fi
+assert_contains "${TMPDIR_ROOT}/invalid-runtime-class.err" 'runtimeClassName must be a valid DNS-1123 label'
+
+echo "Expecting the legacy default webhook to fail..."
+if render "${FIXTURES}/multi-provider-minimal.yaml" "${TMPDIR_ROOT}/legacy-webhook.yaml" \
+  --set 'webhook.enabled=true' 2>"${TMPDIR_ROOT}/legacy-webhook.err"; then
+  echo "FAIL: legacy default webhook rendered successfully" >&2
+  exit 1
+fi
+assert_contains "${TMPDIR_ROOT}/legacy-webhook.err" 'webhook.enabled must be false in multi-provider mode'
 
 echo "Expecting unsupported cloud provider to fail..."
 if render "${FIXTURES}/multi-provider-minimal.yaml" "${TMPDIR_ROOT}/unsupported-provider.yaml" \

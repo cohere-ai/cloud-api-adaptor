@@ -107,6 +107,11 @@ provider: gcp
 # those fields into the corresponding providers[] entry before enabling this
 # mode; validation rejects non-default legacy settings.
 #
+# Provider CAA service accounts cannot read Kubernetes Secrets, preventing one
+# compromised provider from reading another provider's credentials. Registry
+# authentication through pod or ServiceAccount imagePullSecrets is therefore
+# not supported in multi-provider mode.
+#
 # With secrets.mode=create, providerSecrets.<name> supplies credentials for
 # that provider's dedicated Secret. If <name> is absent, the chart falls back
 # to providerSecrets.<cloudProvider> for compatibility with provider values
