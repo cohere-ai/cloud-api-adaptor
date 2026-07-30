@@ -44,6 +44,9 @@ func (p *podIndex) Get() int {
 }
 
 func NewWorkerNode(networkConfig *tunneler.NetworkConfig) (WorkerNode, error) {
+	if err := validateMTU(networkConfig.MTU); err != nil {
+		return nil, err
+	}
 
 	t, err := tunneler.WorkerNodeTunneler(networkConfig.TunnelType)
 	if err != nil {
@@ -172,10 +175,7 @@ func (n *workerNode) Inspect(nsPath string) (*tunneler.Config, error) {
 	}
 	config.MTU, config.MTUOverride = resolveMTU(mtu, n.MTU)
 	if config.MTUOverride {
-		if err := podLink.SetMTU(config.MTU); err != nil {
-			return nil, fmt.Errorf("failed to set MTU of %s to %d: %w", podInterface, config.MTU, err)
-		}
-		logger.Printf("capped MTU of %s from %d to %d", podInterface, mtu, config.MTU)
+		logger.Printf("capped advertised overlay MTU for %s from %d to %d", podInterface, mtu, config.MTU)
 	}
 
 	neighbors, err := podNS.NeighborList(&netops.Neighbor{Dev: podInterface, State: netops.NeighborStatePermanent})
@@ -288,12 +288,17 @@ func getPodIP(podLink netops.Link) (netip.Prefix, error) {
 }
 
 // resolveMTU returns the advertised MTU and whether an explicit lower cap
-// should be applied to the worker pod and VXLAN interfaces.
+// should be applied during worker-side tunnel setup.
 func resolveMTU(discovered, configured int) (int, bool) {
-	if discovered <= 0 || configured < discovered {
-		if configured > 0 {
-			return configured, true
-		}
+	if configured > 0 && configured < discovered {
+		return configured, true
 	}
 	return discovered, false
+}
+
+func validateMTU(configured int) error {
+	if configured != 0 && configured < tunneler.MinIPv4MTU {
+		return fmt.Errorf("MTU must be 0 or at least %d bytes, got %d", tunneler.MinIPv4MTU, configured)
+	}
+	return nil
 }

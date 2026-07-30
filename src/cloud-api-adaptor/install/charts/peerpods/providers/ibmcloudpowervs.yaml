@@ -42,7 +42,7 @@ providerConfigs:
     # (default: "")
     # INITDATA: ""
 
-    # Cap pod/VXLAN MTU when > 0 (e.g. 1200 for hybrid Azure VPN); 0 keeps the discovered interface MTU
+    # Cap the overlay MTU when > 0; set to the underlay path MTU minus 50 bytes of VXLAN overhead (for example, 1150 for a 1200-byte path); 0 keeps the discovered interface MTU
     # (default: "0")
     # MTU: "0"
 

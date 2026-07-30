@@ -109,7 +109,7 @@ func (cfg *daemonConfig) Setup() (cmd.Starter, error) {
 		reg.DurationWithEnv(&cfg.serverConfig.ProxyTimeout, "proxy-timeout", proxy.DefaultProxyTimeout, "PROXY_TIMEOUT", "Maximum timeout in minutes for establishing agent proxy connection")
 		reg.StringWithEnv(&cfg.networkConfig.TunnelType, "tunnel-type", podnetwork.DefaultTunnelType, "TUNNEL_TYPE", "Tunnel provider")
 		reg.IntWithEnv(&cfg.networkConfig.VXLAN.Port, "vxlan-port", vxlan.DefaultVXLANPort, "VXLAN_PORT", "VXLAN UDP port number (VXLAN tunnel mode only")
-		reg.IntWithEnv(&cfg.networkConfig.MTU, "mtu", 0, "MTU", "Cap pod/VXLAN MTU when > 0 (e.g. 1200 for hybrid Azure VPN); 0 keeps the discovered interface MTU")
+		reg.IntWithEnv(&cfg.networkConfig.MTU, "mtu", 0, "MTU", "Cap the overlay MTU when > 0; set to the underlay path MTU minus 50 bytes of VXLAN overhead (for example, 1150 for a 1200-byte path); 0 keeps the discovered interface MTU")
 		reg.StringWithEnv(&cfg.serverConfig.Initdata, "initdata", "", "INITDATA", "Default initdata for all Pods")
 		reg.BoolWithEnv(&cfg.serverConfig.EnableCloudConfigVerify, "cloud-config-verify", false, "CLOUD_CONFIG_VERIFY", "Enable cloud config verify - should use it for production")
 		reg.IntWithEnv(&cfg.serverConfig.PeerPodsLimitPerNode, "peerpods-limit-per-node", 10, "PEERPODS_LIMIT_PER_NODE", "peer pods limit per node (default=10)")
