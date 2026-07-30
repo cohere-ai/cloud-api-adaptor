@@ -11,6 +11,9 @@
 {{- if and (eq .Values.secrets.mode "reference") (not .Values.secrets.existingSecretName) }}
 {{- fail "secrets.existingSecretName is required when multi-provider secrets.mode is reference" }}
 {{- end }}
+{{- if and .Values.resourceCtrl.enabled (eq .Values.secrets.mode "reference") (ne .Values.secrets.existingSecretName "peer-pods-secret") }}
+{{- fail "multi-provider resourceCtrl requires secrets.existingSecretName=peer-pods-secret because peerpod-ctrl consumes that Secret" }}
+{{- end }}
 {{- if and .Values.gcpWorkloadIdentity .Values.gcpWorkloadIdentity.enabled }}
 {{- fail "gcpWorkloadIdentity is a legacy single-provider value; configure providers[].gcpWorkloadIdentity in multi-provider mode" }}
 {{- end }}
@@ -45,6 +48,9 @@
 {{- end }}
 {{- if not (has $provider.cloudProvider (list "gcp" "azure")) }}
 {{- fail (printf "providers.%s.cloudProvider must be one of: gcp, azure" $provider.name) }}
+{{- end }}
+{{- if not (regexMatch "^kata\\.peerpods\\.io/vm-[a-z0-9]([-a-z0-9]*[a-z0-9])?$" $provider.extendedResource) }}
+{{- fail (printf "providers.%s.extendedResource must match kata.peerpods.io/vm-<provider>" $provider.name) }}
 {{- end }}
 {{- range $field, $seen := $unique }}
 {{- $value := printf "%v" (get $provider $field) }}

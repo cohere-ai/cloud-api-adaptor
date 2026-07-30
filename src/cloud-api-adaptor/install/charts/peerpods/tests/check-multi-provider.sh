@@ -147,6 +147,16 @@ render "${FIXTURES}/multi-provider-minimal.yaml" "${SECRETS_OUT}" \
 assert_contains "${SECRETS_OUT}" 'GCP_CREDENTIALS: "gcp-test-credentials"'
 assert_contains "${SECRETS_OUT}" 'AZURE_CLIENT_SECRET: "azure-test-secret"'
 
+echo "Rendering merged peerpod-ctrl credentials..."
+CONTROLLER_SECRETS_OUT="${TMPDIR_ROOT}/controller-secrets.yaml"
+render "${FIXTURES}/multi-provider-minimal.yaml" "${CONTROLLER_SECRETS_OUT}" \
+  --set 'resourceCtrl.enabled=true' \
+  --set-string 'providerSecrets.gcp.GCP_CREDENTIALS=gcp-test-credentials' \
+  --set-string 'providerSecrets.azure.AZURE_CLIENT_SECRET=azure-test-secret'
+assert_count "${CONTROLLER_SECRETS_OUT}" 'name: peer-pods-secret$' 2
+assert_count "${CONTROLLER_SECRETS_OUT}" 'GCP_CREDENTIALS: "gcp-test-credentials"' 2
+assert_count "${CONTROLLER_SECRETS_OUT}" 'AZURE_CLIENT_SECRET: "azure-test-secret"' 2
+
 echo "Rendering a shared externally-managed credentials Secret..."
 REFERENCE_SECRET_OUT="${TMPDIR_ROOT}/reference-secret.yaml"
 render "${FIXTURES}/multi-provider-minimal.yaml" "${REFERENCE_SECRET_OUT}" \
@@ -266,6 +276,15 @@ if render "${FIXTURES}/multi-provider-minimal.yaml" "${TMPDIR_ROOT}/unsupported-
 fi
 assert_contains "${TMPDIR_ROOT}/unsupported-provider.err" 'cloudProvider must be one of: gcp, azure'
 
+echo "Expecting an unsafe extended resource name to fail..."
+if render "${FIXTURES}/multi-provider-minimal.yaml" "${TMPDIR_ROOT}/extended-resource.yaml" \
+  --set 'providers[0].extendedResource=example.com/arbitrary-capacity' \
+  2>"${TMPDIR_ROOT}/extended-resource.err"; then
+  echo "FAIL: unsafe extended resource name rendered successfully" >&2
+  exit 1
+fi
+assert_contains "${TMPDIR_ROOT}/extended-resource.err" 'extendedResource must match kata.peerpods.io/vm-<provider>'
+
 echo "Expecting legacy Workload Identity settings to fail..."
 if render "${FIXTURES}/multi-provider-minimal.yaml" "${TMPDIR_ROOT}/legacy-wif.yaml" \
   --set 'gcpWorkloadIdentity.enabled=true' 2>"${TMPDIR_ROOT}/legacy-wif.err"; then
@@ -281,6 +300,17 @@ if render "${FIXTURES}/multi-provider-minimal.yaml" "${TMPDIR_ROOT}/missing-refe
   exit 1
 fi
 assert_contains "${TMPDIR_ROOT}/missing-reference.err" 'secrets.existingSecretName is required'
+
+echo "Expecting a nonstandard peerpod-ctrl credentials Secret name to fail..."
+if render "${FIXTURES}/multi-provider-minimal.yaml" "${TMPDIR_ROOT}/controller-reference.yaml" \
+  --set 'resourceCtrl.enabled=true' \
+  --set 'secrets.mode=reference' \
+  --set 'secrets.existingSecretName=custom-cloud-credentials' \
+  2>"${TMPDIR_ROOT}/controller-reference.err"; then
+  echo "FAIL: unsupported peerpod-ctrl credentials Secret name rendered successfully" >&2
+  exit 1
+fi
+assert_contains "${TMPDIR_ROOT}/controller-reference.err" 'resourceCtrl requires secrets.existingSecretName=peer-pods-secret'
 
 echo "Expecting an unknown webhook RuntimeClass to fail..."
 if render "${FIXTURES}/multi-provider-minimal.yaml" "${TMPDIR_ROOT}/webhook-runtime.yaml" \
