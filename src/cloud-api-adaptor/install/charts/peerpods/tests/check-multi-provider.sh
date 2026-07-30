@@ -81,6 +81,9 @@ test_remote_handler_imports() {
   cat >"${mock_bin}/nsenter" <<'EOF'
 #!/bin/sh
 printf 'restart\n' >>"${RESTART_LOG}"
+if [ "${RESTART_FAIL:-0}" = "1" ]; then
+  exit 1
+fi
 EOF
   chmod +x "${mock_bin}/nsenter"
 
@@ -104,6 +107,31 @@ EOF
   assert_count "${restart_log}" '^restart$' 2
   if [[ -e "${containerd_dir}/.coco-remote-handlers-restart-required" ]]; then
     echo "FAIL: restart marker was not cleared after a successful retry" >&2
+    exit 1
+  fi
+
+  # If containerd kills the reconciler during restart, the attempt marker is
+  # consumed on the next pass without triggering a restart loop.
+  touch "${containerd_dir}/.coco-remote-handlers-restart-in-progress"
+  PATH="${mock_bin}:${PATH}" RESTART_LOG="${restart_log}" \
+    REMOTE_DIR="${remote_dir}" CONTAINERD_DIR="${containerd_dir}" \
+    "${script}" >/dev/null
+  assert_count "${restart_log}" '^restart$' 2
+  if [[ -e "${containerd_dir}/.coco-remote-handlers-restart-in-progress" ]]; then
+    echo "FAIL: interrupted restart marker was not consumed" >&2
+    exit 1
+  fi
+
+  # A restart command that reports failure restores the pending marker.
+  touch "${containerd_dir}/.coco-remote-handlers-restart-required"
+  if PATH="${mock_bin}:${PATH}" RESTART_LOG="${restart_log}" RESTART_FAIL=1 \
+    REMOTE_DIR="${remote_dir}" CONTAINERD_DIR="${containerd_dir}" \
+    "${script}" >/dev/null 2>&1; then
+    echo "FAIL: failed containerd restart returned success" >&2
+    exit 1
+  fi
+  if [[ ! -e "${containerd_dir}/.coco-remote-handlers-restart-required" ]]; then
+    echo "FAIL: failed containerd restart did not remain pending" >&2
     exit 1
   fi
 }
