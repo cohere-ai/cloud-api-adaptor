@@ -128,10 +128,20 @@
 {{- end }}
 {{- end }}
 
+{{- $gcpEnabled := false }}
 {{- $azureEnabled := false }}
 {{- range $provider := .Values.providers }}
+{{- if and (include "peerpods.providerEnabled" $provider) $provider.gcpWorkloadIdentity $provider.gcpWorkloadIdentity.enabled }}
+{{- $gcpEnabled = true }}
+{{- end }}
 {{- if and (include "peerpods.providerEnabled" $provider) $provider.azureWorkloadIdentity $provider.azureWorkloadIdentity.enabled }}
 {{- $azureEnabled = true }}
+{{- end }}
+{{- end }}
+{{- if and $gcpEnabled .Values.resourceCtrl.enabled }}
+{{- $annotations := ((.Values.resourceCtrl.serviceAccount | default dict).annotations) | default dict }}
+{{- if not (index $annotations "iam.gke.io/gcp-service-account") }}
+{{- fail "resourceCtrl.serviceAccount.annotations.iam\\.gke\\.io/gcp-service-account is required when GCP Workload Identity Federation is enabled" }}
 {{- end }}
 {{- end }}
 {{- if and $azureEnabled .Values.resourceCtrl.enabled }}

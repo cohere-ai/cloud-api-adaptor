@@ -11,6 +11,7 @@ resourceCtrl:
     azure.workload.identity/use: "true"
   serviceAccount:
     annotations:
+      iam.gke.io/gcp-service-account: peerpods@example.iam.gserviceaccount.com
       azure.workload.identity/client-id: 11111111-1111-1111-1111-111111111111
 webhook:
   enabled: false

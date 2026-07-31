@@ -345,6 +345,15 @@ if render "${FIXTURES}/multi-provider-minimal.yaml" "${TMPDIR_ROOT}/legacy-wif.y
 fi
 assert_contains "${TMPDIR_ROOT}/legacy-wif.err" 'gcpWorkloadIdentity is a legacy single-provider value'
 
+echo "Expecting missing peerpod-ctrl GCP identity to fail..."
+if render "${FIXTURES}/multi-provider-hybrid.yaml" "${TMPDIR_ROOT}/missing-controller-gcp-wi.yaml" \
+  --set-string 'resourceCtrl.serviceAccount.annotations.iam\.gke\.io/gcp-service-account=' \
+  2>"${TMPDIR_ROOT}/missing-controller-gcp-wi.err"; then
+  echo "FAIL: missing peerpod-ctrl GCP identity rendered successfully" >&2
+  exit 1
+fi
+assert_contains "${TMPDIR_ROOT}/missing-controller-gcp-wi.err" 'gcp-service-account is required when GCP Workload Identity Federation is enabled'
+
 echo "Expecting a missing referenced credentials Secret name to fail..."
 if render "${FIXTURES}/multi-provider-minimal.yaml" "${TMPDIR_ROOT}/missing-reference.yaml" \
   --set 'secrets.mode=reference' 2>"${TMPDIR_ROOT}/missing-reference.err"; then
