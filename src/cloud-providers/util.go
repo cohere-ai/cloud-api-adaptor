@@ -86,9 +86,9 @@ func ChooseBool(annotationValue *bool, defaultValue bool) bool {
 	return defaultValue
 }
 
-// ChooseInt64 returns a positive annotation value, otherwise the operator default.
+// ChooseInt64 returns an annotation value only when it increases the operator default.
 func ChooseInt64(annotationValue int64, defaultValue int) int64 {
-	if annotationValue > 0 {
+	if annotationValue > int64(defaultValue) {
 		return annotationValue
 	}
 	return int64(defaultValue)

@@ -8,6 +8,28 @@ import (
 	"time"
 )
 
+func TestChooseInt64(t *testing.T) {
+	tests := []struct {
+		name            string
+		annotationValue int64
+		defaultValue    int
+		want            int64
+	}{
+		{name: "unset uses operator default", defaultValue: 100, want: 100},
+		{name: "smaller annotation preserves operator minimum", annotationValue: 50, defaultValue: 100, want: 100},
+		{name: "equal annotation preserves operator default", annotationValue: 100, defaultValue: 100, want: 100},
+		{name: "larger annotation increases value", annotationValue: 200, defaultValue: 100, want: 200},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ChooseInt64(tt.annotationValue, tt.defaultValue); got != tt.want {
+				t.Fatalf("ChooseInt64(%d, %d) = %d, want %d", tt.annotationValue, tt.defaultValue, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestVerifyCloudInstanceType(t *testing.T) {
 	type args struct {
 		instanceType        string
