@@ -144,8 +144,10 @@ sharedConfig: {}
 command: ["/bin/sh", "-c", "exec cloud-api-adaptor gcp"]
 
 # nodeSelector / tolerations applied to the cloud-api-adaptor and
-# fix-gke-node-config DaemonSets. Empty by default; consumers set these
-# to fence the DaemonSets onto their CAA worker pool.
+# fix-gke-node-config DaemonSets and to multi-provider RuntimeClass scheduling.
+# Empty by default; consumers set these to fence CAA and peer pod workloads onto
+# their worker pool. Per-provider overrides apply to both the provider DaemonSet
+# and its RuntimeClass.
 nodeSelector: {}
 tolerations: []
 

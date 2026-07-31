@@ -220,6 +220,10 @@ assert_contains "${HYBRID_OUT}" 'peer-pods-webhook-gcp-'
 assert_contains "${HYBRID_OUT}" 'peer-pods-webhook-azure-'
 assert_contains "${HYBRID_OUT}" 'name: fix-gke-node-config'
 assert_contains "${HYBRID_OUT}" 'name: reconcile-remote-handlers'
+assert_count "${HYBRID_OUT}" '^scheduling:$' 2
+assert_count "${HYBRID_OUT}" '^  nodeSelector:$' 2
+assert_count "${HYBRID_OUT}" '^  tolerations:$' 2
+assert_count "${HYBRID_OUT}" '^    cohere.com/caa-worker: "true"$' 2
 assert_count "${HYBRID_OUT}" 'mountPath: /etc/certificates' 2
 assert_count "${HYBRID_OUT}" 'secretName: certs-for-tls' 2
 assert_contains "${HYBRID_OUT}" 'type: DirectoryOrCreate'
