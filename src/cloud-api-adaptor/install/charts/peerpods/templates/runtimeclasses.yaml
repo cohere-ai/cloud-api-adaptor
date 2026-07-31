@@ -1,6 +1,8 @@
 {{- if .Values.providers }}
 {{- range $provider := .Values.providers }}
 {{- if include "peerpods.providerEnabled" $provider }}
+{{- $nodeSelector := $provider.nodeSelector | default $.Values.nodeSelector }}
+{{- $tolerations := $provider.tolerations | default $.Values.tolerations }}
 ---
 apiVersion: node.k8s.io/v1
 kind: RuntimeClass
@@ -9,6 +11,17 @@ metadata:
   labels:
 {{ include "peerpods.providerLabels" (dict "root" $ "provider" $provider) | nindent 4 }}
 handler: {{ $provider.runtimeClassName }}
+{{- if or $nodeSelector $tolerations }}
+scheduling:
+{{- with $nodeSelector }}
+  nodeSelector:
+{{ toYaml . | nindent 4 }}
+{{- end }}
+{{- with $tolerations }}
+  tolerations:
+{{ toYaml . | nindent 4 }}
+{{- end }}
+{{- end }}
 {{- end }}
 {{- end }}
 {{- end }}

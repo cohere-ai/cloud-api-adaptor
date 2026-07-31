@@ -1,4 +1,10 @@
 # Hybrid GCP+Azure fixture with WIF / Azure WI and webhook aliases.
+nodeSelector:
+  cohere.com/caa-worker: "true"
+tolerations:
+  - key: kata.peerpods.io/vm
+    operator: Exists
+    effect: NoSchedule
 resourceCtrl:
   enabled: true
   podLabels:

@@ -8,6 +8,9 @@
 {{- end }}
 {{- end }}
 {{- if .Values.providers }}
+{{- if .Values.webhook.enabled }}
+{{- fail "webhook.enabled must be false in multi-provider mode; enable provider-specific webhook aliases instead" }}
+{{- end }}
 {{- if and (eq .Values.secrets.mode "reference") (not .Values.secrets.existingSecretName) }}
 {{- fail "secrets.existingSecretName is required when multi-provider secrets.mode is reference" }}
 {{- end }}
@@ -48,6 +51,9 @@
 {{- end }}
 {{- if or (gt (len $provider.name) 63) (not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" $provider.name)) }}
 {{- fail (printf "providers.%s.name must be a valid DNS-1123 label" $provider.name) }}
+{{- end }}
+{{- if or (gt (len $provider.runtimeClassName) 63) (not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" $provider.runtimeClassName)) }}
+{{- fail (printf "providers.%s.runtimeClassName must be a valid DNS-1123 label" $provider.name) }}
 {{- end }}
 {{- if not (has $provider.cloudProvider (list "gcp" "azure")) }}
 {{- fail (printf "providers.%s.cloudProvider must be one of: gcp, azure" $provider.name) }}
