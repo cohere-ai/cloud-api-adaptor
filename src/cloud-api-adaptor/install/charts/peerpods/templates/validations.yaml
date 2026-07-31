@@ -83,6 +83,11 @@
 {{- if not (has (printf "%v" $maxSurge) (list "0" "0%")) }}
 {{- fail (printf "providers.%s.maxSurge must be 0 because CAA uses hostNetwork" $provider.name) }}
 {{- end }}
+{{- $maxUnavailable := $.Values.daemonset.updateStrategy.maxUnavailable }}
+{{- if hasKey $provider "maxUnavailable" }}{{- $maxUnavailable = $provider.maxUnavailable }}{{- end }}
+{{- if has (printf "%v" $maxUnavailable) (list "0" "0%") }}
+{{- fail (printf "providers.%s.maxUnavailable must be greater than 0 because maxSurge is 0" $provider.name) }}
+{{- end }}
 {{- range $key := $reservedConfigKeys }}
 {{- if hasKey ($provider.config | default dict) $key }}
 {{- fail (printf "providers.%s.config.%s is managed by the chart and cannot be overridden" $provider.name $key) }}
