@@ -195,11 +195,13 @@ render "${FIXTURES}/multi-provider-minimal.yaml" "${REFERENCE_SECRET_OUT}" \
 assert_count "${REFERENCE_SECRET_OUT}" 'name: cloud-credentials' 2
 assert_missing "${REFERENCE_SECRET_OUT}" 'optional: true'
 
-echo "Rendering explicit maxUnavailable=0..."
-ZERO_UNAVAILABLE_OUT="${TMPDIR_ROOT}/zero-unavailable.yaml"
-render "${FIXTURES}/multi-provider-minimal.yaml" "${ZERO_UNAVAILABLE_OUT}" \
-  --set 'providers[0].maxUnavailable=0'
-assert_count "${ZERO_UNAVAILABLE_OUT}" 'maxUnavailable: 0' 1
+echo "Expecting maxUnavailable=0 to fail when maxSurge=0..."
+if render "${FIXTURES}/multi-provider-minimal.yaml" "${TMPDIR_ROOT}/zero-unavailable.yaml" \
+  --set 'providers[0].maxUnavailable=0' 2>"${TMPDIR_ROOT}/zero-unavailable.err"; then
+  echo "FAIL: zero maxUnavailable and maxSurge rendered successfully" >&2
+  exit 1
+fi
+assert_contains "${TMPDIR_ROOT}/zero-unavailable.err" 'maxUnavailable must be greater than 0 because maxSurge is 0'
 
 echo "Rendering webhook alias from its chart defaults..."
 WEBHOOK_DEFAULTS_OUT="${TMPDIR_ROOT}/webhook-defaults.yaml"
