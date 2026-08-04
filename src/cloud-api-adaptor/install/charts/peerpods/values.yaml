@@ -16,8 +16,11 @@ secrets:
   #
   mode: "create"
 
-  # Name of existing secret for provider credentials (only used when mode: "reference")
-  # The secret must contain the required env var keys for your provider.
+  # Name of existing secret for provider credentials (only used when mode: "reference").
+  # In multi-provider mode, this single opaque Secret is mounted into every
+  # provider CAA and peerpod-ctrl; reference mode does not isolate credentials
+  # between providers. Prefer provider workload identities when isolation is
+  # required. The Secret must contain the required env var keys for each provider.
   # See providers/*-secrets.yaml.template for the list of required keys.
   existingSecretName: ""
 
@@ -116,8 +119,10 @@ provider: gcp
 # that provider's dedicated Secret. If <name> is absent, the chart falls back
 # to providerSecrets.<cloudProvider> for compatibility with provider values
 # files. When resourceCtrl is enabled, the chart also merges non-conflicting
-# credentials into peer-pods-secret for peerpod-ctrl. In reference mode,
-# resourceCtrl currently requires existingSecretName: peer-pods-secret.
+# credentials into peer-pods-secret for peerpod-ctrl. Reference mode cannot
+# split an externally managed Secret, so every provider CAA and peerpod-ctrl
+# share existingSecretName; resourceCtrl requires it to be peer-pods-secret.
+# Use workload identity instead when provider credential isolation is required.
 #
 # Example:
 # providers:
