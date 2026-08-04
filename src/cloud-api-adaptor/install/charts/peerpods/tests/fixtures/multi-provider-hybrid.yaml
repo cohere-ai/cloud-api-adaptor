@@ -54,6 +54,9 @@ providers:
     peerPodsLimitPerNode: "10"
     probePort: 8001
     vxlanPort: 4789
+    allowedCloudConfigAnnotations:
+      - io.katacontainers.config.hypervisor.gcp_zone
+      - io.katacontainers.config.hypervisor.use_spot
     nodeSelector:
       pool: gcp-confidential
     tolerations:

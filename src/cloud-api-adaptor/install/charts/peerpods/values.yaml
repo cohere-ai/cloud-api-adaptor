@@ -92,6 +92,10 @@ image:
 # Cloud provider: libvirt, aws, azure, byom, gcp, ibmcloud, vsphere
 provider: gcp
 
+# Per-pod cloud overrides for legacy single-provider mode. Denied by default.
+# Use exact annotation keys from the security table in README.md.
+allowedCloudConfigAnnotations: []
+
 # Optional multi-provider mode. Leave empty to use the legacy single-provider
 # chart behavior above. When set, the chart renders one CAA DaemonSet,
 # ConfigMap, ServiceAccount/RBAC set, and RuntimeClass per provider entry.
@@ -100,9 +104,10 @@ provider: gcp
 #   name, cloudProvider, runtimeClassName, socketPath, extendedResource,
 #   peerPodsLimitPerNode, probePort, vxlanPort (ports must be unique across
 #   enabled providers)
-# Optional: enabled (default true), config, nodeSelector, tolerations, podLabels,
-#   serviceAccount.annotations, gcpWorkloadIdentity, azureWorkloadIdentity,
-#   maxUnavailable, maxSurge (must remain 0)
+# Optional: enabled (default true), config, allowedCloudConfigAnnotations,
+#   nodeSelector, tolerations, podLabels, serviceAccount.annotations,
+#   gcpWorkloadIdentity, azureWorkloadIdentity, maxUnavailable,
+#   maxSurge (must remain 0)
 #
 # Multi-provider mode does not consume the legacy top-level provider,
 # providerConfigs, command, limit, gcpWorkloadIdentity, daemonset.podLabels, or
@@ -123,6 +128,12 @@ provider: gcp
 # split an externally managed Secret, so every provider CAA and peerpod-ctrl
 # share existingSecretName; resourceCtrl requires it to be peer-pods-secret.
 # Use workload identity instead when provider credential isolation is required.
+#
+# Per-pod cloud configuration overrides are denied by default. Operators must
+# explicitly allow exact annotation keys for each provider, for example:
+#   allowedCloudConfigAnnotations:
+#     - io.katacontainers.config.hypervisor.gcp_zone
+#     - io.katacontainers.config.hypervisor.use_spot
 #
 # Example:
 # providers:

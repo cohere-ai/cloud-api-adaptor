@@ -2,6 +2,7 @@ package util
 
 import (
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 
@@ -9,6 +10,100 @@ import (
 	cri "github.com/containerd/containerd/pkg/cri/annotations"
 	hypannotations "github.com/kata-containers/kata-containers/src/runtime/virtcontainers/pkg/annotations"
 )
+
+const (
+	GCPZoneAnnotation             = "io.katacontainers.config.hypervisor.gcp_zone"
+	GCPDiskTypeAnnotation         = "io.katacontainers.config.hypervisor.gcp_disk_type"
+	GCPDisableCVMAnnotation       = "io.katacontainers.config.hypervisor.gcp_disable_cvm"
+	GCPConfidentialTypeAnnotation = "io.katacontainers.config.hypervisor.gcp_confidential_type"
+	GCPRootVolumeSizeAnnotation   = "io.katacontainers.config.hypervisor.gcp_root_volume_size"
+	GCPUsePublicIPAnnotation      = "io.katacontainers.config.hypervisor.gcp_use_public_ip"
+	GCPNetworkTagsAnnotation      = "io.katacontainers.config.hypervisor.gcp_network_tags"
+	GCPTagsAnnotation             = "io.katacontainers.config.hypervisor.gcp_tags"
+	GCPInstanceTypesAnnotation    = "io.katacontainers.config.hypervisor.gcp_instance_types"
+
+	AzureZoneAnnotation             = "io.katacontainers.config.hypervisor.azure_zone"
+	AzureDisableCVMAnnotation       = "io.katacontainers.config.hypervisor.azure_disable_cvm"
+	AzureRootVolumeSizeAnnotation   = "io.katacontainers.config.hypervisor.azure_root_volume_size"
+	AzureUsePublicIPAnnotation      = "io.katacontainers.config.hypervisor.azure_use_public_ip"
+	AzureTagsAnnotation             = "io.katacontainers.config.hypervisor.azure_tags"
+	AzureInstanceSizesAnnotation    = "io.katacontainers.config.hypervisor.azure_instance_sizes"
+	AzureEnableSecureBootAnnotation = "io.katacontainers.config.hypervisor.azure_enable_secure_boot"
+
+	UseSpotAnnotation = "io.katacontainers.config.hypervisor.use_spot"
+)
+
+var cloudConfigAnnotationKeys = map[string]struct{}{
+	GCPZoneAnnotation:             {},
+	GCPDiskTypeAnnotation:         {},
+	GCPRootVolumeSizeAnnotation:   {},
+	GCPUsePublicIPAnnotation:      {},
+	GCPNetworkTagsAnnotation:      {},
+	GCPTagsAnnotation:             {},
+	GCPInstanceTypesAnnotation:    {},
+	AzureZoneAnnotation:           {},
+	AzureRootVolumeSizeAnnotation: {},
+	AzureUsePublicIPAnnotation:    {},
+	AzureTagsAnnotation:           {},
+	AzureInstanceSizesAnnotation:  {},
+	UseSpotAnnotation:             {},
+}
+
+var blockedCloudConfigAnnotationKeys = map[string]struct{}{
+	GCPDisableCVMAnnotation:         {},
+	GCPConfidentialTypeAnnotation:   {},
+	AzureDisableCVMAnnotation:       {},
+	AzureEnableSecureBootAnnotation: {},
+}
+
+func ValidateAllowedCloudConfigAnnotations(cloudProvider, allowedAnnotations string) error {
+	for _, key := range strings.Split(allowedAnnotations, ",") {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		if _, supported := cloudConfigAnnotationKeys[key]; supported {
+			if !cloudConfigAnnotationSupportedByProvider(key, cloudProvider) {
+				return fmt.Errorf("cloud config annotation %q is not supported by cloud provider %q", key, cloudProvider)
+			}
+			continue
+		}
+		if _, blocked := blockedCloudConfigAnnotationKeys[key]; blocked {
+			return fmt.Errorf("cloud config annotation %q cannot be allowlisted because it weakens confidential VM guarantees", key)
+		}
+		return fmt.Errorf("unsupported cloud config annotation %q in ALLOWED_CLOUD_CONFIG_ANNOTATIONS", key)
+	}
+	return nil
+}
+
+func cloudConfigAnnotationSupportedByProvider(key, cloudProvider string) bool {
+	if key == UseSpotAnnotation {
+		return cloudProvider == "gcp" || cloudProvider == "azure"
+	}
+	if strings.HasPrefix(key, "io.katacontainers.config.hypervisor.gcp_") {
+		return cloudProvider == "gcp"
+	}
+	if strings.HasPrefix(key, "io.katacontainers.config.hypervisor.azure_") {
+		return cloudProvider == "azure"
+	}
+	return false
+}
+
+// CloudConfigAnnotations holds per-pod VM overrides from annotations.
+// Account and network placement IDs (subscription, project, RG, VNet/subnet,
+// NSG) come only from CAA ConfigMap/env. Explicitly allowlisted annotations may
+// still add public IPs, network tags, or resource tags.
+type CloudConfigAnnotations struct {
+	UseSpot        bool
+	UseSpotSet     bool
+	Zone           string
+	DiskType       string
+	RootVolumeSize int64
+	UsePublicIP    *bool
+	NetworkTags    []string
+	Tags           map[string]string
+	InstanceTypes  []string
+}
 
 func GetPodName(annotations map[string]string) string {
 
@@ -42,6 +137,151 @@ func GetImageFromAnnotation(annotations map[string]string) string {
 	// For example image for Kata/Qemu refers to /hypervisor/image.img etc.
 	// We use the same annotation for Kata/remote to refer to image name
 	return annotations[hypannotations.ImagePath]
+}
+
+func GetBoolAnnotation(annotations map[string]string, key string) (bool, bool) {
+	val := annotations[key]
+	if val == "" {
+		return false, false
+	}
+	parsed, err := strconv.ParseBool(val)
+	if err != nil {
+		fmt.Printf("Error converting %s to bool. Ignoring annotation: %v\n", key, err)
+		return false, false
+	}
+	return parsed, true
+}
+
+func getInt64Annotation(annotations map[string]string, key string) int64 {
+	val := annotations[key]
+	if val == "" {
+		return 0
+	}
+	parsed, err := strconv.ParseInt(val, 10, 64)
+	if err != nil {
+		fmt.Printf("Error converting %s to int64. Ignoring annotation: %v\n", key, err)
+		return 0
+	}
+	return parsed
+}
+
+func getStringListAnnotation(annotations map[string]string, key string) []string {
+	val := annotations[key]
+	if val == "" {
+		return nil
+	}
+
+	items := strings.Split(val, ",")
+	trimmed := make([]string, 0, len(items))
+	for _, item := range items {
+		item = strings.TrimSpace(item)
+		if item != "" {
+			trimmed = append(trimmed, item)
+		}
+	}
+	return trimmed
+}
+
+func getStringMapAnnotation(annotations map[string]string, key string) map[string]string {
+	val := annotations[key]
+	if val == "" {
+		return nil
+	}
+
+	result := map[string]string{}
+	for _, pair := range strings.Split(val, ",") {
+		keyValue := strings.SplitN(pair, "=", 2)
+		if len(keyValue) != 2 {
+			fmt.Printf("Error converting %s to key-value map. Ignoring invalid pair %q\n", key, pair)
+			continue
+		}
+		mapKey := strings.TrimSpace(keyValue[0])
+		mapValue := strings.TrimSpace(keyValue[1])
+		if mapKey != "" {
+			result[mapKey] = mapValue
+		}
+	}
+
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
+func GetCloudConfigFromAnnotation(annotations map[string]string, allowedAnnotations string) CloudConfigAnnotations {
+	allowed := map[string]struct{}{}
+	for _, key := range strings.Split(allowedAnnotations, ",") {
+		key = strings.TrimSpace(key)
+		if _, supported := cloudConfigAnnotationKeys[key]; supported {
+			allowed[key] = struct{}{}
+		} else if _, blocked := blockedCloudConfigAnnotationKeys[key]; blocked {
+			log.Printf("cloud config annotation %q cannot be allowlisted because it weakens confidential VM guarantees", key)
+		} else if key != "" {
+			log.Printf("ignoring unsupported cloud config annotation %q in ALLOWED_CLOUD_CONFIG_ANNOTATIONS", key)
+		}
+	}
+
+	filtered := make(map[string]string, len(allowed))
+	for key := range cloudConfigAnnotationKeys {
+		if _, requested := annotations[key]; requested {
+			if _, permitted := allowed[key]; !permitted {
+				log.Printf("ignoring cloud config annotation %q because it is not allowlisted", key)
+			}
+		}
+	}
+	for key := range blockedCloudConfigAnnotationKeys {
+		if _, requested := annotations[key]; requested {
+			log.Printf("ignoring blocked cloud config annotation %q", key)
+		}
+	}
+	for key := range allowed {
+		if value, present := annotations[key]; present {
+			filtered[key] = value
+		}
+	}
+	annotations = filtered
+
+	useSpot, useSpotSet := GetBoolAnnotation(annotations, UseSpotAnnotation)
+
+	// Prefer cloud-specific keys when both GCP and Azure variants are present.
+	usePublicIP, usePublicIPSet := GetBoolAnnotation(annotations, GCPUsePublicIPAnnotation)
+	if azureUsePublicIP, ok := GetBoolAnnotation(annotations, AzureUsePublicIPAnnotation); ok {
+		usePublicIP, usePublicIPSet = azureUsePublicIP, true
+	}
+
+	zone := annotations[GCPZoneAnnotation]
+	if annotations[AzureZoneAnnotation] != "" {
+		zone = annotations[AzureZoneAnnotation]
+	}
+	rootVolumeSize := getInt64Annotation(annotations, GCPRootVolumeSizeAnnotation)
+	if azureRoot := getInt64Annotation(annotations, AzureRootVolumeSizeAnnotation); azureRoot > 0 {
+		rootVolumeSize = azureRoot
+	}
+	tags := getStringMapAnnotation(annotations, GCPTagsAnnotation)
+	if azureTags := getStringMapAnnotation(annotations, AzureTagsAnnotation); len(azureTags) > 0 {
+		tags = azureTags
+	}
+	instanceTypes := getStringListAnnotation(annotations, GCPInstanceTypesAnnotation)
+	if azureSizes := getStringListAnnotation(annotations, AzureInstanceSizesAnnotation); len(azureSizes) > 0 {
+		instanceTypes = azureSizes
+	}
+
+	cfg := CloudConfigAnnotations{
+		UseSpot:        useSpot,
+		UseSpotSet:     useSpotSet,
+		Zone:           zone,
+		DiskType:       annotations[GCPDiskTypeAnnotation],
+		RootVolumeSize: rootVolumeSize,
+		NetworkTags:    getStringListAnnotation(annotations, GCPNetworkTagsAnnotation),
+		Tags:           tags,
+		InstanceTypes:  instanceTypes,
+	}
+
+	if usePublicIPSet {
+		cfg.UsePublicIP = &usePublicIP
+	}
+
+	return cfg
 }
 
 // Method to get vCPU, memory and gpus from annotations

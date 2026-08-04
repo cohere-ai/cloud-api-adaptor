@@ -1,7 +1,7 @@
 {{- /* Multi-provider schema and identity validations. Emits no resources. */ -}}
 {{- $unique := dict "name" (dict) "runtimeClassName" (dict) "socketPath" (dict) "extendedResource" (dict) "probePort" (dict) "vxlanPort" (dict) }}
 {{- $runtimeResources := dict }}
-{{- $reservedConfigKeys := list "CLOUD_PROVIDER" "REMOTE_HYPERVISOR_ENDPOINT" "POD_VM_EXTENDED_RESOURCE" "PEERPODS_LIMIT_PER_NODE" "RUNTIMECLASS_NAME" "PROBE_PORT" "VXLAN_PORT" }}
+{{- $reservedConfigKeys := list "CLOUD_PROVIDER" "REMOTE_HYPERVISOR_ENDPOINT" "POD_VM_EXTENDED_RESOURCE" "PEERPODS_LIMIT_PER_NODE" "RUNTIMECLASS_NAME" "PROBE_PORT" "VXLAN_PORT" "ALLOWED_CLOUD_CONFIG_ANNOTATIONS" }}
 {{- range $key := $reservedConfigKeys }}
 {{- if hasKey ($.Values.sharedConfig | default dict) $key }}
 {{- fail (printf "sharedConfig.%s is managed by the chart and cannot be overridden" $key) }}
@@ -22,6 +22,9 @@
 {{- end }}
 {{- if .Values.providerConfigs }}
 {{- fail "providerConfigs is a legacy single-provider value; configure providers[].config in multi-provider mode" }}
+{{- end }}
+{{- if .Values.allowedCloudConfigAnnotations }}
+{{- fail "allowedCloudConfigAnnotations is a legacy single-provider value; configure providers[].allowedCloudConfigAnnotations in multi-provider mode" }}
 {{- end }}
 {{- if ne (.Values.provider | default "gcp") "gcp" }}
 {{- fail "provider is a legacy single-provider value; configure providers[].cloudProvider in multi-provider mode" }}

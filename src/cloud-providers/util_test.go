@@ -8,6 +8,28 @@ import (
 	"time"
 )
 
+func TestChooseInt64(t *testing.T) {
+	tests := []struct {
+		name            string
+		annotationValue int64
+		defaultValue    int
+		want            int64
+	}{
+		{name: "unset uses operator default", defaultValue: 100, want: 100},
+		{name: "smaller annotation preserves operator minimum", annotationValue: 50, defaultValue: 100, want: 100},
+		{name: "equal annotation preserves operator default", annotationValue: 100, defaultValue: 100, want: 100},
+		{name: "larger annotation increases value", annotationValue: 200, defaultValue: 100, want: 200},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ChooseInt64(tt.annotationValue, tt.defaultValue); got != tt.want {
+				t.Fatalf("ChooseInt64(%d, %d) = %d, want %d", tt.annotationValue, tt.defaultValue, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestVerifyCloudInstanceType(t *testing.T) {
 	type args struct {
 		instanceType        string
@@ -280,6 +302,28 @@ func TestSortInstanceTypesOnResources(t *testing.T) {
 			elapsed := time.Since(start)
 			fmt.Printf("SortInstanceTypesOnResources() took %s\n", elapsed)
 		})
+	}
+}
+
+func TestProviderOverrideHelpers(t *testing.T) {
+	tags := MergeStringMap(
+		map[string]string{"tenant": "value", "protected": "tenant-value"},
+		map[string]string{"operator": "value", "protected": "operator-value"},
+	)
+	if !reflect.DeepEqual(tags, map[string]string{
+		"tenant":    "value",
+		"operator":  "value",
+		"protected": "operator-value",
+	}) {
+		t.Fatalf("MergeStringMap() = %v", tags)
+	}
+
+	values := MergeStringSlices(
+		[]string{"tenant", "shared"},
+		[]string{"operator", "shared"},
+	)
+	if !reflect.DeepEqual(values, []string{"operator", "shared", "tenant"}) {
+		t.Fatalf("MergeStringSlices() = %v", values)
 	}
 }
 
@@ -740,6 +784,169 @@ func TestSelectInstanceTypeToUse(t *testing.T) {
 			},
 			want:    "t3.medium",
 			wantErr: false,
+		},
+		{
+			name: "use first per-pod instance type when list is the only override",
+			args: args{
+				spec: InstanceTypeSpec{
+					InstanceTypes: []string{"t3.large", "t3.xlarge"},
+				},
+				validInstanceTypes:  []string{"t3.large", "t3.xlarge"},
+				defaultInstanceType: "t3.medium",
+			},
+			want:    "t3.large",
+			wantErr: false,
+		},
+		{
+			name: "exclude per-pod instance types outside the operator allowlist",
+			args: args{
+				spec: InstanceTypeSpec{
+					InstanceTypes: []string{"t3.2xlarge", "t3.large"},
+				},
+				validInstanceTypes:  []string{"t3.large", "t3.xlarge"},
+				defaultInstanceType: "t3.medium",
+			},
+			want:    "t3.large",
+			wantErr: false,
+		},
+		{
+			name: "reject per-pod instance types outside the operator allowlist",
+			args: args{
+				spec: InstanceTypeSpec{
+					InstanceTypes: []string{"t3.2xlarge"},
+				},
+				validInstanceTypes:  []string{"t3.large", "t3.xlarge"},
+				defaultInstanceType: "t3.medium",
+			},
+			want:    "",
+			wantErr: true,
+		},
+		{
+			name: "exact instance type takes priority over per-pod list",
+			args: args{
+				spec: InstanceTypeSpec{
+					InstanceType:  "t3.xlarge",
+					InstanceTypes: []string{"t3.large", "t3.xlarge"},
+				},
+				validInstanceTypes:  []string{"t3.large", "t3.xlarge"},
+				defaultInstanceType: "t3.medium",
+			},
+			want:    "t3.xlarge",
+			wantErr: false,
+		},
+		{
+			name: "exact instance type takes priority over an invalid per-pod list",
+			args: args{
+				spec: InstanceTypeSpec{
+					InstanceType:  "t3.xlarge",
+					InstanceTypes: []string{"invalid.type"},
+				},
+				validInstanceTypes:  []string{"t3.large", "t3.xlarge"},
+				defaultInstanceType: "t3.medium",
+			},
+			want:    "t3.xlarge",
+			wantErr: false,
+		},
+		{
+			name: "resource selection is restricted to per-pod instance types",
+			args: args{
+				spec: InstanceTypeSpec{
+					VCPUs:         4,
+					Memory:        16,
+					InstanceTypes: []string{"t3.xlarge", "t3.2xlarge"},
+				},
+				specList: []InstanceTypeSpec{
+					{InstanceType: "t3.large", VCPUs: 4, Memory: 16},
+					{InstanceType: "t3.xlarge", VCPUs: 4, Memory: 32},
+					{InstanceType: "t3.2xlarge", VCPUs: 8, Memory: 64},
+				},
+				validInstanceTypes:  []string{"t3.xlarge", "t3.2xlarge"},
+				defaultInstanceType: "t3.medium",
+			},
+			want:    "t3.xlarge",
+			wantErr: false,
+		},
+		{
+			name: "use first per-pod instance type with resources when metadata is unavailable",
+			args: args{
+				spec: InstanceTypeSpec{
+					VCPUs:         4,
+					Memory:        16,
+					InstanceTypes: []string{"n2-standard-4", "n2-standard-8"},
+				},
+				validInstanceTypes:  []string{"n2-standard-4", "n2-standard-8"},
+				defaultInstanceType: "e2-medium",
+			},
+			want:    "n2-standard-4",
+			wantErr: false,
+		},
+		{
+			name: "reject operator default omitted from non-empty allowlist",
+			args: args{
+				spec: InstanceTypeSpec{
+					InstanceTypes: []string{"t3.medium"},
+				},
+				validInstanceTypes:  []string{"t3.large", "t3.xlarge"},
+				defaultInstanceType: "t3.medium",
+			},
+			want:    "",
+			wantErr: true,
+		},
+		{
+			name: "allow operator default when allowlist is empty",
+			args: args{
+				spec: InstanceTypeSpec{
+					InstanceTypes: []string{"t3.medium"},
+				},
+				defaultInstanceType: "t3.medium",
+			},
+			want:    "t3.medium",
+			wantErr: false,
+		},
+		{
+			name: "allow operator default when explicitly allowlisted",
+			args: args{
+				spec: InstanceTypeSpec{
+					InstanceTypes: []string{"t3.medium", "t3.large"},
+				},
+				validInstanceTypes:  []string{"t3.medium", "t3.large"},
+				defaultInstanceType: "t3.medium",
+			},
+			want:    "t3.medium",
+			wantErr: false,
+		},
+		{
+			name: "reject resource selection when requested types lack metadata",
+			args: args{
+				spec: InstanceTypeSpec{
+					VCPUs:         64,
+					Memory:        256,
+					InstanceTypes: []string{"t3.large"},
+				},
+				specList: []InstanceTypeSpec{
+					{InstanceType: "t3.xlarge", VCPUs: 4, Memory: 16},
+				},
+				validInstanceTypes:  []string{"t3.large", "t3.xlarge"},
+				defaultInstanceType: "t3.medium",
+			},
+			want:    "",
+			wantErr: true,
+		},
+		{
+			name: "reject GPU selection when requested types lack metadata",
+			args: args{
+				spec: InstanceTypeSpec{
+					GPUs:          1,
+					InstanceTypes: []string{"p3.xlarge"},
+				},
+				specList: []InstanceTypeSpec{
+					{InstanceType: "p3.2xlarge", GPUs: 2, VCPUs: 8, Memory: 32},
+				},
+				validInstanceTypes:  []string{"p3.xlarge", "p3.2xlarge"},
+				defaultInstanceType: "t3.medium",
+			},
+			want:    "",
+			wantErr: true,
 		},
 	}
 

@@ -137,6 +137,13 @@ EOF
 }
 
 echo "Rendering multi-provider-minimal.yaml..."
+LEGACY_OUT="${TMPDIR_ROOT}/legacy.yaml"
+helm template test-release "${CHART_DIR}" \
+  -f "${CHART_DIR}/providers/gcp.yaml" \
+  --set 'allowedCloudConfigAnnotations[0]=io.katacontainers.config.hypervisor.gcp_zone' \
+  >"${LEGACY_OUT}"
+assert_contains "${LEGACY_OUT}" 'ALLOWED_CLOUD_CONFIG_ANNOTATIONS: "io.katacontainers.config.hypervisor.gcp_zone"'
+
 MINIMAL_OUT="${TMPDIR_ROOT}/minimal.yaml"
 render "${FIXTURES}/multi-provider-minimal.yaml" "${MINIMAL_OUT}"
 assert_contains "${MINIMAL_OUT}" 'name: cloud-api-adaptor-gcp'
@@ -216,6 +223,7 @@ assert_contains "${HYBRID_OUT}" 'name: cloud-api-adaptor-gcp-gcp-wif'
 assert_contains "${HYBRID_OUT}" 'azure.workload.identity/client-id: 11111111-1111-1111-1111-111111111111'
 assert_contains "${HYBRID_OUT}" 'azure.workload.identity/use: "true"'
 assert_contains "${HYBRID_OUT}" 'GOOGLE_APPLICATION_CREDENTIALS'
+assert_contains "${HYBRID_OUT}" 'ALLOWED_CLOUD_CONFIG_ANNOTATIONS: "io.katacontainers.config.hypervisor.gcp_zone,io.katacontainers.config.hypervisor.use_spot"'
 assert_contains "${HYBRID_OUT}" 'kata-remote-gcp'
 assert_contains "${HYBRID_OUT}" 'kata-remote-azure'
 assert_contains "${HYBRID_OUT}" 'peer-pods-webhook-gcp-'
@@ -288,6 +296,19 @@ fi
 if ! grep -q 'sharedConfig.PROBE_PORT is managed by the chart' "${TMPDIR_ROOT}/reserved-key.err"; then
   echo "FAIL: expected managed ConfigMap key error, got:" >&2
   cat "${TMPDIR_ROOT}/reserved-key.err" >&2
+  exit 1
+fi
+
+echo "Expecting raw multi-provider allowlist override to fail..."
+if render "${FIXTURES}/multi-provider-minimal.yaml" "${TMPDIR_ROOT}/raw-allowlist.yaml" \
+  --set-string 'providers[0].config.ALLOWED_CLOUD_CONFIG_ANNOTATIONS=io.katacontainers.config.hypervisor.gcp_zone' \
+  2>"${TMPDIR_ROOT}/raw-allowlist.err"; then
+  echo "FAIL: raw multi-provider allowlist rendered successfully" >&2
+  exit 1
+fi
+if ! grep -q 'config.ALLOWED_CLOUD_CONFIG_ANNOTATIONS is managed by the chart' "${TMPDIR_ROOT}/raw-allowlist.err"; then
+  echo "FAIL: expected managed allowlist error, got:" >&2
+  cat "${TMPDIR_ROOT}/raw-allowlist.err" >&2
   exit 1
 fi
 

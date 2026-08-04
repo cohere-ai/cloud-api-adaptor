@@ -45,6 +45,10 @@ func newProxyService(dialer func(context.Context) (net.Conn, error), pauseImage 
 // AgentServiceService methods
 
 func (s *proxyService) CreateContainer(ctx context.Context, req *pb.CreateContainerRequest) (*emptypb.Empty, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	var pullImageInGuest bool
 	logger.Printf("CreateContainer: containerID:%s", req.ContainerId)
 	if len(req.OCI.Mounts) > 0 {
