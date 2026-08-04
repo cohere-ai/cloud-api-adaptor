@@ -16,7 +16,7 @@ func TestResolveMTU(t *testing.T) {
 		{name: "unset uses discovered", discovered: 1500, configured: 0, want: 1500},
 		{name: "cap below discovered", discovered: 1500, configured: 1200, want: 1200, wantOverride: true},
 		{name: "does not raise above discovered", discovered: 1200, configured: 1500, want: 1200},
-		{name: "equal keeps value", discovered: 1200, configured: 1200, want: 1200},
+		{name: "equal applies worker override", discovered: 1200, configured: 1200, want: 1200, wantOverride: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

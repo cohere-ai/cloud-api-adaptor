@@ -290,7 +290,7 @@ func getPodIP(podLink netops.Link) (netip.Prefix, error) {
 // resolveMTU returns the advertised MTU and whether an explicit lower cap
 // should be applied during worker-side tunnel setup.
 func resolveMTU(discovered, configured int) (int, bool) {
-	if configured > 0 && configured < discovered {
+	if configured > 0 && configured <= discovered {
 		return configured, true
 	}
 	return discovered, false
