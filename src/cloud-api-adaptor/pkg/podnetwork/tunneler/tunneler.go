@@ -16,19 +16,22 @@ type Tunneler interface {
 }
 
 type Config struct {
-	PodIP               netip.Prefix `json:"podip"`
-	PodHwAddr           string       `json:"pod-hw-addr"`
-	InterfaceName       string       `json:"interface"`
-	WorkerNodeIP        netip.Prefix `json:"worker-node-ip"`
-	TunnelType          string       `json:"tunnel-type"`
-	Routes              []*Route     `json:"routes"`
-	Neighbors           []*Neighbor  `json:"neighbors"`
-	MTU                 int          `json:"mtu"`
-	Index               int          `json:"index"`
-	VXLANPort           int          `json:"vxlan-port,omitempty"`
-	VXLANID             int          `json:"vxlan-id,omitempty"`
-	Dedicated           bool         `json:"dedicated"`
-	ExternalNetViaPodVM bool         `json:"external-net-via-pod-vm"`
+	PodIP         netip.Prefix `json:"podip"`
+	PodHwAddr     string       `json:"pod-hw-addr"`
+	InterfaceName string       `json:"interface"`
+	WorkerNodeIP  netip.Prefix `json:"worker-node-ip"`
+	TunnelType    string       `json:"tunnel-type"`
+	Routes        []*Route     `json:"routes"`
+	Neighbors     []*Neighbor  `json:"neighbors"`
+	MTU           int          `json:"mtu"`
+	// MTUOverride is worker-local setup state. The pod VM consumes MTU, while
+	// worker Inspect and Setup run in one process and retain this flag in memory.
+	MTUOverride         bool `json:"-"`
+	Index               int  `json:"index"`
+	VXLANPort           int  `json:"vxlan-port,omitempty"`
+	VXLANID             int  `json:"vxlan-id,omitempty"`
+	Dedicated           bool `json:"dedicated"`
+	ExternalNetViaPodVM bool `json:"external-net-via-pod-vm"`
 }
 
 type Route struct {

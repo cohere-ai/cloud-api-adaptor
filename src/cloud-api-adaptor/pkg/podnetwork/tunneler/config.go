@@ -5,6 +5,9 @@ package tunneler
 
 import "strings"
 
+// MinIPv4MTU is the minimum legal IPv4 interface MTU.
+const MinIPv4MTU = 68
+
 type TunnelerConfigurator interface {
 	Tunneler
 	Configure(*NetworkConfig, *Config) error
@@ -16,6 +19,9 @@ type NetworkConfig struct {
 	VXLAN               VXLANConfig
 	ExternalNetViaPodVM bool
 	PodSubnetCIDRs      SubnetCIDRs
+	// MTU, when > 0, caps the overlay MTU advertised to the peer pod.
+	// Account for tunnel overhead when deriving it from an underlay path MTU.
+	MTU int
 }
 
 type VXLANConfig struct {
