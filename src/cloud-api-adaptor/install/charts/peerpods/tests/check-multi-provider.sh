@@ -226,6 +226,9 @@ assert_count "${HYBRID_OUT}" '^scheduling:$' 2
 assert_count "${HYBRID_OUT}" '^  nodeSelector:$' 2
 assert_count "${HYBRID_OUT}" '^  tolerations:$' 2
 assert_count "${HYBRID_OUT}" '^    cohere.com/caa-worker: "true"$' 2
+assert_count "${HYBRID_OUT}" 'pool: gcp-confidential' 2
+assert_count "${HYBRID_OUT}" 'key: gcp-confidential' 3
+assert_count "${HYBRID_OUT}" 'key: kata.peerpods.io/vm' 5
 assert_count "${HYBRID_OUT}" 'mountPath: /etc/certificates' 2
 assert_count "${HYBRID_OUT}" 'secretName: certs-for-tls' 2
 assert_contains "${HYBRID_OUT}" 'type: DirectoryOrCreate'
@@ -295,6 +298,15 @@ if render "${FIXTURES}/multi-provider-minimal.yaml" "${TMPDIR_ROOT}/max-surge.ya
   exit 1
 fi
 assert_contains "${TMPDIR_ROOT}/max-surge.err" 'maxSurge must be 0'
+
+echo "Expecting conflicting provider node selector to fail..."
+if render "${FIXTURES}/multi-provider-hybrid.yaml" "${TMPDIR_ROOT}/selector-conflict.yaml" \
+  --set-string 'providers[0].nodeSelector.cohere\.com/caa-worker=false' \
+  2>"${TMPDIR_ROOT}/selector-conflict.err"; then
+  echo "FAIL: conflicting provider node selector rendered successfully" >&2
+  exit 1
+fi
+assert_contains "${TMPDIR_ROOT}/selector-conflict.err" 'nodeSelector.*conflicts with the top-level nodeSelector'
 
 echo "Expecting invalid provider name to fail..."
 if render "${FIXTURES}/multi-provider-minimal.yaml" "${TMPDIR_ROOT}/invalid-name.yaml" \

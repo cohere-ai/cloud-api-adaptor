@@ -85,6 +85,11 @@
 {{- if has (printf "%v" $maxUnavailable) (list "0" "0%") }}
 {{- fail (printf "providers.%s.maxUnavailable must be greater than 0 because maxSurge is 0" $provider.name) }}
 {{- end }}
+{{- range $key, $value := ($provider.nodeSelector | default dict) }}
+{{- if and (hasKey ($.Values.nodeSelector | default dict) $key) (ne (printf "%v" $value) (printf "%v" (index $.Values.nodeSelector $key))) }}
+{{- fail (printf "providers.%s.nodeSelector.%s conflicts with the top-level nodeSelector; provider placement must inherit global worker labels" $provider.name $key) }}
+{{- end }}
+{{- end }}
 {{- range $key := $reservedConfigKeys }}
 {{- if hasKey ($provider.config | default dict) $key }}
 {{- fail (printf "providers.%s.config.%s is managed by the chart and cannot be overridden" $provider.name $key) }}

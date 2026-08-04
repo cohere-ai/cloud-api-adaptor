@@ -148,11 +148,13 @@ sharedConfig: {}
 # using Workload Identity (no GCP_CREDENTIALS file needed).
 command: ["/bin/sh", "-c", "exec cloud-api-adaptor gcp"]
 
-# nodeSelector / tolerations applied to the cloud-api-adaptor and
-# fix-gke-node-config DaemonSets and to multi-provider RuntimeClass scheduling.
+# nodeSelector / tolerations inherited by the cloud-api-adaptor and
+# fix-gke-node-config DaemonSets and by multi-provider RuntimeClass scheduling.
 # Empty by default; consumers set these to fence CAA and peer pod workloads onto
-# their worker pool. Per-provider overrides apply to both the provider DaemonSet
-# and its RuntimeClass.
+# their worker pool. Per-provider values add placement constraints and
+# tolerations to both the provider DaemonSet and its RuntimeClass. Provider
+# selectors cannot override global selector values because the global selector
+# also places the DaemonSet that installs remote handlers on those nodes.
 nodeSelector: {}
 tolerations: []
 

@@ -54,6 +54,12 @@ providers:
     peerPodsLimitPerNode: "10"
     probePort: 8001
     vxlanPort: 4789
+    nodeSelector:
+      pool: gcp-confidential
+    tolerations:
+      - key: gcp-confidential
+        operator: Exists
+        effect: NoSchedule
     serviceAccount:
       annotations:
         iam.gke.io/gcp-service-account: peerpods@example.iam.gserviceaccount.com
