@@ -36,7 +36,6 @@ const (
 var cloudConfigAnnotationKeys = map[string]struct{}{
 	GCPZoneAnnotation:             {},
 	GCPDiskTypeAnnotation:         {},
-	GCPConfidentialTypeAnnotation: {},
 	GCPRootVolumeSizeAnnotation:   {},
 	GCPUsePublicIPAnnotation:      {},
 	GCPNetworkTagsAnnotation:      {},
@@ -52,17 +51,21 @@ var cloudConfigAnnotationKeys = map[string]struct{}{
 
 var blockedCloudConfigAnnotationKeys = map[string]struct{}{
 	GCPDisableCVMAnnotation:         {},
+	GCPConfidentialTypeAnnotation:   {},
 	AzureDisableCVMAnnotation:       {},
 	AzureEnableSecureBootAnnotation: {},
 }
 
-func ValidateAllowedCloudConfigAnnotations(allowedAnnotations string) error {
+func ValidateAllowedCloudConfigAnnotations(cloudProvider, allowedAnnotations string) error {
 	for _, key := range strings.Split(allowedAnnotations, ",") {
 		key = strings.TrimSpace(key)
 		if key == "" {
 			continue
 		}
 		if _, supported := cloudConfigAnnotationKeys[key]; supported {
+			if !cloudConfigAnnotationSupportedByProvider(key, cloudProvider) {
+				return fmt.Errorf("cloud config annotation %q is not supported by cloud provider %q", key, cloudProvider)
+			}
 			continue
 		}
 		if _, blocked := blockedCloudConfigAnnotationKeys[key]; blocked {
@@ -73,23 +76,33 @@ func ValidateAllowedCloudConfigAnnotations(allowedAnnotations string) error {
 	return nil
 }
 
+func cloudConfigAnnotationSupportedByProvider(key, cloudProvider string) bool {
+	if key == UseSpotAnnotation {
+		return cloudProvider == "gcp" || cloudProvider == "azure"
+	}
+	if strings.HasPrefix(key, "io.katacontainers.config.hypervisor.gcp_") {
+		return cloudProvider == "gcp"
+	}
+	if strings.HasPrefix(key, "io.katacontainers.config.hypervisor.azure_") {
+		return cloudProvider == "azure"
+	}
+	return false
+}
+
 // CloudConfigAnnotations holds per-pod VM overrides from annotations.
 // Account and network placement IDs (subscription, project, RG, VNet/subnet,
 // NSG) come only from CAA ConfigMap/env. Explicitly allowlisted annotations may
 // still add public IPs, network tags, or resource tags.
 type CloudConfigAnnotations struct {
-	UseSpot          bool
-	UseSpotSet       bool
-	Zone             string
-	DiskType         string
-	DisableCVM       *bool
-	ConfidentialType string
-	RootVolumeSize   int64
-	UsePublicIP      *bool
-	NetworkTags      []string
-	Tags             map[string]string
-	InstanceTypes    []string
-	EnableSecureBoot *bool
+	UseSpot        bool
+	UseSpotSet     bool
+	Zone           string
+	DiskType       string
+	RootVolumeSize int64
+	UsePublicIP    *bool
+	NetworkTags    []string
+	Tags           map[string]string
+	InstanceTypes  []string
 }
 
 func GetPodName(annotations map[string]string) string {
@@ -124,19 +137,6 @@ func GetImageFromAnnotation(annotations map[string]string) string {
 	// For example image for Kata/Qemu refers to /hypervisor/image.img etc.
 	// We use the same annotation for Kata/remote to refer to image name
 	return annotations[hypannotations.ImagePath]
-}
-
-// Method to get spot instance preference from annotation
-func GetUseSpotFromAnnotation(annotations map[string]string) bool {
-	useSpot, ok := GetBoolAnnotation(annotations, UseSpotAnnotation)
-	if !ok {
-		return false
-	}
-	return useSpot
-}
-
-func GetUseSpotFromAnnotationWithDefault(annotations map[string]string) (bool, bool) {
-	return GetBoolAnnotation(annotations, UseSpotAnnotation)
 }
 
 func GetBoolAnnotation(annotations map[string]string, key string) (bool, bool) {
@@ -244,15 +244,10 @@ func GetCloudConfigFromAnnotation(annotations map[string]string, allowedAnnotati
 	useSpot, useSpotSet := GetBoolAnnotation(annotations, UseSpotAnnotation)
 
 	// Prefer cloud-specific keys when both GCP and Azure variants are present.
-	disableCVM, disableCVMSet := GetBoolAnnotation(annotations, GCPDisableCVMAnnotation)
-	if azureDisableCVM, ok := GetBoolAnnotation(annotations, AzureDisableCVMAnnotation); ok {
-		disableCVM, disableCVMSet = azureDisableCVM, true
-	}
 	usePublicIP, usePublicIPSet := GetBoolAnnotation(annotations, GCPUsePublicIPAnnotation)
 	if azureUsePublicIP, ok := GetBoolAnnotation(annotations, AzureUsePublicIPAnnotation); ok {
 		usePublicIP, usePublicIPSet = azureUsePublicIP, true
 	}
-	enableSecureBoot, enableSecureBootSet := GetBoolAnnotation(annotations, AzureEnableSecureBootAnnotation)
 
 	zone := annotations[GCPZoneAnnotation]
 	if annotations[AzureZoneAnnotation] != "" {
@@ -272,25 +267,18 @@ func GetCloudConfigFromAnnotation(annotations map[string]string, allowedAnnotati
 	}
 
 	cfg := CloudConfigAnnotations{
-		UseSpot:          useSpot,
-		UseSpotSet:       useSpotSet,
-		Zone:             zone,
-		DiskType:         annotations[GCPDiskTypeAnnotation],
-		ConfidentialType: annotations[GCPConfidentialTypeAnnotation],
-		RootVolumeSize:   rootVolumeSize,
-		NetworkTags:      getStringListAnnotation(annotations, GCPNetworkTagsAnnotation),
-		Tags:             tags,
-		InstanceTypes:    instanceTypes,
+		UseSpot:        useSpot,
+		UseSpotSet:     useSpotSet,
+		Zone:           zone,
+		DiskType:       annotations[GCPDiskTypeAnnotation],
+		RootVolumeSize: rootVolumeSize,
+		NetworkTags:    getStringListAnnotation(annotations, GCPNetworkTagsAnnotation),
+		Tags:           tags,
+		InstanceTypes:  instanceTypes,
 	}
 
-	if disableCVMSet {
-		cfg.DisableCVM = &disableCVM
-	}
 	if usePublicIPSet {
 		cfg.UsePublicIP = &usePublicIP
-	}
-	if enableSecureBootSet {
-		cfg.EnableSecureBoot = &enableSecureBoot
 	}
 
 	return cfg

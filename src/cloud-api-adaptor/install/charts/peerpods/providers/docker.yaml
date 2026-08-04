@@ -11,7 +11,7 @@ image:
 
 providerConfigs:
   docker: {}
-    # Comma-separated allowlist of cloud-specific pod annotations that may override operator VM configuration
+    # Comma-separated allowlist of GCP or Azure pod annotations that may override operator VM configuration
     # (default: "")
     # ALLOWED_CLOUD_CONFIG_ANNOTATIONS: ""
 

@@ -835,6 +835,19 @@ func TestSelectInstanceTypeToUse(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name: "exact instance type takes priority over an invalid per-pod list",
+			args: args{
+				spec: InstanceTypeSpec{
+					InstanceType:  "t3.xlarge",
+					InstanceTypes: []string{"invalid.type"},
+				},
+				validInstanceTypes:  []string{"t3.large", "t3.xlarge"},
+				defaultInstanceType: "t3.medium",
+			},
+			want:    "t3.xlarge",
+			wantErr: false,
+		},
+		{
 			name: "resource selection is restricted to per-pod instance types",
 			args: args{
 				spec: InstanceTypeSpec{

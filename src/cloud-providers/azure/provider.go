@@ -290,11 +290,11 @@ func (p *azureProvider) CreateInstance(ctx context.Context, podName, sandboxID s
 		imageID = spec.Image
 	}
 
-	// AZURE_ZONE was previously inert; only opt into zonal placement when a
-	// per-pod annotation explicitly requests it.
-	zone := spec.Zone
-	disableCVM := provider.ChooseBool(spec.DisableCVM, p.serviceConfig.DisableCVM)
-	enableSecureBoot := provider.ChooseBool(spec.EnableSecureBoot, p.serviceConfig.EnableSecureBoot)
+	// The operator default is configured with -zone; a permitted per-pod
+	// annotation may override it.
+	zone := provider.ChooseString(spec.Zone, p.serviceConfig.Zone)
+	disableCVM := p.serviceConfig.DisableCVM
+	enableSecureBoot := p.serviceConfig.EnableSecureBoot
 	usePublicIP := provider.ChooseBool(spec.UsePublicIP, p.serviceConfig.UsePublicIP)
 	rootVolumeSize := provider.ChooseInt64(spec.RootVolumeSize, p.serviceConfig.RootVolumeSize)
 	tags := provider.MergeStringMap(spec.Tags, p.serviceConfig.Tags)

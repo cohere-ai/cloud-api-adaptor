@@ -193,7 +193,6 @@ Prepend `io.katacontainers.config.hypervisor.` to each suffix below.
 |---|---|---|---|
 | `gcp_zone` | GCP | Selects a zone in the configured subnet region | Capacity and data-residency change |
 | `gcp_disk_type` | GCP | Selects the boot disk type | Cost and performance change |
-| `gcp_confidential_type` | GCP | Selects the configured confidential VM technology | Attestation policy compatibility |
 | `gcp_root_volume_size` | GCP | Increases boot disk size | Cost increase |
 | `gcp_use_public_ip` | GCP | Attaches an external IP | Public network exposure |
 | `gcp_network_tags` | GCP | Adds firewall-targeting network tags | Expands firewall policy matches |
@@ -207,7 +206,8 @@ Prepend `io.katacontainers.config.hypervisor.` to each suffix below.
 | `use_spot` | GCP, Azure | Requests interruptible capacity | VM eviction and workload interruption |
 
 The following security-sensitive keys cannot be allowlisted:
-`gcp_disable_cvm`, `azure_disable_cvm`, and `azure_enable_secure_boot`.
+`gcp_disable_cvm`, `gcp_confidential_type`, `azure_disable_cvm`, and
+`azure_enable_secure_boot`.
 Run a separate CAA instance if workloads require weaker confidential-compute
 or boot-integrity settings.
 

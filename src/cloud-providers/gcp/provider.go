@@ -261,8 +261,8 @@ func (p *gcpProvider) CreateInstance(ctx context.Context, podName, sandboxID str
 		return nil, err
 	}
 	diskType := provider.ChooseString(spec.DiskType, p.serviceConfig.DiskType)
-	disableCVM := provider.ChooseBool(spec.DisableCVM, p.serviceConfig.DisableCVM)
-	confidentialType := provider.ChooseString(spec.ConfidentialType, p.serviceConfig.ConfidentialType)
+	disableCVM := p.serviceConfig.DisableCVM
+	confidentialType := p.serviceConfig.ConfidentialType
 	rootVolumeSize := provider.ChooseInt64(spec.RootVolumeSize, p.serviceConfig.RootVolumeSize)
 	usePublicIP := provider.ChooseBool(spec.UsePublicIP, p.serviceConfig.UsePublicIP)
 	useSpot := p.serviceConfig.UseSpotInstances

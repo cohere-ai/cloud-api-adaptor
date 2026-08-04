@@ -127,7 +127,7 @@ func SelectInstanceTypeToUse(spec InstanceTypeSpec, specList []InstanceTypeSpec,
 	var instanceType string
 	var err error
 
-	if len(spec.InstanceTypes) > 0 {
+	if spec.InstanceType == "" && len(spec.InstanceTypes) > 0 {
 		requestedTypes := make([]string, 0, len(spec.InstanceTypes))
 		for _, candidate := range spec.InstanceTypes {
 			if isAllowedInstanceType(candidate, validInstanceTypes, defaultInstanceType) {
