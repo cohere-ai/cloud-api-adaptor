@@ -16,8 +16,11 @@ secrets:
   #
   mode: "create"
 
-  # Name of existing secret for provider credentials (only used when mode: "reference")
-  # The secret must contain the required env var keys for your provider.
+  # Name of existing secret for provider credentials (only used when mode: "reference").
+  # In multi-provider mode, this single opaque Secret is mounted into every
+  # provider CAA and peerpod-ctrl; reference mode does not isolate credentials
+  # between providers. Prefer provider workload identities when isolation is
+  # required. The Secret must contain the required env var keys for each provider.
   # See providers/*-secrets.yaml.template for the list of required keys.
   existingSecretName: ""
 
@@ -121,8 +124,10 @@ allowedCloudConfigAnnotations: []
 # that provider's dedicated Secret. If <name> is absent, the chart falls back
 # to providerSecrets.<cloudProvider> for compatibility with provider values
 # files. When resourceCtrl is enabled, the chart also merges non-conflicting
-# credentials into peer-pods-secret for peerpod-ctrl. In reference mode,
-# resourceCtrl currently requires existingSecretName: peer-pods-secret.
+# credentials into peer-pods-secret for peerpod-ctrl. Reference mode cannot
+# split an externally managed Secret, so every provider CAA and peerpod-ctrl
+# share existingSecretName; resourceCtrl requires it to be peer-pods-secret.
+# Use workload identity instead when provider credential isolation is required.
 #
 # Per-pod cloud configuration overrides are denied by default. Operators must
 # explicitly allow exact annotation keys for each provider, for example:
@@ -154,11 +159,13 @@ sharedConfig: {}
 # using Workload Identity (no GCP_CREDENTIALS file needed).
 command: ["/bin/sh", "-c", "exec cloud-api-adaptor gcp"]
 
-# nodeSelector / tolerations applied to the cloud-api-adaptor and
-# fix-gke-node-config DaemonSets and to multi-provider RuntimeClass scheduling.
+# nodeSelector / tolerations inherited by the cloud-api-adaptor and
+# fix-gke-node-config DaemonSets and by multi-provider RuntimeClass scheduling.
 # Empty by default; consumers set these to fence CAA and peer pod workloads onto
-# their worker pool. Per-provider overrides apply to both the provider DaemonSet
-# and its RuntimeClass.
+# their worker pool. Per-provider values add placement constraints and
+# tolerations to both the provider DaemonSet and its RuntimeClass. Provider
+# selectors cannot override global selector values because the global selector
+# also places the DaemonSet that installs remote handlers on those nodes.
 nodeSelector: {}
 tolerations: []
 

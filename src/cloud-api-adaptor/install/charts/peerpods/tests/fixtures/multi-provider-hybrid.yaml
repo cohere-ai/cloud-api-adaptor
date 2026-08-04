@@ -57,6 +57,12 @@ providers:
     allowedCloudConfigAnnotations:
       - io.katacontainers.config.hypervisor.gcp_zone
       - io.katacontainers.config.hypervisor.use_spot
+    nodeSelector:
+      pool: gcp-confidential
+    tolerations:
+      - key: gcp-confidential
+        operator: Exists
+        effect: NoSchedule
     serviceAccount:
       annotations:
         iam.gke.io/gcp-service-account: peerpods@example.iam.gserviceaccount.com

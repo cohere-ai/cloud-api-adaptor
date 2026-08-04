@@ -1,5 +1,7 @@
 {{- range $provider := .Values.providers }}
 {{- if include "peerpods.providerEnabled" $provider }}
+{{- $nodeSelector := merge (deepCopy ($.Values.nodeSelector | default dict)) ($provider.nodeSelector | default dict) }}
+{{- $tolerations := uniq (concat ($.Values.tolerations | default list) ($provider.tolerations | default list)) }}
 {{- $maxUnavailable := $.Values.daemonset.updateStrategy.maxUnavailable }}
 {{- if hasKey $provider "maxUnavailable" }}{{- $maxUnavailable = $provider.maxUnavailable }}{{- end }}
 {{- $maxSurge := $.Values.daemonset.updateStrategy.maxSurge }}
@@ -94,8 +96,8 @@ spec:
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
       nodeSelector:
-{{ toYaml ($provider.nodeSelector | default $.Values.nodeSelector) | nindent 8 }}
-{{- with ($provider.tolerations | default $.Values.tolerations) }}
+{{ toYaml $nodeSelector | nindent 8 }}
+{{- with $tolerations }}
       tolerations:
 {{ toYaml . | nindent 8 }}
 {{- end }}

@@ -1,5 +1,11 @@
 {{- if .Values.providers }}
 {{- $name := ternary "fix-gke-node-config" "configure-remote-handlers" .Values.gkeNodeFix.enabled }}
+{{- $tolerations := deepCopy (.Values.tolerations | default list) }}
+{{- range $provider := .Values.providers }}
+{{- if include "peerpods.providerEnabled" $provider }}
+{{- $tolerations = uniq (concat $tolerations ($provider.tolerations | default list)) }}
+{{- end }}
+{{- end }}
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -19,7 +25,7 @@ spec:
       hostPID: true
       nodeSelector:
         {{- toYaml .Values.nodeSelector | nindent 8 }}
-      {{- with .Values.tolerations }}
+      {{- with $tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
