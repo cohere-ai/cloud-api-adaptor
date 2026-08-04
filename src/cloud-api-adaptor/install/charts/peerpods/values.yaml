@@ -16,8 +16,11 @@ secrets:
   #
   mode: "create"
 
-  # Name of existing secret for provider credentials (only used when mode: "reference")
-  # The secret must contain the required env var keys for your provider.
+  # Name of existing secret for provider credentials (only used when mode: "reference").
+  # In multi-provider mode, this single opaque Secret is mounted into every
+  # provider CAA and peerpod-ctrl; reference mode does not isolate credentials
+  # between providers. Prefer provider workload identities when isolation is
+  # required. The Secret must contain the required env var keys for each provider.
   # See providers/*-secrets.yaml.template for the list of required keys.
   existingSecretName: ""
 
@@ -89,13 +92,69 @@ image:
 # Cloud provider: libvirt, aws, azure, byom, gcp, ibmcloud, vsphere
 provider: gcp
 
+# Optional multi-provider mode. Leave empty to use the legacy single-provider
+# chart behavior above. When set, the chart renders one CAA DaemonSet,
+# ConfigMap, ServiceAccount/RBAC set, and RuntimeClass per provider entry.
+#
+# Required fields per entry:
+#   name, cloudProvider, runtimeClassName, socketPath, extendedResource,
+#   peerPodsLimitPerNode, probePort, vxlanPort (ports must be unique across
+#   enabled providers)
+# Optional: enabled (default true), config, nodeSelector, tolerations, podLabels,
+#   serviceAccount.annotations, gcpWorkloadIdentity, azureWorkloadIdentity,
+#   maxUnavailable, maxSurge (must remain 0)
+#
+# Multi-provider mode does not consume the legacy top-level provider,
+# providerConfigs, command, limit, gcpWorkloadIdentity, daemonset.podLabels, or
+# daemonset.serviceAccount.annotations values. Move any customizations from
+# those fields into the corresponding providers[] entry before enabling this
+# mode; validation rejects non-default legacy settings.
+#
+# Provider CAA service accounts cannot read Kubernetes Secrets, preventing one
+# compromised provider from reading another provider's credentials. Registry
+# authentication through pod or ServiceAccount imagePullSecrets is therefore
+# not supported in multi-provider mode.
+#
+# With secrets.mode=create, providerSecrets.<name> supplies credentials for
+# that provider's dedicated Secret. If <name> is absent, the chart falls back
+# to providerSecrets.<cloudProvider> for compatibility with provider values
+# files. When resourceCtrl is enabled, the chart also merges non-conflicting
+# credentials into peer-pods-secret for peerpod-ctrl. Reference mode cannot
+# split an externally managed Secret, so every provider CAA and peerpod-ctrl
+# share existingSecretName; resourceCtrl requires it to be peer-pods-secret.
+# Use workload identity instead when provider credential isolation is required.
+#
+# Example:
+# providers:
+#   - name: gcp
+#     cloudProvider: gcp
+#     runtimeClassName: kata-remote-gcp
+#     socketPath: /run/peerpod/caa-gcp.sock
+#     extendedResource: kata.peerpods.io/vm-gcp
+#     peerPodsLimitPerNode: "10"
+#     probePort: 8001
+#     vxlanPort: 4789
+#     config:
+#       GCP_PROJECT_ID: my-project
+providers: []
+
+# Extra values written to the shared peer-pods-cm in multi-provider mode for
+# peerpod-ctrl. Provider configs are also unioned into that ConfigMap; if two
+# providers set the same key to different values the chart fails — put shared
+# keys here instead (sharedConfig wins).
+sharedConfig: {}
+
 # Override the DaemonSet container command. Set to bypass entrypoint.sh when
 # using Workload Identity (no GCP_CREDENTIALS file needed).
 command: ["/bin/sh", "-c", "exec cloud-api-adaptor gcp"]
 
-# nodeSelector / tolerations applied to the cloud-api-adaptor and
-# fix-gke-node-config DaemonSets. Empty by default; consumers set these
-# to fence the DaemonSets onto their CAA worker pool.
+# nodeSelector / tolerations inherited by the cloud-api-adaptor and
+# fix-gke-node-config DaemonSets and by multi-provider RuntimeClass scheduling.
+# Empty by default; consumers set these to fence CAA and peer pod workloads onto
+# their worker pool. Per-provider values add placement constraints and
+# tolerations to both the provider DaemonSet and its RuntimeClass. Provider
+# selectors cannot override global selector values because the global selector
+# also places the DaemonSet that installs remote handlers on those nodes.
 nodeSelector: {}
 tolerations: []
 
@@ -143,6 +202,17 @@ gcpWorkloadIdentity:
 gkeNodeFix:
   enabled: true
   runtimeRequestTimeout: "15m"
+
+# Reconciles provider-specific kata-remote containerd handlers on each node.
+remoteHandlers:
+  reconcileIntervalSeconds: 60
+  resources:
+    requests:
+      cpu: 10m
+      memory: 16Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi
 
 # Maximum number of peer pods allowed to run simultaneously
 # This limit prevents resource exhaustion on the cloud provider
@@ -204,6 +274,28 @@ resourceCtrl:
 # NOTE: Requires cert-manager to be installed in the cluster
 webhook:
   enabled: true
+
+# Fixed webhook subchart aliases for the supported hybrid GCP+Azure layout.
+# Helm cannot create subchart instances dynamically from providers[], so these
+# aliases are explicit. In multi-provider mode: set webhook.enabled=false and
+# enable the aliases that match your RuntimeClasses, configuring
+# namePrefix / namespaceOverride / webhook.targetRuntimeClass /
+# webhook.podVMExtendedResource per alias.
+webhookGcp:
+  enabled: false
+  namePrefix: peer-pods-webhook-gcp-
+  namespaceOverride: peer-pods-webhook-gcp-system
+  webhook:
+    targetRuntimeClass: kata-remote-gcp
+    podVMExtendedResource: kata.peerpods.io/vm-gcp
+
+webhookAzure:
+  enabled: false
+  namePrefix: peer-pods-webhook-azure-
+  namespaceOverride: peer-pods-webhook-azure-system
+  webhook:
+    targetRuntimeClass: kata-remote-azure
+    podVMExtendedResource: kata.peerpods.io/vm-azure
 
 # kata-deploy subchart configuration
 kata-deploy:

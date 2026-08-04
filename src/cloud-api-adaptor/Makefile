@@ -264,4 +264,11 @@ static-helm-check: ## Run static checks on helm chart (lint and template renderi
 			helm template test-release install/charts/peerpods/ -f "$$provider" > /dev/null || exit 1; \
 		fi \
 	done
+	@echo "Linting and asserting multi-provider fixtures..."
+	@for fixture in install/charts/peerpods/tests/fixtures/multi-provider-minimal.yaml \
+		install/charts/peerpods/tests/fixtures/multi-provider-hybrid.yaml; do \
+		echo "  $$(basename $$fixture)"; \
+		helm lint install/charts/peerpods/ -f "$$fixture" || exit 1; \
+	done
+	@bash install/charts/peerpods/tests/check-multi-provider.sh
 	@echo "Static helm checks passed"

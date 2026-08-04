@@ -1,0 +1,142 @@
+{{- range $provider := .Values.providers }}
+{{- if include "peerpods.providerEnabled" $provider }}
+{{- $nodeSelector := merge (deepCopy ($.Values.nodeSelector | default dict)) ($provider.nodeSelector | default dict) }}
+{{- $tolerations := uniq (concat ($.Values.tolerations | default list) ($provider.tolerations | default list)) }}
+{{- $maxUnavailable := $.Values.daemonset.updateStrategy.maxUnavailable }}
+{{- if hasKey $provider "maxUnavailable" }}{{- $maxUnavailable = $provider.maxUnavailable }}{{- end }}
+{{- $maxSurge := $.Values.daemonset.updateStrategy.maxSurge }}
+{{- if hasKey $provider "maxSurge" }}{{- $maxSurge = $provider.maxSurge }}{{- end }}
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: cloud-api-adaptor-{{ $provider.name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+{{ include "peerpods.providerLabels" (dict "root" $ "provider" $provider) | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      app: cloud-api-adaptor
+      peerpods.confidentialcontainers.org/provider: {{ $provider.name | quote }}
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: {{ $maxUnavailable }}
+      maxSurge: {{ $maxSurge }}
+  template:
+    metadata:
+      labels:
+        app: cloud-api-adaptor
+        peerpods.confidentialcontainers.org/provider: {{ $provider.name | quote }}
+{{- if and $provider.azureWorkloadIdentity $provider.azureWorkloadIdentity.enabled }}
+        azure.workload.identity/use: "true"
+{{- end }}
+{{- with $provider.podLabels }}
+{{ toYaml . | nindent 8 }}
+{{- end }}
+    spec:
+      serviceAccountName: cloud-api-adaptor-{{ $provider.name }}
+      containers:
+      - command:
+        - /bin/sh
+        - -c
+        - exec cloud-api-adaptor {{ $provider.cloudProvider }}
+        env:
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+{{- if and $provider.gcpWorkloadIdentity $provider.gcpWorkloadIdentity.enabled }}
+        - name: GOOGLE_APPLICATION_CREDENTIALS
+          value: /var/run/secrets/gcp-wif/credentials.json
+        - name: GCP_CREDENTIALS
+          value: ""
+{{- end }}
+        envFrom:
+        - configMapRef:
+            name: peer-pods-cm-{{ $provider.name }}
+{{- if include "peerpods.secretName" $ }}
+        - secretRef:
+            name: {{ include "peerpods.providerSecretName" (dict "root" $ "provider" $provider) }}
+{{- end }}
+        image: {{ $.Values.image.name | default "quay.io/confidential-containers/cloud-api-adaptor" }}:{{ $.Values.image.tag | default "latest" }}
+        imagePullPolicy: Always
+        name: cloud-api-adaptor-con
+        securityContext:
+          capabilities:
+            add:
+            - NET_ADMIN
+            - SYS_ADMIN
+{{- $startupProbe := deepCopy $.Values.daemonset.startupProbe }}
+{{- $_ := set (index $startupProbe "httpGet") "port" $provider.probePort }}
+        startupProbe:
+{{ toYaml $startupProbe | nindent 10 }}
+        volumeMounts:
+{{- if include "peerpods.providerHasTlsCerts" (dict "root" $ "provider" $provider) }}
+        - mountPath: /etc/certificates
+          name: certs
+          readOnly: true
+{{- end }}
+{{- if and $provider.gcpWorkloadIdentity $provider.gcpWorkloadIdentity.enabled }}
+        - mountPath: /var/run/secrets/gcp-wif
+          name: gcp-wif
+          readOnly: true
+{{- end }}
+        - mountPath: /run/peerpod
+          name: pods-dir
+        - mountPath: /run/netns
+          mountPropagation: HostToContainer
+          name: netns
+        - mountPath: /run/xtables.lock
+          name: xtables-lock
+        - mountPath: /lib/modules
+          name: lib-modules
+          readOnly: true
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      nodeSelector:
+{{ toYaml $nodeSelector | nindent 8 }}
+{{- with $tolerations }}
+      tolerations:
+{{ toYaml . | nindent 8 }}
+{{- end }}
+      volumes:
+{{- if include "peerpods.providerHasTlsCerts" (dict "root" $ "provider" $provider) }}
+      - name: certs
+        secret:
+          defaultMode: 384
+          optional: true
+          secretName: {{ include "peerpods.tlsSecretName" $ }}
+{{- end }}
+{{- if and $provider.gcpWorkloadIdentity $provider.gcpWorkloadIdentity.enabled }}
+      - name: gcp-wif
+        projected:
+          defaultMode: 420
+          sources:
+          - serviceAccountToken:
+              audience: {{ include "peerpods.providerGcpTokenAudience" $provider.gcpWorkloadIdentity | quote }}
+              expirationSeconds: {{ $provider.gcpWorkloadIdentity.tokenExpirationSeconds | default 3600 }}
+              path: token
+          - configMap:
+              name: cloud-api-adaptor-{{ $provider.name }}-gcp-wif
+              items:
+              - key: credentials.json
+                path: credentials.json
+{{- end }}
+      - hostPath:
+          path: /run/peerpod
+        name: pods-dir
+      - hostPath:
+          path: /run/netns
+        name: netns
+      - hostPath:
+          path: /run/xtables.lock
+          type: FileOrCreate
+        name: xtables-lock
+      - hostPath:
+          path: /lib/modules
+          type: ""
+        name: lib-modules
+{{- end }}
+{{- end }}

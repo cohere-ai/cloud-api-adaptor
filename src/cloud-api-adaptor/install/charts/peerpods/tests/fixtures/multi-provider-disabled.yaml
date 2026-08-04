@@ -1,0 +1,33 @@
+# Azure entry is explicitly disabled; only GCP resources should render.
+resourceCtrl:
+  enabled: false
+webhook:
+  enabled: false
+kata-deploy:
+  enabled: false
+gkeNodeFix:
+  enabled: false
+secrets:
+  mode: create
+providers:
+  - name: gcp
+    cloudProvider: gcp
+    runtimeClassName: kata-remote-gcp
+    socketPath: /run/peerpod/caa-gcp.sock
+    extendedResource: kata.peerpods.io/vm-gcp
+    peerPodsLimitPerNode: "10"
+    probePort: 8001
+    vxlanPort: 4789
+    config:
+      GCP_PROJECT_ID: test-project
+  - name: azure
+    enabled: false
+    cloudProvider: azure
+    runtimeClassName: kata-remote-azure
+    socketPath: /run/peerpod/caa-azure.sock
+    extendedResource: kata.peerpods.io/vm-azure
+    peerPodsLimitPerNode: "10"
+    probePort: 8002
+    vxlanPort: 4790
+    config:
+      AZURE_SUBSCRIPTION_ID: 00000000-0000-0000-0000-000000000000

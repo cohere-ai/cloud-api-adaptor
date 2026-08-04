@@ -1,3 +1,4 @@
+{{- if not .Values.providers }}
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -200,4 +201,5 @@ spec:
               path: vault-token
               expirationSeconds: 3600
               audience: iam
+{{- end }}
 {{- end }}
