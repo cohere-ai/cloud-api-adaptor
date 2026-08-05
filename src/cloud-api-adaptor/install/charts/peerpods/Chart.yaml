@@ -2,8 +2,8 @@ apiVersion: v2
 name: peerpods
 description: Cloud API Adaptor (Peerpods) Helm Chart
 type: application
-version: 0.2.0
-appVersion: "v0.20.0"
+version: 0.3.1
+appVersion: "v0.21.1"
 
 keywords:
   - confidential-containers
@@ -23,26 +23,26 @@ dependencies:
   - name: kata-deploy
     # Pinned to a fixed upstream release (not the floating "0.0.0-dev" tag) so
     # builds are reproducible.
-    version: "3.29.0"
+    version: "3.31.0"
     repository: "oci://ghcr.io/kata-containers/kata-deploy-charts"
     condition: kata-deploy.enabled
   - name: peerpodctrl
-    version: "0.2.0"
+    version: "0.3.1"
     repository: "file://../../../../peerpod-ctrl/chart"
     alias: resourceCtrl
     condition: resourceCtrl.enabled
   - name: peerpods-webhook
-    version: "0.2.0"
+    version: "0.3.1"
     repository: "file://../../../../webhook/chart"
     alias: webhook
     condition: webhook.enabled
   - name: peerpods-webhook
-    version: "0.2.0"
+    version: "0.3.1"
     repository: "file://../../../../webhook/chart"
     alias: webhookGcp
     condition: webhookGcp.enabled
   - name: peerpods-webhook
-    version: "0.2.0"
+    version: "0.3.1"
     repository: "file://../../../../webhook/chart"
     alias: webhookAzure
     condition: webhookAzure.enabled
