@@ -503,6 +503,7 @@ func (b *ByomProvisioner) deleteKindCluster(workingDir string) error {
 	cmd.Stdout = os.Stdout
 	// TODO: better handle stderr. Messages getting out of order.
 	cmd.Stderr = os.Stderr
+	cmd.Env = append(os.Environ(), "CLUSTER_NAME="+ByomProps.ClusterName, "KUBECONFIG=", "CONTAINER_RUNTIME="+ByomProps.ContainerRuntime)
 	err := cmd.Run()
 	if err != nil {
 		log.Errorf("Error deleting Kind cluster: %v", err)
