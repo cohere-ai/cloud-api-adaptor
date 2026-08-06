@@ -185,6 +185,9 @@ jobs:
 
           # Disk / managed-image names must be unique per upload and Azure-safe.
           DISK_NAME=$(echo "${IMAGE_DEF}-${IMAGE_VERSION}" | sed 's/[^A-Za-z0-9._-]/-/g' | cut -c1-80)
+          REPLICATION_REGIONS=$(jq -cn \
+            --arg location "${LOCATION}" \
+            '[$location, "centralus"] | unique')
 
           # Write unindented TOML (uplosi config parser is whitespace-sensitive on tables).
           cat > /tmp/podvm/uplosi.conf <<EOF
@@ -209,7 +212,7 @@ jobs:
           provider = "azure"
 
           [variant.default.azure]
-          replicationRegions = ["${LOCATION}"]
+          replicationRegions = ${REPLICATION_REGIONS}
           EOF
           sed -i 's/^[[:space:]]*//' /tmp/podvm/uplosi.conf
 
@@ -232,5 +235,6 @@ jobs:
             echo "| Version | \`${IMAGE_VERSION}\` |"
             echo "| Security type | ConfidentialVmSupported (${ATTESTATION_VARIANT}) |"
             echo "| TEE | ${TEE_PLATFORM} |"
+            echo "| Replication regions | \`${REPLICATION_REGIONS}\` |"
             echo "| Image ID | \`${IMAGE_ID}\` |"
           } >> "$GITHUB_STEP_SUMMARY"
