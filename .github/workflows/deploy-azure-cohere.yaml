@@ -4,10 +4,10 @@ name: Deploy PodVM to Azure (Cohere)
 # ConfidentialVmSupported (x86_64/Gen2) for SEV-SNP VMs (e.g. NCCadsH100v5).
 # Uses uplosi (same tool as upstream azure-podvm-image-build) to MiB-align the
 # raw disk, upload via managed disk, and create the gallery image version.
-# Requires (infra-azure):
-#   secrets: AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID (OIDC app
-#            with Contributor on the gallery resource group)
-#   vars:    AZURE_RESOURCE_GROUP, AZURE_PODVM_GALLERY_NAME, AZURE_LOCATION
+# Requires:
+#   secrets: AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID
+#   vars:    AZURE_PODVM_GALLERY_RESOURCE_GROUP, AZURE_PODVM_GALLERY_NAME,
+#            AZURE_LOCATION
 
 on:
   workflow_call:
@@ -167,7 +167,7 @@ jobs:
       - name: Publish confidential gallery image version
         env:
           SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          RESOURCE_GROUP: ${{ vars.AZURE_PODVM_GALLERY_RESOURCE_GROUP }}
           GALLERY: ${{ vars.AZURE_PODVM_GALLERY_NAME }}
           LOCATION: ${{ vars.AZURE_LOCATION }}
           IMAGE_DEF: ${{ steps.pull.outputs.image_def }}
