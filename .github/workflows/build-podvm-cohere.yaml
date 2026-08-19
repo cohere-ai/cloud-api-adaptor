@@ -74,11 +74,8 @@ jobs:
           case "$GITHUB_REF" in
             refs/tags/podvm-v*)
               class=release; ttl=keep
-              # No extra "v" prefix: with TEE_PLATFORM=tdx-snp-nvidia and
-              # class=release the GCE prefix is 35 chars. Debug images add
-              # "-debug-import" (13), so disc max is 14 (63-35-1-13).
-              # "v0-2-0-cohere-7" (15) overflows and silently dropped the
-              # patch; "0-2-0-cohere-7" (14) fits and maps to chart 0.2.0-cohere.7.
+              # Tag podvm-v0.2.0-cohere.7 → disc 0-2-0-cohere-7 (dots to dashes,
+              # no extra "v"). GCE names allow [a-z0-9-], 63 chars max.
               v="${GITHUB_REF#refs/tags/podvm-v}"; disc="${v//./-}" ;;
             refs/heads/cohere)
               class=cohere; ttl=90d
@@ -90,8 +87,8 @@ jobs:
               disc="${slug:-manual}-$sha" ;;
           esac
           base="podvm-$DISTRO-$TEE_PLATFORM-$class"
-          # GCE image names max 63 chars; deploy uses ${IMAGE_NAME}-import (7).
-          # Debug names add -debug (6), so keep base-disc at 50 chars.
+          # Longest GCE name is ${base}-${disc}-debug-import (63 char limit).
+          # That leaves (50 - len(base) - 1) chars for disc.
           max_disc_len=$((50 - ${#base} - 1))
           if [ "$max_disc_len" -lt 1 ]; then
             echo "ERROR: image name prefix '$base' is too long for GCE image names" >&2
@@ -100,8 +97,8 @@ jobs:
           attempt_suffix=""
           [ "${GITHUB_RUN_ATTEMPT:-1}" -gt 1 ] && attempt_suffix="-r$GITHUB_RUN_ATTEMPT"
           if [ "$class" = "release" ]; then
-            # Never truncate a versioned release name (that is how cohere.6/.7
-            # lost their patch number). Fail so the tag/name is shortened on purpose.
+            # Keep the full version disc. Overflow is a hard error so a tag is
+            # never published under a truncated name.
             if [ -n "$attempt_suffix" ]; then
               max_disc_len=$((max_disc_len - ${#attempt_suffix}))
               disc="${disc}${attempt_suffix}"
