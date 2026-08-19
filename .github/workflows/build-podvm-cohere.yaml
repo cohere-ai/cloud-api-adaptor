@@ -74,7 +74,9 @@ jobs:
           case "$GITHUB_REF" in
             refs/tags/podvm-v*)
               class=release; ttl=keep
-              v="${GITHUB_REF#refs/tags/podvm-v}"; disc="v${v//./-}" ;;
+              # Tag podvm-v0.2.0-cohere.7 → disc 0-2-0-cohere-7 (dots to dashes,
+              # no extra "v"). GCE names allow [a-z0-9-], 63 chars max.
+              v="${GITHUB_REF#refs/tags/podvm-v}"; disc="${v//./-}" ;;
             refs/heads/cohere)
               class=cohere; ttl=90d
               disc="$(date -u +%Y%m%d)-$sha" ;;
@@ -84,9 +86,12 @@ jobs:
                 | sed 's/[^a-z0-9-]/-/g; s/^-*//; s/-*$//' | cut -c1-20)
               disc="${slug:-manual}-$sha" ;;
           esac
-          base="podvm-$DISTRO-$TEE_PLATFORM-$class"
-          # GCE image names max 63 chars; deploy uses ${IMAGE_NAME}-import (7).
-          # Debug names add -debug (6), so keep base-disc at 50 chars.
+          # TEE_PLATFORM is deliberately not in the name: it costs 15 chars and
+          # never varies per build. It is carried on the GCE image as the tee=
+          # label, in the description, and in measurements.json.
+          base="podvm-$DISTRO-$class"
+          # Longest GCE name is ${base}-${disc}-debug-import (63 char limit).
+          # That leaves (50 - len(base) - 1) chars for disc.
           max_disc_len=$((50 - ${#base} - 1))
           if [ "$max_disc_len" -lt 1 ]; then
             echo "ERROR: image name prefix '$base' is too long for GCE image names" >&2
@@ -94,7 +99,18 @@ jobs:
           fi
           attempt_suffix=""
           [ "${GITHUB_RUN_ATTEMPT:-1}" -gt 1 ] && attempt_suffix="-r$GITHUB_RUN_ATTEMPT"
-          if [ -n "$attempt_suffix" ]; then
+          if [ "$class" = "release" ]; then
+            # Keep the full version disc. Overflow is a hard error so a tag is
+            # never published under a truncated name.
+            if [ -n "$attempt_suffix" ]; then
+              max_disc_len=$((max_disc_len - ${#attempt_suffix}))
+              disc="${disc}${attempt_suffix}"
+            fi
+            if [ "${#disc}" -gt "$max_disc_len" ]; then
+              echo "ERROR: GCE image disc '$disc' (${#disc} chars) exceeds ${max_disc_len}-char budget for prefix '$base'" >&2
+              exit 1
+            fi
+          elif [ -n "$attempt_suffix" ]; then
             max_base_disc_len=$((max_disc_len - ${#attempt_suffix}))
             if [ "$max_base_disc_len" -lt 1 ]; then
               echo "ERROR: rerun suffix '$attempt_suffix' leaves no room for image discriminator" >&2
