@@ -86,7 +86,10 @@ jobs:
                 | sed 's/[^a-z0-9-]/-/g; s/^-*//; s/-*$//' | cut -c1-20)
               disc="${slug:-manual}-$sha" ;;
           esac
-          base="podvm-$DISTRO-$TEE_PLATFORM-$class"
+          # TEE_PLATFORM is deliberately not in the name: it costs 15 chars and
+          # never varies per build. It is carried on the GCE image as the tee=
+          # label, in the description, and in measurements.json.
+          base="podvm-$DISTRO-$class"
           # Longest GCE name is ${base}-${disc}-debug-import (63 char limit).
           # That leaves (50 - len(base) - 1) chars for disc.
           max_disc_len=$((50 - ${#base} - 1))

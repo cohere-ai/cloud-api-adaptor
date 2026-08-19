@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       image_tag:
-        description: "OCI artifact tag in GHCR (e.g. podvm-ubuntu-tdx-snp-nvidia-release-v1-0-0)"
+        description: "OCI artifact tag in GHCR (e.g. podvm-ubuntu-release-0-2-0-cohere-7)"
         required: true
         type: string
     secrets:
