@@ -120,9 +120,9 @@ jobs:
           fi
 
           # Definition names: [A-Za-z0-9._-], <=80 chars. Keyed on image_name so
-          # the gallery ID carries the release disc like the GCP image does;
+          # the gallery ID names the release like the GCP image does;
           # image_family would put every release under one definition, leaving
-          # the timestamp version as the only way to tell them apart.
+          # the generated timestamp as the only way to tell them apart.
           IMAGE_DEF=$(echo "$IMAGE_NAME" | sed 's/[^A-Za-z0-9._-]/-/g' | cut -c1-80)
 
           # Versions need numeric Major.Minor.Patch, no leading zeros. Use
