@@ -114,14 +114,16 @@ jobs:
           cat measurements.json
 
           IMAGE_NAME=$(jq -r '.image_name' measurements.json)
-          IMAGE_FAMILY=$(jq -r '.image_family // ""' measurements.json)
-          if [ -z "$IMAGE_NAME" ] || [ "$IMAGE_NAME" = "null" ] || [ -z "$IMAGE_FAMILY" ]; then
-            echo "ERROR: image_name/image_family missing in measurements.json" >&2
+          if [ -z "$IMAGE_NAME" ] || [ "$IMAGE_NAME" = "null" ]; then
+            echo "ERROR: image_name missing in measurements.json" >&2
             exit 1
           fi
 
-          # Definition names: [A-Za-z0-9._-], <=80 chars.
-          IMAGE_DEF=$(echo "$IMAGE_FAMILY" | sed 's/[^A-Za-z0-9._-]/-/g' | cut -c1-80)
+          # Definition names: [A-Za-z0-9._-], <=80 chars. Keyed on image_name so
+          # the gallery ID names the release like the GCP image does;
+          # image_family would put every release under one definition, leaving
+          # the generated timestamp as the only way to tell them apart.
+          IMAGE_DEF=$(echo "$IMAGE_NAME" | sed 's/[^A-Za-z0-9._-]/-/g' | cut -c1-80)
 
           # Versions need numeric Major.Minor.Patch, no leading zeros. Use
           # epoch seconds as patch so same-minute retries do not collide.
