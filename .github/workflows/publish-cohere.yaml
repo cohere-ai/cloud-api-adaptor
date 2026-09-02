@@ -8,11 +8,15 @@
 # gcp,azure build tags) because upstream's reusable hardcodes all four arches.
 #
 # Tags produced (push to cohere):
-#   ghcr.io/cohere-ai/cloud-api-adaptor/cloud-api-adaptor:latest-cohere
-#   ghcr.io/cohere-ai/cloud-api-adaptor/cloud-api-adaptor:<12-char-sha>
+#   ghcr.io/cohere-ai/cloud-api-adaptor/cloud-api-adaptor:latest-cohere{,-amd64}
+#   ghcr.io/cohere-ai/cloud-api-adaptor/cloud-api-adaptor:<12-char-sha>{,-amd64}
 #   ghcr.io/cohere-ai/cloud-api-adaptor/peerpod-ctrl:latest-cohere
 #   ghcr.io/cohere-ai/cloud-api-adaptor/peerpod-ctrl:<12-char-sha>
 #   ghcr.io/cohere-ai/cloud-api-adaptor/charts/peerpods:0.0.0-dev.cohere
+#
+# CAA carries both an `-amd64` tag (written by the build) and a plain one (a
+# manifest list over it); peerpod-ctrl is only ever plain. Prefer the plain
+# names so consumers are not tied to the arch we happen to build.
 #
 # The chart always publishes to the floating `0.0.0-dev.cohere` tag here —
 # mirroring upstream's `0.0.0-dev` convention for main-branch pushes — so we
@@ -109,6 +113,17 @@ jobs:
               RELEASE_BUILD=true \
               RELEASE_TAGS="${RELEASE_TAGS}" \
               make image registry="${REGISTRY}"
+
+      # hack/build.sh suffixes every tag with `-amd64` on a single-arch build,
+      # so the plain `latest-cohere` and `<sha>` names only exist if we publish
+      # a manifest list over them. Keep in step with publish-cohere-release.yaml.
+      - name: Publish multi-arch manifest
+        env:
+          IMAGE_REGISTRY: ${{ env.REGISTRY }}
+          IMAGE_NAME: cloud-api-adaptor
+          IMAGE_TAGS: ${{ needs.tags.outputs.release_tags }}
+          ARCHES: amd64
+        run: ./hack/publish.sh publish-multiarch-manifest
 
   peerpod-ctrl:
     name: Build peerpod-ctrl image (amd64)
