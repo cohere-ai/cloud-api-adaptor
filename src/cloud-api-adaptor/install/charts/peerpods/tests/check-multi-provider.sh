@@ -143,6 +143,7 @@ helm template test-release "${CHART_DIR}" \
   --set 'allowedCloudConfigAnnotations[0]=io.katacontainers.config.hypervisor.gcp_zone' \
   >"${LEGACY_OUT}"
 assert_contains "${LEGACY_OUT}" 'ALLOWED_CLOUD_CONFIG_ANNOTATIONS: "io.katacontainers.config.hypervisor.gcp_zone"'
+assert_count "${LEGACY_OUT}" '^kind: Namespace$' 1
 
 MINIMAL_OUT="${TMPDIR_ROOT}/minimal.yaml"
 render "${FIXTURES}/multi-provider-minimal.yaml" "${MINIMAL_OUT}"
@@ -228,6 +229,20 @@ assert_contains "${HYBRID_OUT}" 'kata-remote-gcp'
 assert_contains "${HYBRID_OUT}" 'kata-remote-azure'
 assert_contains "${HYBRID_OUT}" 'peer-pods-webhook-gcp-'
 assert_contains "${HYBRID_OUT}" 'peer-pods-webhook-azure-'
+assert_count "${HYBRID_OUT}" '^kind: Namespace$' 2
+assert_contains "${HYBRID_OUT}" 'name: peer-pods-webhook-gcp-system'
+assert_contains "${HYBRID_OUT}" 'name: peer-pods-webhook-azure-system'
+
+echo "Rendering hybrid with createNamespace=false..."
+HYBRID_NS_OUT="${TMPDIR_ROOT}/hybrid-skip-ns.yaml"
+render "${FIXTURES}/multi-provider-hybrid.yaml" "${HYBRID_NS_OUT}" \
+  --set webhookGcp.createNamespace=false \
+  --set webhookAzure.createNamespace=false \
+  --namespace confidential-containers-system
+assert_count "${HYBRID_NS_OUT}" '^kind: Namespace$' 0
+assert_missing "${HYBRID_NS_OUT}" 'name: peer-pods-webhook-gcp-system'
+assert_missing "${HYBRID_NS_OUT}" 'name: peer-pods-webhook-azure-system'
+
 assert_contains "${HYBRID_OUT}" 'name: fix-gke-node-config'
 assert_contains "${HYBRID_OUT}" 'name: reconcile-remote-handlers'
 assert_count "${HYBRID_OUT}" '^scheduling:$' 2

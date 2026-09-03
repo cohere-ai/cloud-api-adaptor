@@ -1,4 +1,4 @@
-{{- if .Values.namespaceOverride }}
+{{- if and .Values.createNamespace .Values.namespaceOverride }}
 {{- if ne .Values.namespaceOverride .Release.Namespace }}
 apiVersion: v1
 kind: Namespace
