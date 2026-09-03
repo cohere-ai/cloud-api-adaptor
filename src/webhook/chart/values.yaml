@@ -5,16 +5,14 @@ namePrefix: peer-pods-webhook-
 # When installed as a subchart, Helm uses the parent chart's namespace (for peerpods
 # this is typically confidential-containers-system). Set namespaceOverride to keep
 # webhook resources in a separate Namespace (peer-pods-webhook-system), matching
-# the kustomize layout. This chart does not create that Namespace unless
-# createNamespace is true — cluster-config (or kubectl) must create it first.
-# Set to empty string to use .Release.Namespace, or override with
-# --set namespaceOverride=<namespace>.
+# the kustomize layout. Set to empty string to use .Release.Namespace, or
+# override with --set namespaceOverride=<namespace>.
 namespaceOverride: "peer-pods-webhook-system"
 
 # When true, the chart creates the namespace named by namespaceOverride.
-# Default false: the operator / cluster-config chart owns Namespace objects.
-# Set true only for standalone helm installs that do not pre-create the NS.
-createNamespace: false
+# Default true preserves standalone helm install. Set false when another
+# controller (cluster-config) already owns that Namespace.
+createNamespace: true
 
 # Webhook deployment configuration
 replicas: 2

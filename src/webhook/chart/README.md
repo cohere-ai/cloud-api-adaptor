@@ -29,10 +29,10 @@ helm install peerpods-webhook ./chart \
   --create-namespace
 ```
 
-This chart does not create `namespaceOverride` (`peer-pods-webhook-system` by
-default). `--create-namespace` only creates the Helm release namespace. Either
-pre-create the override Namespace, set `namespaceOverride=""` to use the
-release namespace, or pass `--set createNamespace=true`.
+`--create-namespace` only creates the Helm release namespace. With the default
+`namespaceOverride` (`peer-pods-webhook-system`), this chart also creates that
+Namespace (`createNamespace: true`). Set `createNamespace=false` when another
+controller already owns it.
 
 ### Installation as Dependency
 
