@@ -36,7 +36,7 @@ spec:
 {{ toYaml . | nindent 8 }}
 {{- end }}
     spec:
-      serviceAccountName: cloud-api-adaptor-{{ $provider.name }}
+      serviceAccountName: {{ include "peerpods.providerServiceAccountName" $provider }}
       containers:
       - command:
         - /bin/sh

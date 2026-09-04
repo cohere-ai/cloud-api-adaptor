@@ -37,6 +37,18 @@ peer-pods-secret-{{ .provider.name }}
 {{- end -}}
 {{- end -}}
 
+{{/* Kubernetes ServiceAccount name for a provider CAA. Defaults to
+     cloud-api-adaptor-<provider.name>; set serviceAccount.name to reuse an
+     existing identity (for example the single-provider cloud-api-adaptor SA). */}}
+{{- define "peerpods.providerServiceAccountName" -}}
+{{- $sa := .serviceAccount | default dict -}}
+{{- if $sa.name -}}
+{{- $sa.name -}}
+{{- else -}}
+cloud-api-adaptor-{{ .name }}
+{{- end -}}
+{{- end -}}
+
 {{/* Merge provider ServiceAccount annotations with Azure identity metadata. */}}
 {{- define "peerpods.providerServiceAccountAnnotations" -}}
 {{- $sa := .serviceAccount | default dict -}}
