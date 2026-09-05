@@ -18,7 +18,7 @@ metadata:
 {{ include "peerpods.providerLabels" (dict "root" $ "provider" $provider) | nindent 4 }}
 rules:
 - apiGroups: [""]
-  resources: ["pods"]
+  resources: ["pods", "secrets", "serviceaccounts"]
   verbs: ["get", "list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

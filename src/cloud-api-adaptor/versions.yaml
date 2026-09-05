@@ -30,7 +30,7 @@ tools:
   cert-manager: v1.15.3
   bats: 1.10.0
   iptables-wrapper: bfef9e5087a198b50a4124bb9ce9d2c7c99025dd
-  golang: 1.25.11
+  golang: 1.25.12
   kcli: 99.0.202507200957
   mkosi: v26
   protoc: 3.16.0
@@ -49,7 +49,7 @@ git:
     reference: v1.5.0
   kbs:
     url: https://github.com/confidential-containers/trustee
-    reference: 22788122660d6e9be3e4bf52704282de5fcc0a2a
+    reference: d4e317620c4039c89779b725f74974d8f005da66
   # PodVM CI: UKI extract + TDX measurement (needs `tdx --disk` for RTMR[1]).
   cvm-measure:
     url: https://github.com/cohere-ai/cvm-measure
@@ -63,7 +63,7 @@ oci:
     tag: "3.9"
   kata-containers:
     registry: ghcr.io/kata-containers/cached-artefacts
-    reference: 8dccf4cf37aeea4b6c2caacf3e61510d6eef2f71 # v3.29.0
+    reference: bef049d07e34d467b3a0910fdc65f30aa4647a0a # v3.31.0 + tagging fix
   # Cohere fork of guest-components. The fork's publish-artifacts workflow
   # publishes attestation-agent (incl. a tdx-snp-nvidia variant that bundles
   # TDX + SNP + Azure SNP-vTPM + NVIDIA GPU attesters and libnvat.so),
@@ -73,7 +73,3 @@ oci:
   guest-components:
     registry: ghcr.io/cohere-ai/guest-components
     reference: e31a803b1a9f7c7de93ed18040ce7bd92e639ad5
-  kata-agent-ctl:
-    registry: ghcr.io/kata-containers/cached-artefacts
-    reference: 3.29.0
-

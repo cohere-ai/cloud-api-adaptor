@@ -174,7 +174,7 @@ fi
 assert_contains "${MINIMAL_OUT}" 'PROXY_TIMEOUT: "30m"'
 assert_count "${MINIMAL_OUT}" 'name: peer-pods-secret-gcp' 2
 assert_count "${MINIMAL_OUT}" 'name: peer-pods-secret-azure' 2
-assert_missing "${MINIMAL_OUT}" 'resources: \["pods", "secrets", "serviceaccounts"\]'
+assert_count "${MINIMAL_OUT}" 'resources: \["pods", "secrets", "serviceaccounts"\]' 2
 assert_missing "${MINIMAL_OUT}" 'name: cloud-api-adaptor-(gcp|azure)-pp-secrets'
 
 echo "Rendering provider-specific credentials..."
