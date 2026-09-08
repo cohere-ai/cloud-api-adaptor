@@ -43,6 +43,35 @@ assert_count() {
   fi
 }
 
+assert_resource_verbs() {
+  local file="$1"
+  local resource="$2"
+  local expected_verbs="$3"
+  local expected_count="$4"
+  local actual
+  actual="$(
+    awk -v resource="${resource}" -v expected_verbs="${expected_verbs}" '
+      {
+        line = $0
+        sub(/^[[:space:]]*/, "", line)
+      }
+      line == "resources: [\"" resource "\"]" {
+        if (getline > 0) {
+          sub(/^[[:space:]]*/, "", $0)
+          if ($0 == expected_verbs) {
+            count++
+          }
+        }
+      }
+      END { print count + 0 }
+    ' "${file}"
+  )"
+  if [[ "${actual}" -ne "${expected_count}" ]]; then
+    echo "FAIL: expected ${expected_count} ${resource} rules with ${expected_verbs}, found ${actual}" >&2
+    exit 1
+  fi
+}
+
 extract_remote_handler_script() {
   local rendered="$1"
   local script="$2"
@@ -177,6 +206,8 @@ assert_count "${MINIMAL_OUT}" 'name: peer-pods-secret-azure' 2
 assert_missing "${MINIMAL_OUT}" 'resources: \["pods", "secrets", "serviceaccounts"\]'
 assert_count "${MINIMAL_OUT}" 'resources: \["secrets"\]' 2
 assert_count "${MINIMAL_OUT}" 'resources: \["serviceaccounts"\]' 2
+assert_resource_verbs "${MINIMAL_OUT}" "secrets" 'verbs: ["get"]' 2
+assert_resource_verbs "${MINIMAL_OUT}" "serviceaccounts" 'verbs: ["get"]' 2
 assert_missing "${MINIMAL_OUT}" 'name: cloud-api-adaptor-(gcp|azure)-pp-secrets'
 
 echo "Rendering provider-specific credentials..."
