@@ -83,9 +83,11 @@ secrets:
 # Note: libvirt/docker provider files override this with the dev image.
 image:
   # Cohere fork default. Published by .github/workflows/publish-cohere.yaml on
-  # every push to the cohere branch. Override with a short SHA (e.g. "a4a1c915")
-  # for immutable pins in production — `latest-cohere` is a floating tag and
-  # follows the tip of the cohere branch.
+  # every push to the cohere branch. `latest-cohere` is a floating tag that
+  # follows the tip of that branch, so pin something immutable in production:
+  # either a release (e.g. "v0.2.0-cohere.7") or a 12-char commit SHA from a
+  # branch build (e.g. "df5b15761e40"). Both also exist with an `-amd64`
+  # suffix; prefer the unsuffixed name, which is a manifest list over it.
   name: ghcr.io/cohere-ai/cloud-api-adaptor/cloud-api-adaptor
   tag: latest-cohere
 
@@ -274,8 +276,10 @@ resourceCtrl:
   enabled: true
   image:
     # Cohere fork default. Published by .github/workflows/publish-cohere.yaml on
-    # every push to the cohere branch. Override with a short SHA for immutable
-    # pins in production.
+    # every push to the cohere branch. As with the CAA image above, pin a
+    # release or a 12-char commit SHA in production rather than this floating
+    # tag. Keep the two images on the same build — they are versioned together
+    # and a mismatch is not a supported combination.
     repository: ghcr.io/cohere-ai/cloud-api-adaptor/peerpod-ctrl
     tag: latest-cohere
 
