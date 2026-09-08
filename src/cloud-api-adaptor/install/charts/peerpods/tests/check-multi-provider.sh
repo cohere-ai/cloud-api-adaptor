@@ -260,6 +260,29 @@ assert_count "${HYBRID_OUT}" 'PROXY_TIMEOUT: "30m"' 3
 assert_count "${HYBRID_OUT}" 'DISABLECVM: "false"' 3
 assert_count "${HYBRID_OUT}" 'CACERT_FILE: "/etc/certificates/ca.crt"' 3
 
+echo "Rendering hybrid with providers[0].serviceAccount.name override..."
+SA_OVERRIDE_OUT="${TMPDIR_ROOT}/sa-override.yaml"
+render "${FIXTURES}/multi-provider-hybrid.yaml" "${SA_OVERRIDE_OUT}" \
+  --set 'providers[0].serviceAccount.name=cloud-api-adaptor'
+assert_contains "${SA_OVERRIDE_OUT}" 'serviceAccountName: cloud-api-adaptor'
+assert_contains "${SA_OVERRIDE_OUT}" 'serviceAccountName: cloud-api-adaptor-azure'
+assert_missing "${SA_OVERRIDE_OUT}" 'serviceAccountName: cloud-api-adaptor-gcp'
+# RBAC ClusterRole names stay provider-suffixed; only the KSA name is overridden.
+assert_contains "${SA_OVERRIDE_OUT}" 'name: cloud-api-adaptor-gcp-pod-viewer'
+
+echo "Expecting duplicate serviceAccount.name to fail..."
+if render "${FIXTURES}/multi-provider-hybrid.yaml" "${TMPDIR_ROOT}/duplicate-sa.yaml" \
+  --set 'providers[0].serviceAccount.name=shared-caa' \
+  --set 'providers[1].serviceAccount.name=shared-caa' 2>"${TMPDIR_ROOT}/duplicate-sa.err"; then
+  echo "FAIL: duplicate serviceAccount.name rendered successfully" >&2
+  exit 1
+fi
+if ! grep -Fq 'providers[].serviceAccount.name must be unique' "${TMPDIR_ROOT}/duplicate-sa.err"; then
+  echo "FAIL: expected duplicate serviceAccount.name error, got:" >&2
+  cat "${TMPDIR_ROOT}/duplicate-sa.err" >&2
+  exit 1
+fi
+
 echo "Executing rendered remote-handler script against containerd fixtures..."
 HANDLER_SCRIPT="${TMPDIR_ROOT}/remote-handler.sh"
 extract_remote_handler_script "${HYBRID_OUT}" "${HANDLER_SCRIPT}"

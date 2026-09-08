@@ -107,9 +107,13 @@ allowedCloudConfigAnnotations: []
 #   peerPodsLimitPerNode, probePort, vxlanPort (ports must be unique across
 #   enabled providers)
 # Optional: enabled (default true), config, allowedCloudConfigAnnotations,
-#   nodeSelector, tolerations, podLabels, serviceAccount.annotations,
-#   gcpWorkloadIdentity, azureWorkloadIdentity, maxUnavailable,
-#   maxSurge (must remain 0)
+#   nodeSelector, tolerations, podLabels, serviceAccount.name,
+#   serviceAccount.annotations, gcpWorkloadIdentity, azureWorkloadIdentity,
+#   maxUnavailable, maxSurge (must remain 0)
+#
+# serviceAccount.name defaults to cloud-api-adaptor-<provider.name>. Set it to
+# reuse an existing ServiceAccount (for example cloud-api-adaptor, so existing
+# WIF bindings keep working). Names must be unique across enabled providers.
 #
 # Multi-provider mode does not consume the legacy top-level provider,
 # providerConfigs, command, limit, gcpWorkloadIdentity, daemonset.podLabels, or
