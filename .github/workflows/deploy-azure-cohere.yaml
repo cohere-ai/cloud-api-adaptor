@@ -52,7 +52,7 @@ jobs:
     permissions:
       id-token: write      # Azure login via OIDC federated credentials
       contents: read       # actions/checkout
-      packages: read       # pull OCI artifact from GHCR
+      packages: write      # pull OCI artifact from GHCR, then mirror its tag
       attestations: read   # gh attestation verify
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -239,4 +239,27 @@ jobs:
             echo "| TEE | ${TEE_PLATFORM} |"
             echo "| Replication regions | \`${REPLICATION_REGIONS}\` |"
             echo "| Image ID | \`${IMAGE_ID}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Mirror gallery version as a GHCR tag
+        env:
+          IMAGE_REF: ${{ steps.verify.outputs.image_ref }}
+          IMAGE_DEF: ${{ steps.pull.outputs.image_def }}
+          IMAGE_VERSION: ${{ steps.pull.outputs.image_version }}
+        run: |
+          set -euo pipefail
+          # A GCP image name ends in the image name itself, but an Azure gallery
+          # image ID ends in the *version*:
+          #   projects/<p>/global/images/<name>
+          #   /subscriptions/<s>/.../images/<definition>/versions/<version>
+          # Consumers that derive a GHCR tag from the trailing path segment
+          # therefore resolve for GCP and 404 for Azure, even though both
+          # providers ship the same artifact. Point a second tag, named for the
+          # gallery version, at the same digest so either segment resolves to
+          # identical bytes and no consumer has to parse provider-specific paths.
+          oras tag "${IMAGE_REF}" "${IMAGE_VERSION}"
+          echo "Mirrored ${IMAGE_REF} as tag ${IMAGE_VERSION}"
+
+          {
+            echo "| GHCR tags | \`${IMAGE_DEF}\`, \`${IMAGE_VERSION}\` (same digest) |"
           } >> "$GITHUB_STEP_SUMMARY"
