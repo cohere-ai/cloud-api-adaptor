@@ -63,7 +63,7 @@ jobs:
           IMAGE_TAG: ${{ inputs.image_tag }}
         run: |
           IMAGE_DIGEST=$(oras resolve "${OCI_IMAGE}:${IMAGE_TAG}")
-          IMAGE_REF="${OCI_IMAGE}@${IMAGE_DIGEST}"
+          IMAGE_REF="${OCI_IMAGE}:${IMAGE_TAG}@${IMAGE_DIGEST}"
           gh attestation verify \
             "oci://${IMAGE_REF}" \
             --repo "${GITHUB_REPOSITORY}"
@@ -162,16 +162,13 @@ jobs:
           BUILD_DATE: ${{ steps.pull.outputs.build_date }}
           GCS_URI: ${{ steps.upload.outputs.gcs_uri }}
           GCP_PROJECT: ${{ env.PODVM_GCP_IMAGE_PROJECT }}
-          IMAGE_TAG: ${{ inputs.image_tag }}
+          IMAGE_REF: ${{ steps.verify.outputs.image_ref }}
         run: |
-          # Names are content-addressed (class + version|date+sha, plus run
-          # attempt on reruns) so collisions mean the workflow logic regressed.
-          # Fail loud rather than overwrite — overwriting breaks attestation
-          # pinning and rollback. To rebuild the same SHA, re-run the job (the
-          # run attempt suffix differentiates the image name).
+          # Names are immutable, so a collision means this artifact was already
+          # deployed. Fail rather than overwrite and break attestation pinning.
           if gcloud compute images describe "$IMAGE_NAME" --project="$GCP_PROJECT" &>/dev/null; then
             echo "ERROR: image $IMAGE_NAME already exists in $GCP_PROJECT" >&2
-            echo "Names are immutable; re-run the workflow to bump the run-attempt suffix." >&2
+            echo "Use the existing image, or use 'Re-run all jobs' in the build workflow for an -r<attempt> rebuild." >&2
             exit 1
           fi
 
@@ -227,7 +224,7 @@ jobs:
             --source-image-project="$GCP_PROJECT" \
             --project="$GCP_PROJECT" \
             --family="$IMAGE_FAMILY" \
-            --description="podvm: distro=${DISTRO} tee=${TEE_PLATFORM} profile=${PROFILE} class=${IMAGE_CLASS} caa=${CAA_VERSION} commit=${CAA_COMMIT} rtmr2=${RTMR2} oci=${OCI_IMAGE}:${IMAGE_TAG}" \
+            --description="podvm: distro=${DISTRO} tee=${TEE_PLATFORM} profile=${PROFILE} class=${IMAGE_CLASS} caa=${CAA_VERSION} commit=${CAA_COMMIT} rtmr2=${RTMR2} oci=${IMAGE_REF}" \
             --labels="$LABELS" \
             --guest-os-features="$GUEST_OS_FEATURES"
 
