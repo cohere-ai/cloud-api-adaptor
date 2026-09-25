@@ -37,7 +37,7 @@ permissions:
 # A second workflow_dispatch for the same ref must not race the first build or
 # replace the OCI artifact backing an already-published cloud image.
 concurrency:
-  group: podvm-build-${{ github.ref }}-${{ inputs.distro || 'ubuntu' }}
+  group: podvm-build-${{ github.ref }}-${{ github.sha }}-${{ inputs.distro || 'ubuntu' }}
   cancel-in-progress: false
 
 env:
@@ -69,6 +69,10 @@ jobs:
       smoke_machine_type: ${{ steps.compute.outputs.smoke_machine_type }}
       smoke_ram_gib: ${{ steps.compute.outputs.smoke_ram_gib }}
     steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
       - name: Compute tags and image names
         id: compute
         env:
@@ -140,6 +144,46 @@ jobs:
             echo "smoke_machine_type=$SMOKE_MACHINE_TYPE"
             echo "smoke_ram_gib=$SMOKE_RAM_GIB"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Install ORAS
+        run: |
+          command -v yq || sudo snap install yq
+          ORAS_VERSION=$(yq '.tools.oras' "$VERSIONS_YAML")
+          curl -fsSLO "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_amd64.tar.gz"
+          tar -xzf "oras_${ORAS_VERSION}_linux_amd64.tar.gz" oras
+          rm -f "oras_${ORAS_VERSION}_linux_amd64.tar.gz"
+          sudo mv oras /usr/local/bin/
+          oras version
+
+      - name: Login to GHCR
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify OCI tags are unused
+        env:
+          RELEASE_TAG: ${{ steps.compute.outputs.image_tag_release }}
+          DEBUG_TAG: ${{ steps.compute.outputs.image_tag_debug }}
+        run: |
+          check_unused() {
+            local ref="$1"
+            local resolve_output
+            if resolve_output=$(oras resolve "$ref" 2>&1); then
+              echo "ERROR: refusing to replace existing PodVM artifact $ref ($resolve_output)" >&2
+              echo "Use 'Re-run all jobs' for an -r<attempt> rebuild; 'Re-run failed jobs' reuses the original metadata. To reuse the existing artifact, run a deploy workflow." >&2
+              return 1
+            fi
+            if ! grep -qiE 'not found|404' <<<"$resolve_output"; then
+              echo "ERROR: could not verify that $ref is unused:" >&2
+              echo "$resolve_output" >&2
+              return 1
+            fi
+          }
+
+          check_unused "${OCI_IMAGE}:${RELEASE_TAG}"
+          check_unused "${OCI_IMAGE}:${DEBUG_TAG}"
 
   build:
     name: Build PodVM (${{ matrix.profile }})
@@ -420,13 +464,9 @@ jobs:
           RTMR2=$(jq -r '.rtmr2_sha384' /tmp/measurements.json)
           NVIDIA_DRIVER_VERSION=$(jq -r '.nvidia_driver_version // ""' /tmp/measurements.json)
 
-          set +e
-          RESOLVE_OUTPUT=$(oras resolve "$OCI_REF" 2>&1)
-          RESOLVE_STATUS=$?
-          set -e
-          if [ "$RESOLVE_STATUS" -eq 0 ]; then
+          if RESOLVE_OUTPUT=$(oras resolve "$OCI_REF" 2>&1); then
             echo "ERROR: refusing to replace existing PodVM artifact $OCI_REF ($RESOLVE_OUTPUT)" >&2
-            echo "Re-run the original workflow for a suffixed rebuild, or deploy the existing artifact with a deploy workflow." >&2
+            echo "Use 'Re-run all jobs' for an -r<attempt> rebuild; 'Re-run failed jobs' reuses the original metadata. To reuse the existing artifact, run a deploy workflow." >&2
             exit 1
           fi
           if ! grep -qiE 'not found|404' <<<"$RESOLVE_OUTPUT"; then
