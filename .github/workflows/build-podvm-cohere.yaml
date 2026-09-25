@@ -34,6 +34,12 @@ permissions:
   contents: read       # actions/checkout
   packages: write      # push OCI artifact to GHCR
 
+# A second workflow_dispatch for the same ref must not race the first build or
+# replace the OCI artifact backing an already-published cloud image.
+concurrency:
+  group: podvm-build-${{ github.ref }}-${{ inputs.distro || 'ubuntu' }}
+  cancel-in-progress: false
+
 env:
   # tdx-snp-nvidia selects the AA OCI tag suffix
   # (<sha>-tdx-snp-nvidia_x86_64).
@@ -69,7 +75,7 @@ jobs:
           DISTRO: ${{ inputs.distro || 'ubuntu' }}
         run: |
           # Classify so consumers can pin (release/cohere) or auto-clean (dev).
-          # Names are content-addressed; reruns of the same SHA get -r<attempt>.
+          # Names are immutable; workflow reruns get an -r<attempt> suffix.
           sha=${GITHUB_SHA:0:7}
           case "$GITHUB_REF" in
             refs/tags/podvm-v*)
@@ -413,6 +419,21 @@ jobs:
           OCI_REF="${OCI_IMAGE}:${OCI_TAG}"
           RTMR2=$(jq -r '.rtmr2_sha384' /tmp/measurements.json)
           NVIDIA_DRIVER_VERSION=$(jq -r '.nvidia_driver_version // ""' /tmp/measurements.json)
+
+          set +e
+          RESOLVE_OUTPUT=$(oras resolve "$OCI_REF" 2>&1)
+          RESOLVE_STATUS=$?
+          set -e
+          if [ "$RESOLVE_STATUS" -eq 0 ]; then
+            echo "ERROR: refusing to replace existing PodVM artifact $OCI_REF ($RESOLVE_OUTPUT)" >&2
+            echo "Re-run the original workflow for a suffixed rebuild, or deploy the existing artifact with a deploy workflow." >&2
+            exit 1
+          fi
+          if ! grep -qiE 'not found|404' <<<"$RESOLVE_OUTPUT"; then
+            echo "ERROR: could not verify that $OCI_REF is unused:" >&2
+            echo "$RESOLVE_OUTPUT" >&2
+            exit 1
+          fi
 
           cd /tmp
           ANNOTATIONS=(
