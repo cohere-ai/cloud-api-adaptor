@@ -10,7 +10,7 @@ on:
         description: "PodVM distro"
         required: false
         type: choice
-        options: [ubuntu, fedora]
+        options: [ubuntu]
         default: ubuntu
       ssh_public_key:
         description: "SSH public key for debug images (optional)"
@@ -249,7 +249,7 @@ jobs:
 
       - name: Inject SSH key for debug image
         if: matrix.profile == 'debug'
-        working-directory: src/cloud-api-adaptor/podvm-mkosi
+        working-directory: src/cloud-api-adaptor/podvm
         env:
           SSH_PUBLIC_KEY: ${{ inputs.ssh_public_key || vars.DEBUG_SSH_PUBLIC_KEY }}
         run: |
@@ -263,32 +263,28 @@ jobs:
           echo "SSH key injected for debug image"
 
       - name: Build binaries
-        working-directory: src/cloud-api-adaptor/podvm-mkosi
+        working-directory: src/cloud-api-adaptor/podvm
         env:
           GH_TOKEN: ${{ github.token }}
-          PODVM_DISTRO: ${{ needs.meta.outputs.distro }}
         run: |
           make \
             VERIFY_PROVENANCE=yes \
             TEE_PLATFORM="$TEE_PLATFORM" \
-            PODVM_DISTRO="$PODVM_DISTRO" \
-            binaries
+            podvm-binaries
           docker system prune -af --volumes 2>/dev/null || true
           echo "Disk after binaries build:"
           df -h /
 
       - name: Build OS image
-        working-directory: src/cloud-api-adaptor/podvm-mkosi
+        working-directory: src/cloud-api-adaptor/podvm
         env:
           PROFILE: ${{ matrix.profile }}
-          PODVM_DISTRO: ${{ needs.meta.outputs.distro }}
         run: |
           TARGET="image"
           if [ "$PROFILE" = "debug" ]; then
             TARGET="image-debug"
           fi
           TEE_PLATFORM="$TEE_PLATFORM" \
-          PODVM_DISTRO="$PODVM_DISTRO" \
           make "$TARGET"
 
           ls -lh build/
@@ -297,7 +293,7 @@ jobs:
         run: |
           echo "=== Before cleanup ==="
           df -h /
-          mv src/cloud-api-adaptor/podvm-mkosi/build/system.raw /tmp/disk.raw
+          mv src/cloud-api-adaptor/podvm/build/system.raw /tmp/disk.raw
           docker system prune -af --volumes 2>/dev/null || true
           echo "=== After cleanup ==="
           df -h /
@@ -372,7 +368,7 @@ jobs:
           # (e.g. `nvidia-driver-580-open=580.159.04-1ubuntu1`). Surface the
           # `epoch:upstream-debian` portion so downstream tooling (model-integrity
           # kata-policy) can bind attestation to a specific driver build.
-          DISTRO_CONF="src/cloud-api-adaptor/podvm-mkosi/mkosi.images/system/mkosi.conf.d/${DISTRO}.conf"
+          DISTRO_CONF="src/cloud-api-adaptor/podvm/mkosi.images/system/mkosi.conf.d/${DISTRO}.conf"
           if [ ! -f "$DISTRO_CONF" ]; then
             echo "ERROR: mkosi distro config not found: $DISTRO_CONF" >&2
             exit 1
