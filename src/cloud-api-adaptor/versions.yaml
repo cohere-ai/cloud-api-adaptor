@@ -69,11 +69,6 @@ oci:
   # confidential-data-hub, and api-server-rest to GHCR.
   # Bump `reference` to the 40-char SHA whose publish-artifacts run has
   # completed successfully (visible on the GHCR Packages page).
-  #
-  # TODO(caa-v0.22 sync): upstream v0.22.0 pins guest-components dcd55ea1.
-  # Repoint this to the Cohere fork commit that merges upstream dcd55ea1 once
-  # that guest-components PR is published. Until then this is still the
-  # v0.21-era fork commit, so do not merge this PR with this value.
   guest-components:
     registry: ghcr.io/cohere-ai/guest-components
-    reference: e31a803b1a9f7c7de93ed18040ce7bd92e639ad5
+    reference: f9b416180cfb4ebffa9ec6630c180d84444d937a # upstream dcd55ea1 + Cohere (guest-components#17)
