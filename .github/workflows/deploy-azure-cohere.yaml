@@ -4,10 +4,10 @@ name: Deploy PodVM to Azure (Cohere)
 # ConfidentialVmSupported (x86_64/Gen2) for SEV-SNP VMs (e.g. NCCadsH100v5).
 # Uses uplosi (same tool as upstream azure-podvm-image-build) to MiB-align the
 # raw disk, upload via managed disk, and create the gallery image version.
-# Requires (infra-azure):
-#   secrets: AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID (OIDC app
-#            with Contributor on the gallery resource group)
-#   vars:    AZURE_RESOURCE_GROUP, AZURE_PODVM_GALLERY_NAME, AZURE_LOCATION
+# Requires:
+#   secrets: AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID
+#   vars:    AZURE_PODVM_GALLERY_RESOURCE_GROUP, AZURE_PODVM_GALLERY_NAME,
+#            AZURE_LOCATION
 
 on:
   workflow_call:
@@ -114,14 +114,16 @@ jobs:
           cat measurements.json
 
           IMAGE_NAME=$(jq -r '.image_name' measurements.json)
-          IMAGE_FAMILY=$(jq -r '.image_family // ""' measurements.json)
-          if [ -z "$IMAGE_NAME" ] || [ "$IMAGE_NAME" = "null" ] || [ -z "$IMAGE_FAMILY" ]; then
-            echo "ERROR: image_name/image_family missing in measurements.json" >&2
+          if [ -z "$IMAGE_NAME" ] || [ "$IMAGE_NAME" = "null" ]; then
+            echo "ERROR: image_name missing in measurements.json" >&2
             exit 1
           fi
 
-          # Definition names: [A-Za-z0-9._-], <=80 chars.
-          IMAGE_DEF=$(echo "$IMAGE_FAMILY" | sed 's/[^A-Za-z0-9._-]/-/g' | cut -c1-80)
+          # Definition names: [A-Za-z0-9._-], <=80 chars. Keyed on image_name so
+          # the gallery ID names the release like the GCP image does;
+          # image_family would put every release under one definition, leaving
+          # the generated timestamp as the only way to tell them apart.
+          IMAGE_DEF=$(echo "$IMAGE_NAME" | sed 's/[^A-Za-z0-9._-]/-/g' | cut -c1-80)
 
           # Versions need numeric Major.Minor.Patch, no leading zeros. Use
           # epoch seconds as patch so same-minute retries do not collide.
@@ -167,7 +169,7 @@ jobs:
       - name: Publish confidential gallery image version
         env:
           SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          RESOURCE_GROUP: ${{ vars.AZURE_PODVM_GALLERY_RESOURCE_GROUP }}
           GALLERY: ${{ vars.AZURE_PODVM_GALLERY_NAME }}
           LOCATION: ${{ vars.AZURE_LOCATION }}
           IMAGE_DEF: ${{ steps.pull.outputs.image_def }}
@@ -185,6 +187,9 @@ jobs:
 
           # Disk / managed-image names must be unique per upload and Azure-safe.
           DISK_NAME=$(echo "${IMAGE_DEF}-${IMAGE_VERSION}" | sed 's/[^A-Za-z0-9._-]/-/g' | cut -c1-80)
+          REPLICATION_REGIONS=$(jq -cn \
+            --arg location "${LOCATION}" \
+            '[$location, "centralus"] | unique')
 
           # Write unindented TOML (uplosi config parser is whitespace-sensitive on tables).
           cat > /tmp/podvm/uplosi.conf <<EOF
@@ -209,7 +214,7 @@ jobs:
           provider = "azure"
 
           [variant.default.azure]
-          replicationRegions = ["${LOCATION}"]
+          replicationRegions = ${REPLICATION_REGIONS}
           EOF
           sed -i 's/^[[:space:]]*//' /tmp/podvm/uplosi.conf
 
@@ -232,5 +237,6 @@ jobs:
             echo "| Version | \`${IMAGE_VERSION}\` |"
             echo "| Security type | ConfidentialVmSupported (${ATTESTATION_VARIANT}) |"
             echo "| TEE | ${TEE_PLATFORM} |"
+            echo "| Replication regions | \`${REPLICATION_REGIONS}\` |"
             echo "| Image ID | \`${IMAGE_ID}\` |"
           } >> "$GITHUB_STEP_SUMMARY"

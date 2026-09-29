@@ -43,6 +43,35 @@ assert_count() {
   fi
 }
 
+assert_resource_verbs() {
+  local file="$1"
+  local resource="$2"
+  local expected_verbs="$3"
+  local expected_count="$4"
+  local actual
+  actual="$(
+    awk -v resource="${resource}" -v expected_verbs="${expected_verbs}" '
+      {
+        line = $0
+        sub(/^[[:space:]]*/, "", line)
+      }
+      line == "resources: [\"" resource "\"]" {
+        if (getline > 0) {
+          sub(/^[[:space:]]*/, "", $0)
+          if ($0 == expected_verbs) {
+            count++
+          }
+        }
+      }
+      END { print count + 0 }
+    ' "${file}"
+  )"
+  if [[ "${actual}" -ne "${expected_count}" ]]; then
+    echo "FAIL: expected ${expected_count} ${resource} rules with ${expected_verbs}, found ${actual}" >&2
+    exit 1
+  fi
+}
+
 extract_remote_handler_script() {
   local rendered="$1"
   local script="$2"
@@ -143,6 +172,7 @@ helm template test-release "${CHART_DIR}" \
   --set 'allowedCloudConfigAnnotations[0]=io.katacontainers.config.hypervisor.gcp_zone' \
   >"${LEGACY_OUT}"
 assert_contains "${LEGACY_OUT}" 'ALLOWED_CLOUD_CONFIG_ANNOTATIONS: "io.katacontainers.config.hypervisor.gcp_zone"'
+assert_count "${LEGACY_OUT}" '^kind: Namespace$' 1
 
 MINIMAL_OUT="${TMPDIR_ROOT}/minimal.yaml"
 render "${FIXTURES}/multi-provider-minimal.yaml" "${MINIMAL_OUT}"
@@ -173,7 +203,11 @@ fi
 assert_contains "${MINIMAL_OUT}" 'PROXY_TIMEOUT: "30m"'
 assert_count "${MINIMAL_OUT}" 'name: peer-pods-secret-gcp' 2
 assert_count "${MINIMAL_OUT}" 'name: peer-pods-secret-azure' 2
-assert_count "${MINIMAL_OUT}" 'resources: \["pods", "secrets", "serviceaccounts"\]' 2
+assert_missing "${MINIMAL_OUT}" 'resources: \["pods", "secrets", "serviceaccounts"\]'
+assert_count "${MINIMAL_OUT}" 'resources: \["secrets"\]' 2
+assert_count "${MINIMAL_OUT}" 'resources: \["serviceaccounts"\]' 2
+assert_resource_verbs "${MINIMAL_OUT}" "secrets" 'verbs: ["get"]' 2
+assert_resource_verbs "${MINIMAL_OUT}" "serviceaccounts" 'verbs: ["get"]' 2
 assert_missing "${MINIMAL_OUT}" 'name: cloud-api-adaptor-(gcp|azure)-pp-secrets'
 
 echo "Rendering provider-specific credentials..."
@@ -228,6 +262,20 @@ assert_contains "${HYBRID_OUT}" 'kata-remote-gcp'
 assert_contains "${HYBRID_OUT}" 'kata-remote-azure'
 assert_contains "${HYBRID_OUT}" 'peer-pods-webhook-gcp-'
 assert_contains "${HYBRID_OUT}" 'peer-pods-webhook-azure-'
+assert_count "${HYBRID_OUT}" '^kind: Namespace$' 2
+assert_contains "${HYBRID_OUT}" 'name: peer-pods-webhook-gcp-system'
+assert_contains "${HYBRID_OUT}" 'name: peer-pods-webhook-azure-system'
+
+echo "Rendering hybrid with createNamespace=false..."
+HYBRID_NS_OUT="${TMPDIR_ROOT}/hybrid-skip-ns.yaml"
+render "${FIXTURES}/multi-provider-hybrid.yaml" "${HYBRID_NS_OUT}" \
+  --set webhookGcp.createNamespace=false \
+  --set webhookAzure.createNamespace=false \
+  --namespace confidential-containers-system
+assert_count "${HYBRID_NS_OUT}" '^kind: Namespace$' 0
+assert_missing "${HYBRID_NS_OUT}" 'name: peer-pods-webhook-gcp-system'
+assert_missing "${HYBRID_NS_OUT}" 'name: peer-pods-webhook-azure-system'
+
 assert_contains "${HYBRID_OUT}" 'name: fix-gke-node-config'
 assert_contains "${HYBRID_OUT}" 'name: reconcile-remote-handlers'
 assert_count "${HYBRID_OUT}" '^scheduling:$' 2
@@ -244,6 +292,29 @@ assert_contains "${HYBRID_OUT}" 'type: DirectoryOrCreate'
 assert_count "${HYBRID_OUT}" 'PROXY_TIMEOUT: "30m"' 3
 assert_count "${HYBRID_OUT}" 'DISABLECVM: "false"' 3
 assert_count "${HYBRID_OUT}" 'CACERT_FILE: "/etc/certificates/ca.crt"' 3
+
+echo "Rendering hybrid with providers[0].serviceAccount.name override..."
+SA_OVERRIDE_OUT="${TMPDIR_ROOT}/sa-override.yaml"
+render "${FIXTURES}/multi-provider-hybrid.yaml" "${SA_OVERRIDE_OUT}" \
+  --set 'providers[0].serviceAccount.name=cloud-api-adaptor'
+assert_contains "${SA_OVERRIDE_OUT}" 'serviceAccountName: cloud-api-adaptor'
+assert_contains "${SA_OVERRIDE_OUT}" 'serviceAccountName: cloud-api-adaptor-azure'
+assert_missing "${SA_OVERRIDE_OUT}" 'serviceAccountName: cloud-api-adaptor-gcp'
+# RBAC ClusterRole names stay provider-suffixed; only the KSA name is overridden.
+assert_contains "${SA_OVERRIDE_OUT}" 'name: cloud-api-adaptor-gcp-pod-viewer'
+
+echo "Expecting duplicate serviceAccount.name to fail..."
+if render "${FIXTURES}/multi-provider-hybrid.yaml" "${TMPDIR_ROOT}/duplicate-sa.yaml" \
+  --set 'providers[0].serviceAccount.name=shared-caa' \
+  --set 'providers[1].serviceAccount.name=shared-caa' 2>"${TMPDIR_ROOT}/duplicate-sa.err"; then
+  echo "FAIL: duplicate serviceAccount.name rendered successfully" >&2
+  exit 1
+fi
+if ! grep -Fq 'providers[].serviceAccount.name must be unique' "${TMPDIR_ROOT}/duplicate-sa.err"; then
+  echo "FAIL: expected duplicate serviceAccount.name error, got:" >&2
+  cat "${TMPDIR_ROOT}/duplicate-sa.err" >&2
+  exit 1
+fi
 
 echo "Executing rendered remote-handler script against containerd fixtures..."
 HANDLER_SCRIPT="${TMPDIR_ROOT}/remote-handler.sh"
