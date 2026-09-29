@@ -41,7 +41,6 @@ RUN mkdir /image
 WORKDIR /image
 COPY mkosi.images /image/mkosi.images
 COPY mkosi.skeleton-debug /image/mkosi.skeleton-debug
-COPY mkosi.skeleton-debug-ubuntu /image/mkosi.skeleton-debug-ubuntu
 COPY mkosi.skeleton-sftp /image/mkosi.skeleton-sftp
 COPY mkosi.sandbox /image/mkosi.sandbox
 COPY mkosi.workspace /image/mkosi.workspace
