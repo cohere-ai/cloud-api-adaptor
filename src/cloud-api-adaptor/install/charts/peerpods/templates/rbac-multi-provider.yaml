@@ -18,7 +18,7 @@ metadata:
 {{ include "peerpods.providerLabels" (dict "root" $ "provider" $provider) | nindent 4 }}
 rules:
 - apiGroups: [""]
-  resources: ["pods", "secrets", "serviceaccounts"]
+  resources: ["pods"]
   verbs: ["get", "list"]
 - apiGroups: [""]
   resources: ["secrets"]
