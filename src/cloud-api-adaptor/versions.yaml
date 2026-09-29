@@ -34,7 +34,6 @@ tools:
   kcli: 99.0.202507200957
   mkosi: v26
   protoc: 3.16.0
-  packer: v1.9.4
   oras: 1.2.0
   helm:
     version: v4.0.4
@@ -49,7 +48,7 @@ git:
     reference: v1.5.0
   kbs:
     url: https://github.com/confidential-containers/trustee
-    reference: d4e317620c4039c89779b725f74974d8f005da66
+    reference: 258ea4acb7b9bd865fce5c63a539f2120dba8298
   # PodVM CI: UKI extract + TDX measurement (needs `tdx --disk` for RTMR[1]).
   cvm-measure:
     url: https://github.com/cohere-ai/cvm-measure
@@ -63,13 +62,18 @@ oci:
     tag: "3.9"
   kata-containers:
     registry: ghcr.io/kata-containers/cached-artefacts
-    reference: bef049d07e34d467b3a0910fdc65f30aa4647a0a # v3.31.0 + tagging fix
+    reference: cf82bb35c80320178bf7570252fe75d6fb263209 # v4.0.0
   # Cohere fork of guest-components. The fork's publish-artifacts workflow
   # publishes attestation-agent (incl. a tdx-snp-nvidia variant that bundles
   # TDX + SNP + Azure SNP-vTPM + NVIDIA GPU attesters and libnvat.so),
   # confidential-data-hub, and api-server-rest to GHCR.
   # Bump `reference` to the 40-char SHA whose publish-artifacts run has
   # completed successfully (visible on the GHCR Packages page).
+  #
+  # TODO(caa-v0.22 sync): upstream v0.22.0 pins guest-components dcd55ea1.
+  # Repoint this to the Cohere fork commit that merges upstream dcd55ea1 once
+  # that guest-components PR is published. Until then this is still the
+  # v0.21-era fork commit, so do not merge this PR with this value.
   guest-components:
     registry: ghcr.io/cohere-ai/guest-components
     reference: e31a803b1a9f7c7de93ed18040ce7bd92e639ad5
