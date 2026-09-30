@@ -6,12 +6,6 @@ on:
     branches: ["cohere"]
   workflow_dispatch:
     inputs:
-      distro:
-        description: "PodVM distro"
-        required: false
-        type: choice
-        options: [ubuntu]
-        default: ubuntu
       ssh_public_key:
         description: "SSH public key for debug images (optional)"
         required: false
@@ -37,7 +31,7 @@ permissions:
 # A second workflow_dispatch for the same ref must not race the first build or
 # replace the OCI artifact backing an already-published cloud image.
 concurrency:
-  group: podvm-build-${{ github.ref }}-${{ github.sha }}-${{ inputs.distro || 'ubuntu' }}
+  group: podvm-build-${{ github.ref }}-${{ github.sha }}
   cancel-in-progress: false
 
 env:
@@ -76,7 +70,7 @@ jobs:
       - name: Compute tags and image names
         id: compute
         env:
-          DISTRO: ${{ inputs.distro || 'ubuntu' }}
+          DISTRO: ubuntu
         run: |
           # Classify so consumers can pin (release/cohere) or auto-clean (dev).
           # Names are immutable; workflow reruns get an -r<attempt> suffix.

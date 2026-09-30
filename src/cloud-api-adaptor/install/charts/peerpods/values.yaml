@@ -354,18 +354,12 @@ kata-deploy:
     s390x: remote
     ppc64le: remote
   shims:
-    # Only kata-remote is used by peer pods. disableAll turns off every shim
-    # whose enabled field is unset, so shims added in future kata-deploy
-    # releases stay off. The explicit list below mirrors the kata-deploy 4.0.0
-    # shim set; keep it in sync when bumping the dependency.
+    # Cohere: kata-deploy 4.0 added shims that the list below (upstream v0.22)
+    # does not name, so disable every shim not explicitly enabled.
     disableAll: true
     clh:
       enabled: false
-    clh-azure:
-      enabled: false
-    clh-runtime-rs:
-      enabled: false
-    clh-azure-runtime-rs:
+    cloud-hypervisor:
       enabled: false
     dragonball:
       enabled: false
@@ -375,33 +369,21 @@ kata-deploy:
       enabled: false
     qemu-runtime-rs:
       enabled: false
-    qemu-nvidia-cpu:
-      enabled: false
-    qemu-nvidia-cpu-runtime-rs:
-      enabled: false
     qemu-nvidia-gpu:
-      enabled: false
-    qemu-nvidia-gpu-runtime-rs:
       enabled: false
     qemu-nvidia-gpu-snp:
       enabled: false
-    qemu-nvidia-gpu-snp-runtime-rs:
-      enabled: false
     qemu-nvidia-gpu-tdx:
-      enabled: false
-    qemu-nvidia-gpu-tdx-runtime-rs:
       enabled: false
     qemu-snp:
       enabled: false
-    qemu-snp-runtime-rs:
-      enabled: false
     qemu-tdx:
-      enabled: false
-    qemu-tdx-runtime-rs:
       enabled: false
     qemu-se:
       enabled: false
     qemu-se-runtime-rs:
+      enabled: false
+    qemu-cca:
       enabled: false
     qemu-coco-dev:
       enabled: false

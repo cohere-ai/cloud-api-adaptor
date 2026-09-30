@@ -37,7 +37,7 @@ func VerifyCloudInstanceType(instanceType string, validInstanceTypes []string, d
 	}
 
 	// If instanceTypes is empty and instanceType is not default, return error
-	if len(validInstanceTypes) == 0 && !isAllowedInstanceType(instanceType, validInstanceTypes, defaultInstanceType) {
+	if len(validInstanceTypes) == 0 && instanceType != defaultInstanceType {
 		// Return error if instanceTypes is empty and instanceType is not default
 		return "", fmt.Errorf("requested instance type (%q) is not default (%q) and supported instance types list is empty",
 			instanceType, defaultInstanceType)
@@ -45,7 +45,7 @@ func VerifyCloudInstanceType(instanceType string, validInstanceTypes []string, d
 	}
 
 	// If instanceTypes is not empty and instanceType is not among the supported instance types, return error
-	if len(validInstanceTypes) > 0 && !isAllowedInstanceType(instanceType, validInstanceTypes, defaultInstanceType) {
+	if len(validInstanceTypes) > 0 && !util.Contains(validInstanceTypes, instanceType) {
 		return "", fmt.Errorf("requested instance type (%q) is not part of supported instance types list", instanceType)
 	}
 
@@ -148,8 +148,8 @@ func SelectInstanceTypeToUse(spec InstanceTypeSpec, specList []InstanceTypeSpec,
 			}
 		}
 		// A per-pod list without resource requirements is ordered by preference.
-		// Providers without resource metadata (currently GCP) also use the first
-		// candidate, because best-fit selection cannot run against an empty list.
+		// Providers without resource metadata also use the first candidate,
+		// because best-fit selection cannot run against an empty list.
 		hasResourceRequirements := spec.GPUs > 0 || (spec.VCPUs != 0 && spec.Memory != 0)
 		if spec.InstanceType == "" && hasResourceRequirements && hasResourceMetadata && len(filteredSpecList) == 0 {
 			return "", fmt.Errorf("none of the requested instance types have provider resource metadata")

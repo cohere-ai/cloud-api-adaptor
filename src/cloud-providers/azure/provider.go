@@ -117,6 +117,7 @@ func (p *azureProvider) getIPs(ctx context.Context, vm *armcompute.VirtualMachin
 	if err != nil {
 		return nil, fmt.Errorf("create network interfaces client: %w", err)
 	}
+	rgName := p.serviceConfig.ResourceGroupName
 	nicRefs := vm.Properties.NetworkProfile.NetworkInterfaces
 
 	var ips []netip.Addr
@@ -126,7 +127,7 @@ func (p *azureProvider) getIPs(ctx context.Context, vm *armcompute.VirtualMachin
 		nicID := *nicRef.ID
 		// the last segment of a nic id is the name
 		nicName := nicID[strings.LastIndex(nicID, "/")+1:]
-		nic, err := nicClient.Get(ctx, p.serviceConfig.ResourceGroupName, nicName, nil)
+		nic, err := nicClient.Get(ctx, rgName, nicName, nil)
 		if err != nil {
 			return nil, fmt.Errorf("get network interface: %w", err)
 		}
@@ -146,7 +147,7 @@ func (p *azureProvider) getIPs(ctx context.Context, vm *armcompute.VirtualMachin
 			ipID := *ipc.Properties.PublicIPAddress.ID
 			// the last segment of a ip id is the name
 			ipName := ipID[strings.LastIndex(ipID, "/")+1:]
-			publicIP, err := publicIPClient.Get(ctx, p.serviceConfig.ResourceGroupName, ipName, nil)
+			publicIP, err := publicIPClient.Get(ctx, rgName, ipName, nil)
 			if err != nil {
 				return nil, fmt.Errorf("get public ip: %w", err)
 			}
@@ -295,8 +296,6 @@ func (p *azureProvider) CreateInstance(ctx context.Context, podName, sandboxID s
 	// The operator default is configured with -zone; a permitted per-pod
 	// annotation may override it.
 	zone := provider.ChooseString(spec.Zone, p.serviceConfig.Zone)
-	disableCVM := p.serviceConfig.DisableCVM
-	enableSecureBoot := p.serviceConfig.EnableSecureBoot
 	usePublicIP := provider.ChooseBool(spec.UsePublicIP, p.serviceConfig.UsePublicIP)
 	rootVolumeSize := provider.ChooseInt64(spec.RootVolumeSize, p.serviceConfig.RootVolumeSize)
 	tags := provider.MergeStringMap(spec.Tags, p.serviceConfig.Tags)
@@ -310,7 +309,7 @@ func (p *azureProvider) CreateInstance(ctx context.Context, podName, sandboxID s
 		}
 	}
 
-	vmParameters, err := p.getVMParameters(instanceSize, diskName, cloudConfigData, sshBytes, instanceName, nicName, imageID, zone, disableCVM, enableSecureBoot, usePublicIP, rootVolumeSize, tags, spec.Volumes...)
+	vmParameters, err := p.getVMParameters(instanceSize, diskName, cloudConfigData, sshBytes, instanceName, nicName, imageID, zone, usePublicIP, rootVolumeSize, tags, spec.Volumes...)
 	if err != nil {
 		return nil, err
 	}
@@ -396,8 +395,8 @@ func (p *azureProvider) ConfigVerifier() error {
 
 // Add SelectInstanceType method to select an instance type based on the memory and vcpu requirements
 func (p *azureProvider) selectInstanceType(ctx context.Context, spec provider.InstanceTypeSpec) (string, error) {
-	instanceSizes := []string(p.serviceConfig.InstanceSizes)
-	return provider.SelectInstanceTypeToUse(spec, p.serviceConfig.InstanceSizeSpecList, instanceSizes, p.serviceConfig.Size)
+
+	return provider.SelectInstanceTypeToUse(spec, p.serviceConfig.InstanceSizeSpecList, p.serviceConfig.InstanceSizes, p.serviceConfig.Size)
 }
 
 // Add a method to populate InstanceSizeSpecList for all the instanceSizes
@@ -553,7 +552,7 @@ func (p *azureProvider) getResourceTags(tags map[string]string) map[string]*stri
 	return result
 }
 
-func (p *azureProvider) getVMParameters(instanceSize, diskName, cloudConfig string, sshBytes []byte, instanceName, nicName, imageID, zone string, disableCVM, enableSecureBoot, usePublicIP bool, rootVolumeSize int64, tags map[string]string, csiVolumes ...provider.CloudVolume) (*armcompute.VirtualMachine, error) {
+func (p *azureProvider) getVMParameters(instanceSize, diskName, cloudConfig string, sshBytes []byte, instanceName, nicName, imageID, zone string, usePublicIP bool, rootVolumeSize int64, tags map[string]string, csiVolumes ...provider.CloudVolume) (*armcompute.VirtualMachine, error) {
 	userDataB64 := base64.StdEncoding.EncodeToString([]byte(cloudConfig))
 
 	// Azure limits the base64 encrypted userData to 64KB.
@@ -564,7 +563,7 @@ func (p *azureProvider) getVMParameters(instanceSize, diskName, cloudConfig stri
 	}
 	var managedDiskParams *armcompute.ManagedDiskParameters
 	var securityProfile *armcompute.SecurityProfile
-	if !disableCVM {
+	if !p.serviceConfig.DisableCVM {
 		managedDiskParams = &armcompute.ManagedDiskParameters{
 			StorageAccountType: to.Ptr(armcompute.StorageAccountTypesPremiumLRS),
 			SecurityProfile: &armcompute.VMDiskSecurityProfile{
@@ -575,7 +574,7 @@ func (p *azureProvider) getVMParameters(instanceSize, diskName, cloudConfig stri
 		securityProfile = &armcompute.SecurityProfile{
 			SecurityType: to.Ptr(armcompute.SecurityTypesConfidentialVM),
 			UefiSettings: &armcompute.UefiSettings{
-				SecureBootEnabled: to.Ptr(enableSecureBoot),
+				SecureBootEnabled: to.Ptr(p.serviceConfig.EnableSecureBoot),
 				VTpmEnabled:       to.Ptr(true),
 			},
 		}
