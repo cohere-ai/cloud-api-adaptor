@@ -48,7 +48,7 @@ if [ "$1" == "delete" ]; then
 
     # Delete the kind cluster
     echo "Deleting the kind cluster"
-    kind delete cluster --name "\$CLUSTER_NAME" || exit 1
+    kind delete cluster --name "\$CLUSTER_NAME" || exit 1   
 
     exit 0
 fi

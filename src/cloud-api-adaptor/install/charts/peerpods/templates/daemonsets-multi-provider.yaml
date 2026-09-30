@@ -93,6 +93,8 @@ spec:
         - mountPath: /lib/modules
           name: lib-modules
           readOnly: true
+        - mountPath: /run/kata-containers/shared/direct-volumes
+          name: kata-direct-volumes-dir
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
       nodeSelector:
@@ -138,5 +140,9 @@ spec:
           path: /lib/modules
           type: ""
         name: lib-modules
+      - name: kata-direct-volumes-dir
+        hostPath:
+          path: /run/kata-containers/shared/direct-volumes
+          type: DirectoryOrCreate
 {{- end }}
 {{- end }}

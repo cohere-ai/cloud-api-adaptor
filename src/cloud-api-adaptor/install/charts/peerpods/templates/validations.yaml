@@ -2,7 +2,7 @@
 {{- $unique := dict "name" (dict) "runtimeClassName" (dict) "socketPath" (dict) "extendedResource" (dict) "probePort" (dict) "vxlanPort" (dict) }}
 {{- $saNames := dict }}
 {{- $runtimeResources := dict }}
-{{- $reservedConfigKeys := list "CLOUD_PROVIDER" "REMOTE_HYPERVISOR_ENDPOINT" "POD_VM_EXTENDED_RESOURCE" "PEERPODS_LIMIT_PER_NODE" "RUNTIMECLASS_NAME" "PROBE_PORT" "VXLAN_PORT" "ALLOWED_CLOUD_CONFIG_ANNOTATIONS" }}
+{{- $reservedConfigKeys := list "CLOUD_PROVIDER" "REMOTE_HYPERVISOR_ENDPOINT" "POD_VM_EXTENDED_RESOURCE" "PEERPODS_LIMIT_PER_NODE" "RUNTIMECLASS_NAME" "PROBE_PORT" "VXLAN_PORT" "ALLOWED_CLOUD_CONFIG_ANNOTATIONS" "TLS_MIN_VERSION" "TLS_CIPHER_SUITES" }}
 {{- range $key := $reservedConfigKeys }}
 {{- if hasKey ($.Values.sharedConfig | default dict) $key }}
 {{- fail (printf "sharedConfig.%s is managed by the chart and cannot be overridden" $key) }}
