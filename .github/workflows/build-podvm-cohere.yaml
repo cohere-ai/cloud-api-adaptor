@@ -26,6 +26,14 @@ on:
         required: false
         type: boolean
         default: false
+      provenance_extra_ref:
+        description: >-
+          Dev only: also accept upstream artifacts built from this ref, e.g.
+          refs/heads/yousef/upgrade-v0.21.0 for a guest-components upgrade under review.
+          Ignored for push builds.
+        required: false
+        type: string
+        default: ""
 
 permissions:
   actions: read       # download smoke measurements artifact in the GCP smoke workflow
@@ -267,9 +275,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PODVM_DISTRO: ${{ needs.meta.outputs.distro }}
+          PROVENANCE_EXTRA_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.provenance_extra_ref || '' }}
         run: |
+          if [ -n "$PROVENANCE_EXTRA_REF" ] && ! [[ "$PROVENANCE_EXTRA_REF" =~ ^refs/heads/[A-Za-z0-9._/-]+$ ]]; then
+            echo "ERROR: provenance_extra_ref must be refs/heads/<branch>" >&2
+            exit 1
+          fi
           make \
             VERIFY_PROVENANCE=yes \
+            PROVENANCE_EXTRA_REF="$PROVENANCE_EXTRA_REF" \
             TEE_PLATFORM="$TEE_PLATFORM" \
             PODVM_DISTRO="$PODVM_DISTRO" \
             binaries

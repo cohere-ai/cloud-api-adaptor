@@ -129,8 +129,22 @@ if [ "$workflow_trigger" != "push" ] && [ "$workflow_trigger" != "workflow_dispa
 	verification_failed="1"
 fi
 
-if [ "$workflow_ref" != "refs/heads/main" ] && [ "$workflow_ref" != "refs/heads/cohere" ]; then
-	echo "Workflow ref mismatch: expected refs/heads/main or refs/heads/cohere, got $workflow_ref"
+# Accepted refs: upstream main, the legacy cohere branch, and Cohere version
+# branches (cohere-v<upstream release>, protected by a ruleset in each fork).
+# PROVENANCE_EXTRA_REF lets a dev build also accept one named ref, e.g. a
+# guest-components upgrade branch under review. CI release builds never set it.
+ref_allowed=""
+case "$workflow_ref" in
+refs/heads/main | refs/heads/cohere | refs/heads/cohere-v*)
+	ref_allowed="1"
+	;;
+esac
+if [ -n "${PROVENANCE_EXTRA_REF:-}" ] && [ "$workflow_ref" = "$PROVENANCE_EXTRA_REF" ]; then
+	echo "WARNING: accepting $workflow_ref via PROVENANCE_EXTRA_REF (dev builds only)"
+	ref_allowed="1"
+fi
+if [ -z "$ref_allowed" ]; then
+	echo "Workflow ref mismatch: expected refs/heads/main, refs/heads/cohere or refs/heads/cohere-v*, got $workflow_ref"
 	verification_failed="1"
 fi
 
