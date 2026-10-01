@@ -74,4 +74,4 @@ oci:
   # completed successfully.
   guest-components:
     registry: ghcr.io/cohere-ai/guest-components
-    reference: d9483ad0c1760b21fafcc6b7fb86c005d8cf09b1 # cohere-ai/guest-components#18, upstream v0.21.0
+    reference: 981a00c1d3c927769a01f72f2fb064f6864f6e3d # cohere-ai/guest-components#18, upstream v0.21.0 + dcd55ea1 backport
