@@ -86,6 +86,7 @@ endif
 		--build-arg PAUSE_BIN=$(PAUSE_BIN) \
 		--build-arg IMAGE_NAME=mkosi-podvm-binaries \
 		--build-arg VERIFY_PROVENANCE=$(VERIFY_PROVENANCE) \
+		$(if $(PROVENANCE_EXTRA_REF),--build-arg PROVENANCE_EXTRA_REF=$(PROVENANCE_EXTRA_REF),) \
 		$(if $(AUTHFILE),--build-arg AUTHFILE=$(AUTHFILE),) \
 		$(if $(DEFAULT_AGENT_POLICY_FILE),--build-arg DEFAULT_AGENT_POLICY_FILE=$(DEFAULT_AGENT_POLICY_FILE),) \
 		$(if $(filter $(PUSH),true),,-o type=local,dest="./resources/binaries-tree") \
@@ -104,10 +105,10 @@ image: insecure-builder
 	rm -rf ./build
 	@echo "Building image..."
 ifeq ($(SE_BOOT),true)
-	$(call run_mkosi_in_container,--profile production --image system)
+	$(call run_mkosi_in_container,--profile production)
 	sudo -E ../hack/build-s390x-se-image.sh
 else ifeq ($(ARCH),s390x)
-	$(call run_mkosi_in_container,--profile production --image system)
+	$(call run_mkosi_in_container,--profile production)
 	sudo -E ../hack/build-s390x-image.sh
 else
 	mkdir -p build
