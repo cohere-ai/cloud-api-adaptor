@@ -130,28 +130,35 @@ if [ "$workflow_trigger" != "push" ] && [ "$workflow_trigger" != "workflow_dispa
 fi
 
 # Accepted refs: upstream main for repositories such as kata-containers. The
-# Cohere guest-components fork is trusted only from its legacy cohere branch or
-# version branches named exactly cohere-v<MAJOR>.<MINOR>.<PATCH> (protected by
-# the "cohere version branches" ruleset in that fork).
-# PROVENANCE_EXTRA_REF lets a dev build also accept one named ref, e.g. a
-# guest-components upgrade branch under review. CI release builds never set it.
+# Cohere guest-components fork is trusted only from its legacy cohere branch and
+# release branches explicitly approved by this verifier.
+# PROVENANCE_EXTRA_REF lets a non-deploying dev build also accept one
+# guest-components ref, e.g. an upgrade branch under review. CI release and
+# deployed workflow builds never set it.
 readonly COHERE_GC_REPO="cohere-ai/guest-components"
-readonly COHERE_VERSION_REF_RE='^refs/heads/cohere-v[0-9]+\.[0-9]+\.[0-9]+$'
+readonly COHERE_GC_RELEASE_REFS=("refs/heads/cohere-v0.21.0")
 ref_allowed=""
 if [ "$repository" = "$COHERE_GC_REPO" ]; then
-	if [ "$workflow_ref" = "refs/heads/cohere" ] || [[ "$workflow_ref" =~ $COHERE_VERSION_REF_RE ]]; then
+	if [ "$workflow_ref" = "refs/heads/cohere" ]; then
 		ref_allowed="1"
+	else
+		for allowed_ref in "${COHERE_GC_RELEASE_REFS[@]}"; do
+			if [ "$workflow_ref" = "$allowed_ref" ]; then
+				ref_allowed="1"
+				break
+			fi
+		done
 	fi
 elif [ "$workflow_ref" = "refs/heads/main" ]; then
 	ref_allowed="1"
 fi
-if [ -n "${PROVENANCE_EXTRA_REF:-}" ] && [ "$workflow_ref" = "$PROVENANCE_EXTRA_REF" ]; then
-	echo "WARNING: accepting $workflow_ref via PROVENANCE_EXTRA_REF (dev builds only)"
+if [ "$repository" = "$COHERE_GC_REPO" ] && [ -n "${PROVENANCE_EXTRA_REF:-}" ] && [ "$workflow_ref" = "$PROVENANCE_EXTRA_REF" ]; then
+	echo "WARNING: accepting guest-components ref $workflow_ref via PROVENANCE_EXTRA_REF (non-deploying dev builds only)"
 	ref_allowed="1"
 fi
 if [ -z "$ref_allowed" ]; then
 	if [ "$repository" = "$COHERE_GC_REPO" ]; then
-		echo "Workflow ref mismatch: expected refs/heads/cohere or refs/heads/cohere-v<MAJOR>.<MINOR>.<PATCH>, got $workflow_ref"
+		echo "Workflow ref mismatch: expected refs/heads/cohere or one of: ${COHERE_GC_RELEASE_REFS[*]}, got $workflow_ref"
 	else
 		echo "Workflow ref mismatch: expected refs/heads/main for $repository, got $workflow_ref"
 	fi

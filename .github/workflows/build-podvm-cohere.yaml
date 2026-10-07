@@ -30,7 +30,7 @@ on:
         description: >-
           Dev only: also accept upstream artifacts built from this ref, e.g.
           refs/heads/yousef/upgrade-v0.21.0 for a guest-components upgrade under review.
-          Ignored for push builds.
+          Ignored for push, release-class, cohere-class, and deploying workflow_dispatch builds.
         required: false
         type: string
         default: ""
@@ -275,7 +275,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PODVM_DISTRO: ${{ needs.meta.outputs.distro }}
-          PROVENANCE_EXTRA_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.provenance_extra_ref || '' }}
+          PROVENANCE_EXTRA_REF: ${{ github.event_name == 'workflow_dispatch' && needs.meta.outputs.class == 'dev' && !inputs.deploy_gcp && !inputs.deploy_azure && inputs.provenance_extra_ref || '' }}
         run: |
           if [ -n "$PROVENANCE_EXTRA_REF" ] && ! [[ "$PROVENANCE_EXTRA_REF" =~ ^refs/heads/[A-Za-z0-9._/-]+$ ]]; then
             echo "ERROR: provenance_extra_ref must be refs/heads/<branch>" >&2
