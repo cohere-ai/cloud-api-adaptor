@@ -6,7 +6,7 @@
 # GH cli is used to verify.
 #
 # Asserts on the claims are:
-# - Triggered by push on the main branch
+# - Triggered by push or workflow_dispatch on an approved branch
 # - Built on the given repository
 # - The gh action workflow is matching the given digest
 # - The code is matching the given digest
@@ -129,8 +129,32 @@ if [ "$workflow_trigger" != "push" ] && [ "$workflow_trigger" != "workflow_dispa
 	verification_failed="1"
 fi
 
-if [ "$workflow_ref" != "refs/heads/main" ] && [ "$workflow_ref" != "refs/heads/cohere" ]; then
-	echo "Workflow ref mismatch: expected refs/heads/main or refs/heads/cohere, got $workflow_ref"
+# Accepted refs: upstream main for repositories such as kata-containers. The
+# Cohere guest-components fork is trusted only from its legacy cohere branch or
+# version branches named exactly cohere-v<MAJOR>.<MINOR>.<PATCH> (protected by
+# the "cohere version branches" ruleset in that fork).
+# PROVENANCE_EXTRA_REF lets a dev build also accept one named ref, e.g. a
+# guest-components upgrade branch under review. CI release builds never set it.
+readonly COHERE_GC_REPO="cohere-ai/guest-components"
+readonly COHERE_VERSION_REF_RE='^refs/heads/cohere-v[0-9]+\.[0-9]+\.[0-9]+$'
+ref_allowed=""
+if [ "$repository" = "$COHERE_GC_REPO" ]; then
+	if [ "$workflow_ref" = "refs/heads/cohere" ] || [[ "$workflow_ref" =~ $COHERE_VERSION_REF_RE ]]; then
+		ref_allowed="1"
+	fi
+elif [ "$workflow_ref" = "refs/heads/main" ]; then
+	ref_allowed="1"
+fi
+if [ -n "${PROVENANCE_EXTRA_REF:-}" ] && [ "$workflow_ref" = "$PROVENANCE_EXTRA_REF" ]; then
+	echo "WARNING: accepting $workflow_ref via PROVENANCE_EXTRA_REF (dev builds only)"
+	ref_allowed="1"
+fi
+if [ -z "$ref_allowed" ]; then
+	if [ "$repository" = "$COHERE_GC_REPO" ]; then
+		echo "Workflow ref mismatch: expected refs/heads/cohere or refs/heads/cohere-v<MAJOR>.<MINOR>.<PATCH>, got $workflow_ref"
+	else
+		echo "Workflow ref mismatch: expected refs/heads/main for $repository, got $workflow_ref"
+	fi
 	verification_failed="1"
 fi
 
