@@ -80,6 +80,7 @@ ARG PAUSE_VERSION
 ARG PAUSE_BIN
 ARG IMAGE_NAME
 ARG VERIFY_PROVENANCE
+ARG PROVENANCE_EXTRA_REF
 
 ENV AUTHFILE=${AUTHFILE}
 ENV PAUSE_REPO=${PAUSE_REPO}
@@ -104,7 +105,7 @@ WORKDIR /src/cloud-api-adaptor/podvm
 # Installs add-ons for foreign target, if required
 RUN ./hack/cross-build-extras.sh
 
-RUN LIBC=gnu make binaries
+RUN PROVENANCE_EXTRA_REF="${PROVENANCE_EXTRA_REF}" LIBC=gnu make binaries
 
 # afterburn is not packaged for Ubuntu/Debian and upstream ships no prebuilt
 # binary, so build it from source. Its Azure --check-in reports provisioning
