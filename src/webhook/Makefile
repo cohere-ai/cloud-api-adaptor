@@ -75,6 +75,8 @@ manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and Cust
 	@sed -i '/^metadata:/a\{{- if or .Values.certManager.enabled .Values.webhook.annotations }}\n  annotations:\n    {{- if .Values.certManager.enabled }}\n    cert-manager.io/inject-ca-from: {{ .Values.namespaceOverride | default .Release.Namespace }}/{{ .Values.namePrefix }}serving-cert\n    {{- end }}\n    {{- range $$k, $$v := .Values.webhook.annotations }}\n    {{ $$k }}: {{ $$v | quote }}\n    {{- end }}\n{{- end }}\n  {{- with .Values.webhook.labels }}\n  labels:\n    {{- range $$k, $$v := . }}\n    {{ $$k }}: {{ $$v | quote }}\n    {{- end }}\n  {{- end }}' chart/templates/webhook-config.yaml
 	# Add namespaceSelector to exclude webhook namespace and kube-system (equivalent to namespace_selector_patch.yaml)
 	@sed -i '/  name: mwebhook.peerpods.io/a\  namespaceSelector:\n    matchExpressions:\n    - key: kubernetes.io/metadata.name\n      operator: NotIn\n      values:\n      - {{ .Values.namespaceOverride | default .Release.Namespace }}\n      - kube-system' chart/templates/webhook-config.yaml
+	# Add matchConditions CEL filter so the webhook is only invoked for pods with the target runtimeClassName (requires K8s 1.28+)
+	@sed -i '/  failurePolicy:/a\  matchConditions:\n  - name: only-target-runtime\n    expression: >-\n      has(object.spec.runtimeClassName) \&\& object.spec.runtimeClassName == '"'"'{{ .Values.webhook.targetRuntimeClass }}'"'"'' chart/templates/webhook-config.yaml
 	# Add scope to rules (equivalent to inline scope patch in kustomization.yaml)
 	@sed -i '/    - pods/a\    scope: Namespaced' chart/templates/webhook-config.yaml
 
