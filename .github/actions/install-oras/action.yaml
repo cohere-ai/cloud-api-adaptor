@@ -1,0 +1,31 @@
+# Install the oras CLI pinned in versions.yaml (tools.oras) and check the
+# release tarball against a pinned SHA-256 first. oras release assets are
+# mutable, and the PodVM workflows trust oras for the digests they attest,
+# deploy and smoke test. Update sha256 together with tools.oras (from
+# oras_<version>_checksums.txt upstream).
+name: Install oras
+description: Install the pinned oras CLI after verifying its tarball checksum
+inputs:
+  sha256:
+    description: Expected SHA-256 of oras_<version>_linux_amd64.tar.gz
+    required: false
+    default: "5b3f1cbb86d869eee68120b9b45b9be983f3738442f87ee5f06b00edd0bab336"
+runs:
+  using: composite
+  steps:
+    - name: Install oras
+      shell: bash
+      env:
+        ORAS_SHA256: ${{ inputs.sha256 }}
+        VERSIONS_YAML: src/cloud-api-adaptor/versions.yaml
+      run: |
+        set -euo pipefail
+        command -v yq || sudo snap install yq
+        ORAS_VERSION=$(yq '.tools.oras' "$VERSIONS_YAML")
+        tarball="oras_${ORAS_VERSION}_linux_amd64.tar.gz"
+        curl -fsSLo "/tmp/${tarball}" "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/${tarball}"
+        echo "${ORAS_SHA256}  /tmp/${tarball}" | sha256sum --check --strict
+        tar -xzf "/tmp/${tarball}" -C /tmp oras
+        sudo install -m 0755 /tmp/oras /usr/local/bin/oras
+        rm -f "/tmp/${tarball}" /tmp/oras
+        oras version
