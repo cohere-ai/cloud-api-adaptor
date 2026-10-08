@@ -58,6 +58,10 @@ providerConfigs:
     # (required)
     GCP_NETWORK: ""
 
+    # Network tags for firewall rule targeting on peer pod VMs, comma separated
+    # (default: "")
+    # GCP_NETWORK_TAGS: ""
+
     # GCP Project ID
     # (required)
     GCP_PROJECT_ID: ""
@@ -65,6 +69,10 @@ providerConfigs:
     # Subnetwork ID to be used for the Pod VMs (required for custom subnet mode networks)
     # (default: "")
     # GCP_SUBNETWORK: ""
+
+    # Use Spot (preemptible) instances for peer pod VMs. Reduces cost significantly but VMs may be reclaimed by GCP at any time.
+    # (default: "false")
+    # GCP_USE_SPOT_INSTANCES: "false"
 
     # Zone
     # (required)
