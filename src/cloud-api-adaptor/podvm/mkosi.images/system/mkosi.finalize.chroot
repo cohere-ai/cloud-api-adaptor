@@ -36,6 +36,13 @@ if [[ "${ARCHITECTURE}" == "s390x" ]]; then
 	fi
 fi
 
+# NVIDIA GPU support. mkosi applies presets after the packages enable their
+# units, so enable them again here. They skip themselves on VMs without an
+# NVIDIA GPU (ExecCondition=/usr/local/bin/check-nvidia-gpu).
+if command -v nvidia-persistenced &>/dev/null; then
+    systemctl enable nvidia-persistenced.service nvidia-fabricmanager.service
+fi
+
 # Conditional SFTP support: enable process-user-data.path only if ENABLE_SFTP is set
 
 ENABLE_SFTP=${ENABLE_SFTP:-false}
