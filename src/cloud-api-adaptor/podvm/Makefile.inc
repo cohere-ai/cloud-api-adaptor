@@ -103,6 +103,7 @@ define pull_agent_artifact
 	$(eval OCI_DIGEST := $(shell oras resolve $(OCI_IMAGE):${tag}))
 	$(eval OCI_REF := $(OCI_IMAGE)@$(OCI_DIGEST))
 	$(if $(filter yes,$(VERIFY_PROVENANCE)),$(ROOT_DIR)hack/verify-provenance.sh \
+		$(if $(filter $(DISTRO_ARCH),amd64 arm64),-s,) \
 		-a $(OCI_REF) \
 		-r $(KATA_REPO) \
 		-d $(KATA_REF))
@@ -117,6 +118,7 @@ define pull_gc_artifact
 	$(eval OCI_DIGEST := $(shell oras resolve $(OCI_IMAGE):${tag}))
 	$(eval OCI_REF := $(OCI_IMAGE)@$(OCI_DIGEST))
 	$(if $(filter yes,$(VERIFY_PROVENANCE)),$(ROOT_DIR)hack/verify-provenance.sh \
+		$(if $(filter $(DISTRO_ARCH),amd64 arm64),-s,) \
 		-a $(OCI_REF) \
 		-r $(GUEST_COMPONENTS_REPO) \
 		-d $(GUEST_COMPONENTS_REF))
@@ -190,16 +192,12 @@ $(PAUSE): | $(PAUSE_SRC) $(UMOCI_SRC)/umoci
 $(ATTESTATION_AGENT): $(FORCE_TARGET)
 	$(call pull_gc_artifact,attestation-agent,$(TEE_PLATFORM)_$(ARCH))
 	tar xvJpf attestation-agent.tar.xz
-	# Cohere fork's tdx-snp-nvidia AA tarball bundles libnvat.so* (NVIDIA
-	# attestation-sdk-cpp) under lib/. Install it into the podvm rootfs so
-	# the dynamically linked AA can resolve it at runtime. Other AA
-	# variants ship a binary-only tarball, in which case lib/ is absent
-	# and this block is a no-op.
+	# Cohere fork's tdx-snp-nvidia AA tarball bundles its non-glibc shared
+	# library closure under lib/. Other variants ship a binary-only tarball.
 	install -D --compare attestation-agent "$@"
-	@set -- lib/libnvat.so* 2>/dev/null; \
-	if [ -d lib ] && [ -e "$$1" ]; then \
-	  install -d "$(FILES_DIR)/usr/lib"; \
-	  cp -a lib/libnvat.so* "$(FILES_DIR)/usr/lib/"; \
+	@if [ -d lib ]; then \
+	  install -d "$(FILES_DIR)/usr/local/lib/attestation-agent"; \
+	  cp -a lib/. "$(FILES_DIR)/usr/local/lib/attestation-agent/"; \
 	fi
 
 $(CONFIDENTIAL_DATA_HUB): $(FORCE_TARGET)

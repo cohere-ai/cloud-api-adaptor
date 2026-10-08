@@ -23,6 +23,7 @@ usage() {
 	echo "  -d <expected git sha1 from which the artifact was built>"
 	echo "  -r <repository on which the artifact was built>"
 	echo "  [-g] (optional. fetch attestation using github api)"
+	echo "  [-s] (optional. deny attestations produced on self-hosted runners)"
 	exit 1
 }
 
@@ -30,9 +31,10 @@ oci_artifact=""
 expected_digest=""
 repository=""
 github="0"
+assert_runner="0"
 
 # Parse options using getopts
-while getopts ":a:d:r:g" opt; do
+while getopts ":a:d:r:gs" opt; do
 	case "${opt}" in
 	a)
 		oci_artifact="${OPTARG}"
@@ -45,6 +47,9 @@ while getopts ":a:d:r:g" opt; do
 		;;
 	g)
 		github="1"
+		;;
+	s)
+		assert_runner="1"
 		;;
 	*)
 		usage
@@ -104,6 +109,7 @@ claims=$(
 			workflowDigest:  .githubWorkflowSHA,
 			workflowTrigger: .githubWorkflowTrigger,
 			workflowRef:     .githubWorkflowRef,
+			runner:          .runnerEnvironment,
 		}'
 )
 
@@ -111,6 +117,7 @@ digest=$(echo "$claims" | jq -r '.digest')
 workflow_digest=$(echo "$claims" | jq -r '.workflowDigest')
 workflow_trigger=$(echo "$claims" | jq -r '.workflowTrigger')
 workflow_ref=$(echo "$claims" | jq -r '.workflowRef')
+runner=$(echo "$claims" | jq -r '.runner')
 
 verification_failed=""
 
@@ -136,7 +143,7 @@ fi
 # guest-components ref, e.g. an upgrade branch under review. CI release and
 # deployed workflow builds never set it.
 readonly COHERE_GC_REPO="cohere-ai/guest-components"
-readonly COHERE_GC_RELEASE_REFS=("refs/heads/cohere-v0.21.0")
+readonly COHERE_GC_RELEASE_REFS=("refs/heads/cohere-v0.21.0" "refs/heads/cohere-v0.22.0")
 ref_allowed=""
 if [ "$repository" = "$COHERE_GC_REPO" ]; then
 	if [ "$workflow_ref" = "refs/heads/cohere" ]; then
@@ -162,6 +169,11 @@ if [ -z "$ref_allowed" ]; then
 	else
 		echo "Workflow ref mismatch: expected refs/heads/main for $repository, got $workflow_ref"
 	fi
+	verification_failed="1"
+fi
+
+if [ "$assert_runner" == "1" ] && [ "$runner" != "github-hosted" ]; then
+	echo "Runner mismatch: expected github-hosted, got $runner"
 	verification_failed="1"
 fi
 

@@ -6,12 +6,6 @@ on:
     branches: ["cohere"]
   workflow_dispatch:
     inputs:
-      distro:
-        description: "PodVM distro"
-        required: false
-        type: choice
-        options: [ubuntu, fedora]
-        default: ubuntu
       ssh_public_key:
         description: "SSH public key for debug images (optional)"
         required: false
@@ -29,24 +23,19 @@ on:
       provenance_extra_ref:
         description: >-
           Dev only: also accept guest-components artifacts built from this ref, e.g.
-          refs/heads/yousef/upgrade-v0.21.0 for an upgrade under review. Requires a
+          refs/heads/yousef/upgrade-v0.22.0 for an upgrade under review. Requires a
           dev-class ubuntu build with deploy_gcp and deploy_azure both false; otherwise
           the run fails. Ignored for push builds.
         required: false
         type: string
         default: ""
 
-permissions:
-  actions: read       # download smoke measurements artifact in the GCP smoke workflow
-  id-token: write      # OIDC token for build provenance attestation
-  attestations: write  # actions/attest-build-provenance
-  contents: read       # actions/checkout
-  packages: write      # push OCI artifact to GHCR
+permissions: {}
 
 # A second workflow_dispatch for the same ref must not race the first build or
 # replace the OCI artifact backing an already-published cloud image.
 concurrency:
-  group: podvm-build-${{ github.ref }}-${{ github.sha }}-${{ inputs.distro || 'ubuntu' }}
+  group: podvm-build-${{ github.ref }}-${{ github.sha }}
   cancel-in-progress: false
 
 env:
@@ -65,6 +54,9 @@ jobs:
   meta:
     name: Compute metadata
     runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout repository contents
+      packages: read # verify that computed OCI tags are unused
     outputs:
       distro: ${{ steps.compute.outputs.distro }}
       class: ${{ steps.compute.outputs.class }}
@@ -85,7 +77,7 @@ jobs:
       - name: Compute tags and image names
         id: compute
         env:
-          DISTRO: ${{ inputs.distro || 'ubuntu' }}
+          DISTRO: ubuntu
         run: |
           # Classify so consumers can pin (release/cohere) or auto-clean (dev).
           # Names are immutable; workflow reruns get an -r<attempt> suffix.
@@ -173,7 +165,7 @@ jobs:
             echo "ERROR: provenance_extra_ref requires a dev-class build with deploy_gcp=false and deploy_azure=false (got class=$IMAGE_CLASS deploy_gcp=$DEPLOY_GCP deploy_azure=$DEPLOY_AZURE)" >&2
             exit 1
           fi
-          # Only the ubuntu binaries Dockerfile forwards the override.
+          # The unified PodVM binaries image is Ubuntu-based.
           if [ "$DISTRO" != "ubuntu" ]; then
             echo "ERROR: provenance_extra_ref is only supported for distro=ubuntu (got $DISTRO)" >&2
             exit 1
@@ -224,6 +216,11 @@ jobs:
     name: Build PodVM (${{ matrix.profile }})
     needs: meta
     runs-on: ubuntu-latest
+    permissions:
+      attestations: write # publish build provenance
+      contents: read      # checkout repository contents
+      id-token: write     # sign build provenance via OIDC
+      packages: write     # publish the PodVM OCI artifact
     strategy:
       fail-fast: false
       matrix:
@@ -284,7 +281,7 @@ jobs:
 
       - name: Inject SSH key for debug image
         if: matrix.profile == 'debug'
-        working-directory: src/cloud-api-adaptor/podvm-mkosi
+        working-directory: src/cloud-api-adaptor/podvm
         env:
           SSH_PUBLIC_KEY: ${{ inputs.ssh_public_key || vars.DEBUG_SSH_PUBLIC_KEY }}
         run: |
@@ -298,34 +295,30 @@ jobs:
           echo "SSH key injected for debug image"
 
       - name: Build binaries
-        working-directory: src/cloud-api-adaptor/podvm-mkosi
+        working-directory: src/cloud-api-adaptor/podvm
         env:
           GH_TOKEN: ${{ github.token }}
-          PODVM_DISTRO: ${{ needs.meta.outputs.distro }}
           PROVENANCE_EXTRA_REF: ${{ github.event_name == 'workflow_dispatch' && needs.meta.outputs.class == 'dev' && !inputs.deploy_gcp && !inputs.deploy_azure && inputs.provenance_extra_ref || '' }}
         run: |
           make \
             VERIFY_PROVENANCE=yes \
             PROVENANCE_EXTRA_REF="$PROVENANCE_EXTRA_REF" \
             TEE_PLATFORM="$TEE_PLATFORM" \
-            PODVM_DISTRO="$PODVM_DISTRO" \
-            binaries
+            podvm-binaries
           docker system prune -af --volumes 2>/dev/null || true
           echo "Disk after binaries build:"
           df -h /
 
       - name: Build OS image
-        working-directory: src/cloud-api-adaptor/podvm-mkosi
+        working-directory: src/cloud-api-adaptor/podvm
         env:
           PROFILE: ${{ matrix.profile }}
-          PODVM_DISTRO: ${{ needs.meta.outputs.distro }}
         run: |
           TARGET="image"
           if [ "$PROFILE" = "debug" ]; then
             TARGET="image-debug"
           fi
           TEE_PLATFORM="$TEE_PLATFORM" \
-          PODVM_DISTRO="$PODVM_DISTRO" \
           make "$TARGET"
 
           ls -lh build/
@@ -334,7 +327,7 @@ jobs:
         run: |
           echo "=== Before cleanup ==="
           df -h /
-          mv src/cloud-api-adaptor/podvm-mkosi/build/system.raw /tmp/disk.raw
+          mv src/cloud-api-adaptor/podvm/build/system.raw /tmp/disk.raw
           docker system prune -af --volumes 2>/dev/null || true
           echo "=== After cleanup ==="
           df -h /
@@ -347,6 +340,7 @@ jobs:
           private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
           owner: cohere-ai
           repositories: cohere-cc-baselines
+          permission-contents: read
 
       - name: Extract UKI and predict TDX measurements
         id: measure
@@ -360,6 +354,7 @@ jobs:
           CAA_REF: ${{ github.ref_name }}
           DISTRO: ${{ needs.meta.outputs.distro }}
           PROFILE: ${{ matrix.profile }}
+          PROVENANCE_EXTRA_REF: ${{ inputs.provenance_extra_ref }}
         run: |
           cvm-measure extract-uki --disk /tmp/disk.raw --output /tmp/BOOTX64.EFI
 
@@ -409,7 +404,7 @@ jobs:
           # (e.g. `nvidia-driver-580-open=580.159.04-1ubuntu1`). Surface the
           # `epoch:upstream-debian` portion so downstream tooling (model-integrity
           # kata-policy) can bind attestation to a specific driver build.
-          DISTRO_CONF="src/cloud-api-adaptor/podvm-mkosi/mkosi.images/system/mkosi.conf.d/${DISTRO}.conf"
+          DISTRO_CONF="src/cloud-api-adaptor/podvm/mkosi.images/system/mkosi.conf.d/${DISTRO}.conf"
           if [ ! -f "$DISTRO_CONF" ]; then
             echo "ERROR: mkosi distro config not found: $DISTRO_CONF" >&2
             exit 1
@@ -446,6 +441,7 @@ jobs:
             --arg caa_version "$CAA_REF" \
             --arg distro "$DISTRO" \
             --arg profile "$PROFILE" \
+            --arg provenance_extra_ref "$PROVENANCE_EXTRA_REF" \
             --arg tee_platform "$TEE_PLATFORM" \
             --arg build_date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             '$ARGS.named
@@ -556,6 +552,11 @@ jobs:
   deploy-gcp:
     name: Deploy ${{ matrix.profile }} to GCP
     needs: [meta, build]
+    permissions:
+      attestations: read # verify build provenance in the called workflow
+      contents: read     # checkout repository contents in the called workflow
+      id-token: write    # authenticate to GCP in the called workflow
+      packages: read     # pull the PodVM OCI artifact in the called workflow
     if: |
       needs.build.result == 'success' &&
       (github.event_name == 'push' ||
@@ -574,6 +575,12 @@ jobs:
   smoke-gcp-tdx:
     name: Smoke TDX measurements (GCP debug image)
     needs: [meta, deploy-gcp]
+    permissions:
+      actions: read      # download predicted measurements in the called workflow
+      attestations: read # verify build provenance in the called workflow
+      contents: read     # checkout repository contents in the called workflow
+      id-token: write    # authenticate to GCP in the called workflow
+      packages: read     # pull the PodVM OCI artifact in the called workflow
     if: |
       needs.deploy-gcp.result == 'success' &&
       (github.event_name == 'push' ||
@@ -595,6 +602,11 @@ jobs:
   deploy-azure:
     name: Deploy ${{ matrix.profile }} to Azure
     needs: [meta, build]
+    permissions:
+      attestations: read # verify build provenance in the called workflow
+      contents: read     # checkout repository contents in the called workflow
+      id-token: write    # authenticate to Azure in the called workflow
+      packages: read     # pull the PodVM OCI artifact in the called workflow
     if: |
       needs.build.result == 'success' &&
       github.event_name == 'workflow_dispatch' &&

@@ -370,6 +370,25 @@ if ! grep -q 'sharedConfig.PROBE_PORT is managed by the chart' "${TMPDIR_ROOT}/r
   exit 1
 fi
 
+echo "Rendering tlsProfile into provider ConfigMaps..."
+TLS_OUT="${TMPDIR_ROOT}/tls.yaml"
+render "${FIXTURES}/multi-provider-minimal.yaml" "${TLS_OUT}" \
+  --set 'tlsProfile.minVersion=VersionTLS13'
+assert_count "${TLS_OUT}" 'TLS_MIN_VERSION: "VersionTLS13"' 2
+assert_missing "${MINIMAL_OUT}" 'TLS_MIN_VERSION'
+
+echo "Expecting raw TLS config override to fail..."
+if render "${FIXTURES}/multi-provider-minimal.yaml" "${TMPDIR_ROOT}/raw-tls.yaml" \
+  --set-string 'providers[0].config.TLS_MIN_VERSION=VersionTLS12' \
+  2>"${TMPDIR_ROOT}/raw-tls.err"; then
+  echo "FAIL: raw TLS config override rendered successfully" >&2
+  exit 1
+fi
+assert_contains "${TMPDIR_ROOT}/raw-tls.err" 'config.TLS_MIN_VERSION is managed by the chart'
+
+echo "Rendering direct-volumes mount in provider DaemonSets..."
+assert_count "${MINIMAL_OUT}" 'mountPath: /run/kata-containers/shared/direct-volumes' 2
+
 echo "Expecting raw multi-provider allowlist override to fail..."
 if render "${FIXTURES}/multi-provider-minimal.yaml" "${TMPDIR_ROOT}/raw-allowlist.yaml" \
   --set-string 'providers[0].config.ALLOWED_CLOUD_CONFIG_ANNOTATIONS=io.katacontainers.config.hypervisor.gcp_zone' \

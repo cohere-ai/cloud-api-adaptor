@@ -31,6 +31,8 @@ var logger = log.New(log.Writer(), "[adaptor/cloud/azure] ", log.LstdFlags|log.L
 var errNotReady = errors.New("address not ready")
 var errNotFound = errors.New("VM name not found")
 
+var diskResourceIDRe = regexp.MustCompile(`resourceGroups/([^/]+)/providers/Microsoft\.Compute/disks/(.+)$`)
+
 const (
 	maxInstanceNameLen = 63
 )
@@ -115,6 +117,7 @@ func (p *azureProvider) getIPs(ctx context.Context, vm *armcompute.VirtualMachin
 	if err != nil {
 		return nil, fmt.Errorf("create network interfaces client: %w", err)
 	}
+	rgName := p.serviceConfig.ResourceGroupName
 	nicRefs := vm.Properties.NetworkProfile.NetworkInterfaces
 
 	var ips []netip.Addr
@@ -124,7 +127,7 @@ func (p *azureProvider) getIPs(ctx context.Context, vm *armcompute.VirtualMachin
 		nicID := *nicRef.ID
 		// the last segment of a nic id is the name
 		nicName := nicID[strings.LastIndex(nicID, "/")+1:]
-		nic, err := nicClient.Get(ctx, p.serviceConfig.ResourceGroupName, nicName, nil)
+		nic, err := nicClient.Get(ctx, rgName, nicName, nil)
 		if err != nil {
 			return nil, fmt.Errorf("get network interface: %w", err)
 		}
@@ -144,7 +147,7 @@ func (p *azureProvider) getIPs(ctx context.Context, vm *armcompute.VirtualMachin
 			ipID := *ipc.Properties.PublicIPAddress.ID
 			// the last segment of a ip id is the name
 			ipName := ipID[strings.LastIndex(ipID, "/")+1:]
-			publicIP, err := publicIPClient.Get(ctx, p.serviceConfig.ResourceGroupName, ipName, nil)
+			publicIP, err := publicIPClient.Get(ctx, rgName, ipName, nil)
 			if err != nil {
 				return nil, fmt.Errorf("get public ip: %w", err)
 			}
@@ -293,13 +296,20 @@ func (p *azureProvider) CreateInstance(ctx context.Context, podName, sandboxID s
 	// The operator default is configured with -zone; a permitted per-pod
 	// annotation may override it.
 	zone := provider.ChooseString(spec.Zone, p.serviceConfig.Zone)
-	disableCVM := p.serviceConfig.DisableCVM
-	enableSecureBoot := p.serviceConfig.EnableSecureBoot
 	usePublicIP := provider.ChooseBool(spec.UsePublicIP, p.serviceConfig.UsePublicIP)
 	rootVolumeSize := provider.ChooseInt64(spec.RootVolumeSize, p.serviceConfig.RootVolumeSize)
 	tags := provider.MergeStringMap(spec.Tags, p.serviceConfig.Tags)
 
-	vmParameters, err := p.getVMParameters(instanceSize, diskName, cloudConfigData, sshBytes, instanceName, nicName, imageID, zone, disableCVM, enableSecureBoot, usePublicIP, rootVolumeSize, tags)
+	if len(spec.Volumes) > 0 {
+		if err := p.validateDiskCount(ctx, instanceSize, len(spec.Volumes)); err != nil {
+			return nil, err
+		}
+		if err := p.validateDisks(ctx, spec.Volumes); err != nil {
+			return nil, err
+		}
+	}
+
+	vmParameters, err := p.getVMParameters(instanceSize, diskName, cloudConfigData, sshBytes, instanceName, nicName, imageID, zone, usePublicIP, rootVolumeSize, tags, spec.Volumes...)
 	if err != nil {
 		return nil, err
 	}
@@ -385,8 +395,8 @@ func (p *azureProvider) ConfigVerifier() error {
 
 // Add SelectInstanceType method to select an instance type based on the memory and vcpu requirements
 func (p *azureProvider) selectInstanceType(ctx context.Context, spec provider.InstanceTypeSpec) (string, error) {
-	instanceSizes := []string(p.serviceConfig.InstanceSizes)
-	return provider.SelectInstanceTypeToUse(spec, p.serviceConfig.InstanceSizeSpecList, instanceSizes, p.serviceConfig.Size)
+
+	return provider.SelectInstanceTypeToUse(spec, p.serviceConfig.InstanceSizeSpecList, p.serviceConfig.InstanceSizes, p.serviceConfig.Size)
 }
 
 // Add a method to populate InstanceSizeSpecList for all the instanceSizes
@@ -432,6 +442,108 @@ func (p *azureProvider) updateInstanceSizeSpecList() error {
 	return nil
 }
 
+// validateDiskCount checks that the requested number of data disks does not
+// exceed the maximum supported by the target VM size.
+func (p *azureProvider) validateDiskCount(ctx context.Context, instanceSize string, diskCount int) error {
+	vmSizesClient, err := armcompute.NewVirtualMachineSizesClient(p.serviceConfig.SubscriptionID, p.azureClient, nil)
+	if err != nil {
+		logger.Printf("WARNING: could not create VM sizes client for disk count validation: %v", err)
+		return nil
+	}
+
+	pager := vmSizesClient.NewListPager(p.serviceConfig.Region, nil)
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
+		if err != nil {
+			logger.Printf("WARNING: could not list VM sizes for disk count validation: %v", err)
+			return nil
+		}
+		for _, vmSize := range page.Value {
+			if vmSize.Name != nil && *vmSize.Name == instanceSize && vmSize.MaxDataDiskCount != nil {
+				maxDisks := int(*vmSize.MaxDataDiskCount)
+				if diskCount > maxDisks {
+					return fmt.Errorf("requested %d data disks but VM size %s supports at most %d",
+						diskCount, instanceSize, maxDisks)
+				}
+				logger.Printf("Disk count validation: %d/%d data disks for VM size %s", diskCount, maxDisks, instanceSize)
+				return nil
+			}
+		}
+	}
+
+	logger.Printf("WARNING: could not find max disk count for VM size %s, skipping validation", instanceSize)
+	return nil
+}
+
+// validateDisks checks that all CSI volumes exist, are not already attached,
+// and are in the same region as the target VM.
+func (p *azureProvider) validateDisks(ctx context.Context, volumes []provider.CloudVolume) error {
+	disksClient, err := armcompute.NewDisksClient(p.serviceConfig.SubscriptionID, p.azureClient, nil)
+	if err != nil {
+		return fmt.Errorf("creating disks client for zone validation: %w", err)
+	}
+
+	var errs []string
+	for _, vol := range volumes {
+		rg, diskName, parseErr := parseDiskResourceID(vol.DiskID)
+		if parseErr != nil {
+			logger.Printf("WARNING: could not parse resource group/disk name from disk ID %q, skipping validation", vol.DiskID)
+			continue
+		}
+
+		disk, err := disksClient.Get(ctx, rg, diskName, nil)
+		if err != nil {
+			if strings.Contains(err.Error(), "ResourceNotFound") || strings.Contains(err.Error(), "NotFound") {
+				errs = append(errs, fmt.Sprintf("disk %q does not exist in resource group %q", diskName, rg))
+			} else {
+				errs = append(errs, fmt.Sprintf("disk %q is inaccessible: %v", vol.DiskID, err))
+			}
+			continue
+		}
+
+		if disk.Properties != nil && disk.Properties.DiskState != nil {
+			state := *disk.Properties.DiskState
+			if state == armcompute.DiskStateAttached || state == armcompute.DiskStateReserved {
+				managedBy := ""
+				if disk.ManagedBy != nil {
+					managedBy = *disk.ManagedBy
+				}
+				errs = append(errs, fmt.Sprintf("disk %q is in state %q (attached to %s) — cannot attach to new PodVM",
+					vol.DiskID, state, managedBy))
+				continue
+			}
+		}
+
+		diskLocation := strings.ToLower(strings.ReplaceAll(*disk.Location, " ", ""))
+		vmLocation := strings.ToLower(strings.ReplaceAll(p.serviceConfig.Region, " ", ""))
+
+		if diskLocation != vmLocation {
+			errs = append(errs, fmt.Sprintf("disk %q is in region %q but PodVM targets region %q",
+				vol.DiskID, *disk.Location, p.serviceConfig.Region))
+			continue
+		}
+
+		if len(disk.Zones) > 0 {
+			logger.Printf("Disk %q is in zone(s) %v — ensure PodVM targets a compatible zone", vol.DiskID, disk.Zones)
+		}
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("disk pre-validation failed:\n  - %s", strings.Join(errs, "\n  - "))
+	}
+	return nil
+}
+
+// parseDiskResourceID extracts resource group and disk name from an Azure
+// resource ID like /subscriptions/.../resourceGroups/RG/providers/Microsoft.Compute/disks/NAME.
+func parseDiskResourceID(diskID string) (resourceGroup, diskName string, err error) {
+	match := diskResourceIDRe.FindStringSubmatch(diskID)
+	if len(match) < 3 {
+		return "", "", fmt.Errorf("cannot parse Azure disk resource ID: %q", diskID)
+	}
+	return match[1], match[2], nil
+}
+
 func (p *azureProvider) getResourceTags(tags map[string]string) map[string]*string {
 	result := map[string]*string{}
 	for k, v := range tags {
@@ -440,7 +552,7 @@ func (p *azureProvider) getResourceTags(tags map[string]string) map[string]*stri
 	return result
 }
 
-func (p *azureProvider) getVMParameters(instanceSize, diskName, cloudConfig string, sshBytes []byte, instanceName, nicName, imageID, zone string, disableCVM, enableSecureBoot, usePublicIP bool, rootVolumeSize int64, tags map[string]string) (*armcompute.VirtualMachine, error) {
+func (p *azureProvider) getVMParameters(instanceSize, diskName, cloudConfig string, sshBytes []byte, instanceName, nicName, imageID, zone string, usePublicIP bool, rootVolumeSize int64, tags map[string]string, csiVolumes ...provider.CloudVolume) (*armcompute.VirtualMachine, error) {
 	userDataB64 := base64.StdEncoding.EncodeToString([]byte(cloudConfig))
 
 	// Azure limits the base64 encrypted userData to 64KB.
@@ -451,7 +563,7 @@ func (p *azureProvider) getVMParameters(instanceSize, diskName, cloudConfig stri
 	}
 	var managedDiskParams *armcompute.ManagedDiskParameters
 	var securityProfile *armcompute.SecurityProfile
-	if !disableCVM {
+	if !p.serviceConfig.DisableCVM {
 		managedDiskParams = &armcompute.ManagedDiskParameters{
 			StorageAccountType: to.Ptr(armcompute.StorageAccountTypesPremiumLRS),
 			SecurityProfile: &armcompute.VMDiskSecurityProfile{
@@ -462,7 +574,7 @@ func (p *azureProvider) getVMParameters(instanceSize, diskName, cloudConfig stri
 		securityProfile = &armcompute.SecurityProfile{
 			SecurityType: to.Ptr(armcompute.SecurityTypesConfidentialVM),
 			UefiSettings: &armcompute.UefiSettings{
-				SecureBootEnabled: to.Ptr(enableSecureBoot),
+				SecureBootEnabled: to.Ptr(p.serviceConfig.EnableSecureBoot),
 				VTpmEnabled:       to.Ptr(true),
 			},
 		}
@@ -500,6 +612,20 @@ func (p *azureProvider) getVMParameters(instanceSize, diskName, cloudConfig stri
 		logger.Printf("Setting root volume size to %d GB", rootVolumeSize)
 	}
 
+	// Attach CSI volumes as data disks
+	var dataDisks []*armcompute.DataDisk
+	for i, vol := range csiVolumes {
+		logger.Printf("Attaching data disk: LUN %d, ID: %s", i, vol.DiskID)
+		dataDisks = append(dataDisks, &armcompute.DataDisk{
+			Lun:          to.Ptr(int32(i)), //nolint:gosec // bounded above
+			CreateOption: to.Ptr(armcompute.DiskCreateOptionTypesAttach),
+			DeleteOption: to.Ptr(armcompute.DiskDeleteOptionTypesDetach),
+			ManagedDisk: &armcompute.ManagedDiskParameters{
+				ID: to.Ptr(vol.DiskID),
+			},
+		})
+	}
+
 	vmParameters := armcompute.VirtualMachine{
 		Location: to.Ptr(p.serviceConfig.Region),
 		Properties: &armcompute.VirtualMachineProperties{
@@ -509,6 +635,7 @@ func (p *azureProvider) getVMParameters(instanceSize, diskName, cloudConfig stri
 			StorageProfile: &armcompute.StorageProfile{
 				ImageReference: imgRef,
 				OSDisk:         osDisk,
+				DataDisks:      dataDisks,
 			},
 			OSProfile: &armcompute.OSProfile{
 				AdminUsername: to.Ptr(p.serviceConfig.SSHUserName),

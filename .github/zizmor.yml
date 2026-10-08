@@ -1,0 +1,10 @@
+rules:
+  secrets-outside-env:
+    config:
+      # These automation credentials are repository secrets. Moving them to
+      # environments requires a coordinated repository-settings migration.
+      allow:
+        - GH_APP_CLIENT_ID
+        - GH_APP_PRIVATE_KEY
+        - SYNC_APP_CLIENT_ID
+        - SYNC_APP_PRIVATE_KEY

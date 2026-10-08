@@ -1,0 +1,50 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-10-07T23:01:38Z",
+  "run_id": "20261007-224656-7a4c",
+  "intent": "Preserve the complete NVAT shared-library closure in the PodVM, validate the installed attestation agent against the final rootfs, and narrowly trust the Cohere v0.22 publication branch.",
+  "scope": {
+    "type": "local-diff",
+    "base": "HEAD",
+    "base_sha": "bea681e7a9c36bb53ccd2967af9dc0252cdd0be6",
+    "head_sha": "bea681e7a9c36bb53ccd2967af9dc0252cdd0be6",
+    "diff_sha256": "7bbeba41f8fcca2de3dab8f497f7fb268d33a345702bcc6a207a199647957986",
+    "artifact_path": "/tmp/compound-engineering-502/ce-code-review/20261007-224656-7a4c"
+  },
+  "reviewers": {
+    "primary": "OpenCode",
+    "adversarial": [
+      "adversarial-reviewer"
+    ],
+    "agents": []
+  },
+  "status": "reviewed",
+  "outcome": {
+    "summary": "The consumer-side rootfs validation finding was resolved and re-reviewed. Merge remains blocked on a trusted publication.",
+    "blocking_reason": "The pinned artifact and the complete-closure candidate were published from feature branches, not refs/heads/cohere-v0.22.0."
+  },
+  "findings_summary": {
+    "total": 1,
+    "p0": 0,
+    "p1": 1,
+    "p2": 0,
+    "p3": 0
+  },
+  "verification": [
+    "bash -n verify-provenance.sh mkosi.finalize.chroot",
+    "shellcheck verify-provenance.sh mkosi.finalize.chroot",
+    "git diff --check",
+    "Ubuntu 24.04 complete-closure ldd test passed",
+    "Ubuntu 24.04 partial-closure test reported libxml2.so.2 => not found",
+    "Ubuntu 24.04 static-binary ldd path passed",
+    "Mock provenance refs accepted main, cohere, and cohere-v0.22.0 and rejected cohere-v0.23.0",
+    "Real artifact provenance rejected the feature-branch workflow ref"
+  ],
+  "risk_notes": [
+    "No trusted cohere-v0.22.0 publication exists yet, so versions.yaml was intentionally not updated.",
+    "Cross-model adversarial review was unavailable because cursor-agent required authentication; one in-process adversarial reviewer was used instead."
+  ],
+  "notes": [
+    "The review receipt helper referenced by the skill was absent from the installed skill directory, so this schema-compliant receipt was written directly."
+  ]
+}

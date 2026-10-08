@@ -22,4 +22,10 @@ data:
   {{ $key }}: "{{ $value }}"
 {{- end }}
 {{- end }}
+{{- if .Values.tlsProfile.minVersion }}
+  TLS_MIN_VERSION: "{{ .Values.tlsProfile.minVersion }}"
+{{- end }}
+{{- if .Values.tlsProfile.cipherSuites }}
+  TLS_CIPHER_SUITES: "{{ .Values.tlsProfile.cipherSuites }}"
+{{- end }}
 {{- end }}

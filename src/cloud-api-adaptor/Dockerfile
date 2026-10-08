@@ -2,7 +2,7 @@ ARG BUILD_TYPE=dev
 # golang:1.25.12 (based on Debian 13 trixie)
 ARG BUILDER_BASE=golang@sha256:d7912cedddfa15b2900a8dfb7187df0af5ec2cb424a371139b5b352fd3e6b740
 # debian:trixie-slim (matches golang:1.25.12 base for library compatibility)
-# Multi-arch manifest list digest supporting amd64, arm64, ppc64le,, s390x
+# Multi-arch manifest list digest supporting amd64, arm64, ppc64le, s390x
 ARG BASE=debian@sha256:28de0877c2189802884ccd20f15ee41c203573bd87bb6b883f5f46362d24c5c2
 
 # This dockerfile uses Go cross-compilation to build the binary,

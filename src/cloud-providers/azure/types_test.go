@@ -80,6 +80,7 @@ func TestGetVMParametersAppliesOverrides(t *testing.T) {
 			Region:          "eastus2",
 			SubnetID:        "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Network/virtualNetworks/vnet/subnets/peerpod",
 			SecurityGroupID: "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Network/networkSecurityGroups/nsg",
+			DisableCVM:      true,
 		},
 	}
 
@@ -92,9 +93,7 @@ func TestGetVMParametersAppliesOverrides(t *testing.T) {
 		"nic-name",
 		"/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Compute/images/img",
 		"2",
-		true,  // disable CVM
-		false, // secure boot
-		true,  // public IP
+		true, // public IP
 		150,
 		map[string]string{"env": "test"},
 	)

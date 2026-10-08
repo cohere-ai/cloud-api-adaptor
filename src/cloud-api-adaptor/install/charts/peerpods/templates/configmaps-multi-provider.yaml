@@ -54,6 +54,12 @@ data:
 {{- with $provider.allowedCloudConfigAnnotations }}
   ALLOWED_CLOUD_CONFIG_ANNOTATIONS: {{ join "," . | quote }}
 {{- end }}
+{{- if $.Values.tlsProfile.minVersion }}
+  TLS_MIN_VERSION: {{ $.Values.tlsProfile.minVersion | quote }}
+{{- end }}
+{{- if $.Values.tlsProfile.cipherSuites }}
+  TLS_CIPHER_SUITES: {{ $.Values.tlsProfile.cipherSuites | quote }}
+{{- end }}
 {{- $config := mergeOverwrite (deepCopy ($provider.config | default dict)) ($.Values.sharedConfig | default dict) }}
 {{- range $key, $value := $config }}
   {{ $key }}: {{ $value | quote }}

@@ -68,6 +68,7 @@ type InstanceTypeSpec struct {
 	GPUs           int64
 	Image          string
 	MultiNic       bool
+	Volumes        []CloudVolume
 	UseSpot        bool
 	UseSpotSet     bool
 	Zone           string
@@ -77,4 +78,8 @@ type InstanceTypeSpec struct {
 	NetworkTags    []string
 	Tags           map[string]string
 	InstanceTypes  []string
+}
+
+type CloudVolume struct {
+	DiskID string
 }
