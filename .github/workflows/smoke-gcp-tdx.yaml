@@ -360,14 +360,18 @@ jobs:
           replay = Path("/tmp/runtime-rtmrs.txt").read_text()
           runtime = dict(re.findall(r"^(rtmr[0-3]):\s*([0-9a-f]{96})$", replay, re.M))
 
+          # MRTD and RTMR0 are not checked: they depend on GCP firmware and
+          # VMM events rather than on the PodVM image.
+          checked = ("rtmr1", "rtmr2", "rtmr3")
+
           errors = []
-          for key in ("rtmr0", "rtmr1", "rtmr2", "rtmr3"):
+          for key in checked:
               if runtime.get(key) != expected[key]:
                   errors.append(f"{key}: expected {expected[key]}, got {runtime.get(key)}")
 
           # The quote is the AA-produced object used by ITA. Assert the full
           # expected values are present in it without relying on DCAP offsets.
-          for key in ("mrtd", "rtmr0", "rtmr1", "rtmr2", "rtmr3"):
+          for key in checked:
               needle = bytes.fromhex(expected[key])
               if needle not in quote:
                   errors.append(f"{key}: expected value not found in AA quote")

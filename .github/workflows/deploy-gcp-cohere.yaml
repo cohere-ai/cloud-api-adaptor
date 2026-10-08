@@ -87,6 +87,16 @@ jobs:
 
           cat measurements.json
 
+          if ! jq -e '.provenance_extra_ref? | type == "string"' measurements.json >/dev/null; then
+            echo "ERROR: refusing to deploy artifact without explicit provenance_extra_ref metadata" >&2
+            exit 1
+          fi
+          PROVENANCE_EXTRA_REF=$(jq -r '.provenance_extra_ref' measurements.json)
+          if [ -n "$PROVENANCE_EXTRA_REF" ]; then
+            echo "ERROR: refusing to deploy development artifact built with provenance_extra_ref=$PROVENANCE_EXTRA_REF" >&2
+            exit 1
+          fi
+
           IMAGE_NAME=$(jq -r '.image_name' measurements.json)
           if [ -z "$IMAGE_NAME" ] || [ "$IMAGE_NAME" = "null" ]; then
             echo "ERROR: image_name is missing or empty in measurements.json"

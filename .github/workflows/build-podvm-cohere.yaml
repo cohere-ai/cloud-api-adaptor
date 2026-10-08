@@ -20,6 +20,15 @@ on:
         required: false
         type: boolean
         default: false
+      provenance_extra_ref:
+        description: >-
+          Dev only: also accept guest-components artifacts built from this ref, e.g.
+          refs/heads/yousef/upgrade-v0.22.0 for an upgrade under review. Requires a
+          dev-class ubuntu build with deploy_gcp and deploy_azure both false; otherwise
+          the run fails. Ignored for push builds.
+        required: false
+        type: string
+        default: ""
 
 permissions:
   actions: read       # download smoke measurements artifact in the GCP smoke workflow
@@ -138,6 +147,32 @@ jobs:
             echo "smoke_machine_type=$SMOKE_MACHINE_TYPE"
             echo "smoke_ram_gib=$SMOKE_RAM_GIB"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Validate provenance_extra_ref
+        env:
+          PROVENANCE_EXTRA_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.provenance_extra_ref || '' }}
+          IMAGE_CLASS: ${{ steps.compute.outputs.class }}
+          DISTRO: ${{ steps.compute.outputs.distro }}
+          DEPLOY_GCP: ${{ inputs.deploy_gcp }}
+          DEPLOY_AZURE: ${{ inputs.deploy_azure }}
+        run: |
+          [ -z "$PROVENANCE_EXTRA_REF" ] && exit 0
+          if ! [[ "$PROVENANCE_EXTRA_REF" =~ ^refs/heads/[A-Za-z0-9._/-]+$ ]]; then
+            echo "ERROR: provenance_extra_ref must be refs/heads/<branch>" >&2
+            exit 1
+          fi
+          # The override must never reach a published cloud image or a
+          # cohere/release-class artifact. Fail loudly instead of dropping it.
+          if [ "$IMAGE_CLASS" != "dev" ] || [ "$DEPLOY_GCP" = "true" ] || [ "$DEPLOY_AZURE" = "true" ]; then
+            echo "ERROR: provenance_extra_ref requires a dev-class build with deploy_gcp=false and deploy_azure=false (got class=$IMAGE_CLASS deploy_gcp=$DEPLOY_GCP deploy_azure=$DEPLOY_AZURE)" >&2
+            exit 1
+          fi
+          # The unified PodVM binaries image is Ubuntu-based.
+          if [ "$DISTRO" != "ubuntu" ]; then
+            echo "ERROR: provenance_extra_ref is only supported for distro=ubuntu (got $DISTRO)" >&2
+            exit 1
+          fi
+          echo "provenance_extra_ref accepted for this non-deploying dev build: $PROVENANCE_EXTRA_REF"
 
       - name: Install ORAS
         run: |
@@ -260,9 +295,11 @@ jobs:
         working-directory: src/cloud-api-adaptor/podvm
         env:
           GH_TOKEN: ${{ github.token }}
+          PROVENANCE_EXTRA_REF: ${{ github.event_name == 'workflow_dispatch' && needs.meta.outputs.class == 'dev' && !inputs.deploy_gcp && !inputs.deploy_azure && inputs.provenance_extra_ref || '' }}
         run: |
           make \
             VERIFY_PROVENANCE=yes \
+            PROVENANCE_EXTRA_REF="$PROVENANCE_EXTRA_REF" \
             TEE_PLATFORM="$TEE_PLATFORM" \
             podvm-binaries
           docker system prune -af --volumes 2>/dev/null || true
@@ -313,6 +350,7 @@ jobs:
           CAA_REF: ${{ github.ref_name }}
           DISTRO: ${{ needs.meta.outputs.distro }}
           PROFILE: ${{ matrix.profile }}
+          PROVENANCE_EXTRA_REF: ${{ inputs.provenance_extra_ref }}
         run: |
           cvm-measure extract-uki --disk /tmp/disk.raw --output /tmp/BOOTX64.EFI
 
@@ -399,6 +437,7 @@ jobs:
             --arg caa_version "$CAA_REF" \
             --arg distro "$DISTRO" \
             --arg profile "$PROFILE" \
+            --arg provenance_extra_ref "$PROVENANCE_EXTRA_REF" \
             --arg tee_platform "$TEE_PLATFORM" \
             --arg build_date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             '$ARGS.named
