@@ -9,9 +9,14 @@ metadata:
     app.kubernetes.io/managed-by: {{ .Release.Service }}
 data:
   CLOUD_PROVIDER: "{{ .Values.provider }}"
+{{- with .Values.allowedCloudConfigAnnotations }}
+  ALLOWED_CLOUD_CONFIG_ANNOTATIONS: {{ join "," . | quote }}
+{{- end }}
 {{- $config := index .Values.providerConfigs .Values.provider | default dict }}
 {{- range $key, $value := $config }}
+{{- if not (and (eq $key "ALLOWED_CLOUD_CONFIG_ANNOTATIONS") $.Values.allowedCloudConfigAnnotations) }}
   {{ $key }}: "{{ $value }}"
+{{- end }}
 {{- end }}
 {{- if .Values.tlsProfile.minVersion }}
   TLS_MIN_VERSION: "{{ .Values.tlsProfile.minVersion }}"
