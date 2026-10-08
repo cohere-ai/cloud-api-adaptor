@@ -327,6 +327,12 @@ kata-deploy:
   # consumers must supply matching nodeSelector / tolerations via --set.
   nodeSelector: {}
   tolerations: []
+  # kata-deploy 3.31 defaults to system-node-critical. GKE only admits that
+  # priority class outside kube-system when the namespace has a matching
+  # ResourceQuota, so the DaemonSet cannot create pods in
+  # confidential-containers-system. Keep the pre-3.31 behavior (no priority
+  # class); set it per environment if the quota is added.
+  priorityClassName: ""
   # No external snapshotter needed. The kata-remote shim uses
   # experimental_force_guest_pull (set in configuration-remote.toml)
   # to pull images inside the guest VM without nydus-snapshotter.

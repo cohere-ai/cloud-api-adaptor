@@ -14,10 +14,11 @@ define gen-provider-values
 		"provider: \(.provider)", \
 		"", \
 		(if .provider == "libvirt" or .provider == "docker" then \
-			"# Dev image required for this provider (includes CGO bindings)", \
-			"# Update to dev-<commit> at release time", \
+			"# Upstream dev image required for this provider (includes CGO bindings).", \
+			"# The Cohere fork publishes release-only images, so keep this explicit override.", \
 			"image:", \
-			"  tag: \"2d2e7c2c0736ec41c889cd98442a598b8b93bc0b-dev\"", \
+			"  name: \"quay.io/confidential-containers/cloud-api-adaptor\"", \
+			"  tag: \"f5dd0b2657a76482c6acabe0285cc87eb5d49473-dev\"", \
 			"" \
 		else \
 			empty \
