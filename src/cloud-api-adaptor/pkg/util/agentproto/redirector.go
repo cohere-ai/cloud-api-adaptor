@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/containerd/ttrpc"
 	"github.com/kata-containers/kata-containers/src/runtime/virtcontainers/pkg/agent/protocols"
@@ -16,6 +17,14 @@ import (
 
 	pb "github.com/kata-containers/kata-containers/src/runtime/virtcontainers/pkg/agent/protocols/grpc"
 )
+
+// statsTimeout bounds how long StatsContainer, GetMetrics and GetVolumeStats
+// RPCs may block. Keeping this well under the metrics-server scrape interval
+// (~10s) prevents a single slow or unreachable peer-pod VM from stalling
+// kubelet stats collection for the entire node. The timeout does not need to
+// cover Connect: the agent proxy connects before it serves any RPC, so here
+// Connect only returns the established client.
+const statsTimeout = 5 * time.Second
 
 type Redirector interface {
 	pb.AgentServiceService
@@ -154,6 +163,8 @@ func (s *redirector) StatsContainer(ctx context.Context, req *pb.StatsContainerR
 	if err := s.Connect(ctx); err != nil {
 		return nil, err
 	}
+	ctx, cancel := context.WithTimeout(ctx, statsTimeout)
+	defer cancel()
 	return s.agentClient.StatsContainer(ctx, req)
 }
 
@@ -281,6 +292,8 @@ func (s *redirector) GetMetrics(ctx context.Context, req *pb.GetMetricsRequest) 
 	if err := s.Connect(ctx); err != nil {
 		return nil, err
 	}
+	ctx, cancel := context.WithTimeout(ctx, statsTimeout)
+	defer cancel()
 	return s.agentClient.GetMetrics(ctx, req)
 }
 
@@ -393,6 +406,8 @@ func (s *redirector) GetVolumeStats(ctx context.Context, req *pb.VolumeStatsRequ
 	if err := s.Connect(ctx); err != nil {
 		return nil, err
 	}
+	ctx, cancel := context.WithTimeout(ctx, statsTimeout)
+	defer cancel()
 	return s.agentClient.GetVolumeStats(ctx, req)
 }
 
