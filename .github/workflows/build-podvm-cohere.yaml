@@ -55,8 +55,8 @@ jobs:
     name: Compute metadata
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      packages: read
+      contents: read # checkout repository contents
+      packages: read # verify that computed OCI tags are unused
     outputs:
       distro: ${{ steps.compute.outputs.distro }}
       class: ${{ steps.compute.outputs.class }}
@@ -217,10 +217,10 @@ jobs:
     needs: meta
     runs-on: ubuntu-latest
     permissions:
-      attestations: write
-      contents: read
-      id-token: write
-      packages: write
+      attestations: write # publish build provenance
+      contents: read      # checkout repository contents
+      id-token: write     # sign build provenance via OIDC
+      packages: write     # publish the PodVM OCI artifact
     strategy:
       fail-fast: false
       matrix:
@@ -553,10 +553,10 @@ jobs:
     name: Deploy ${{ matrix.profile }} to GCP
     needs: [meta, build]
     permissions:
-      attestations: read
-      contents: read
-      id-token: write
-      packages: read
+      attestations: read # verify build provenance in the called workflow
+      contents: read     # checkout repository contents in the called workflow
+      id-token: write    # authenticate to GCP in the called workflow
+      packages: read     # pull the PodVM OCI artifact in the called workflow
     if: |
       needs.build.result == 'success' &&
       (github.event_name == 'push' ||
@@ -576,11 +576,11 @@ jobs:
     name: Smoke TDX measurements (GCP debug image)
     needs: [meta, deploy-gcp]
     permissions:
-      actions: read
-      attestations: read
-      contents: read
-      id-token: write
-      packages: read
+      actions: read      # download predicted measurements in the called workflow
+      attestations: read # verify build provenance in the called workflow
+      contents: read     # checkout repository contents in the called workflow
+      id-token: write    # authenticate to GCP in the called workflow
+      packages: read     # pull the PodVM OCI artifact in the called workflow
     if: |
       needs.deploy-gcp.result == 'success' &&
       (github.event_name == 'push' ||
@@ -603,10 +603,10 @@ jobs:
     name: Deploy ${{ matrix.profile }} to Azure
     needs: [meta, build]
     permissions:
-      attestations: read
-      contents: read
-      id-token: write
-      packages: read
+      attestations: read # verify build provenance in the called workflow
+      contents: read     # checkout repository contents in the called workflow
+      id-token: write    # authenticate to Azure in the called workflow
+      packages: read     # pull the PodVM OCI artifact in the called workflow
     if: |
       needs.build.result == 'success' &&
       github.event_name == 'workflow_dispatch' &&
