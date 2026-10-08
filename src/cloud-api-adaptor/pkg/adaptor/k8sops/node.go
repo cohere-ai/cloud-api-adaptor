@@ -16,6 +16,15 @@ import (
 	restclient "k8s.io/client-go/rest"
 )
 
+const defaultPodVMExtendedResource = "kata.peerpods.io/vm"
+
+func podVMExtendedResourceName() string {
+	if resourceName := os.Getenv("POD_VM_EXTENDED_RESOURCE"); resourceName != "" {
+		return resourceName
+	}
+	return defaultPodVMExtendedResource
+}
+
 // AdvertiseExtendedResources sets up extended resources for the node
 func AdvertiseExtendedResources(peerPodsLimitPerNode int) error {
 
@@ -28,7 +37,7 @@ func AdvertiseExtendedResources(peerPodsLimitPerNode int) error {
 
 	nodeName := os.Getenv("NODE_NAME")
 
-	patch := append([]jsonPatch{}, newJSONPatch("add", "/status/capacity", "kata.peerpods.io~1vm",
+	patch := append([]jsonPatch{}, newJSONPatch("add", "/status/capacity", podVMExtendedResourceName(),
 		strconv.Itoa(peerPodsLimitPerNode)))
 
 	config, err := getKubeConfig()
@@ -59,7 +68,7 @@ func RemoveExtendedResources() error {
 
 	nodeName := os.Getenv("NODE_NAME")
 
-	patch := append([]jsonPatch{}, newJSONPatch("remove", "/status/capacity", "kata.peerpods.io~1vm", ""))
+	patch := append([]jsonPatch{}, newJSONPatch("remove", "/status/capacity", podVMExtendedResourceName(), ""))
 
 	config, err := getKubeConfig()
 	if err != nil {

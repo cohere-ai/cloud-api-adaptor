@@ -1,0 +1,99 @@
+{{- if .Values.providers }}
+{{- $name := ternary "fix-gke-node-config" "configure-remote-handlers" .Values.gkeNodeFix.enabled }}
+{{- $tolerations := deepCopy (.Values.tolerations | default list) }}
+{{- range $provider := .Values.providers }}
+{{- if include "peerpods.providerEnabled" $provider }}
+{{- $tolerations = uniq (concat $tolerations ($provider.tolerations | default list)) }}
+{{- end }}
+{{- end }}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ $name }}
+spec:
+  selector:
+    matchLabels:
+      app: {{ $name }}
+  template:
+    metadata:
+      labels:
+        app: {{ $name }}
+    spec:
+      hostPID: true
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      {{- with $tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+{{- if .Values.gkeNodeFix.enabled }}
+{{ include "peerpods.gkeNodeFixInitContainers" . | nindent 6 }}
+{{- end }}
+      - name: install-remote-handlers
+        image: alpine:3.21
+        securityContext:
+          privileged: true
+        volumeMounts:
+        - name: host-containerd-config
+          mountPath: /etc/containerd
+        - name: host-opt-kata
+          mountPath: /opt/kata
+        command:
+        - /bin/sh
+        - -c
+        - |
+          BASE=/opt/kata/share/defaults/kata-containers/runtimes/remote/configuration-remote.toml
+          i=0
+          while [ ! -f "$BASE" ] && [ "$i" -lt 60 ]; do
+            sleep 5
+            i=$((i + 1))
+          done
+          [ -f "$BASE" ] || { echo "base remote config missing at $BASE"; exit 1; }
+{{ include "peerpods.remoteHandlerScript" . | indent 10 }}
+      containers:
+      - name: reconcile-remote-handlers
+        image: alpine:3.21
+        resources:
+{{ toYaml .Values.remoteHandlers.resources | nindent 10 }}
+        securityContext:
+          privileged: true
+        volumeMounts:
+        - name: host-containerd-config
+          mountPath: /etc/containerd
+        - name: host-opt-kata
+          mountPath: /opt/kata
+        command:
+        - /bin/sh
+        - -c
+        - |
+          set -eu
+          while true; do
+            BASE=/opt/kata/share/defaults/kata-containers/runtimes/remote/configuration-remote.toml
+            if [ ! -f "$BASE" ]; then
+              echo "base remote config missing at $BASE; retrying"
+              sleep {{ .Values.remoteHandlers.reconcileIntervalSeconds | default 60 }}
+              continue
+            fi
+{{ include "peerpods.remoteHandlerScript" . | indent 12 }}
+            sleep {{ .Values.remoteHandlers.reconcileIntervalSeconds | default 60 }}
+          done
+      volumes:
+      - name: host-containerd-config
+        hostPath:
+          path: /etc/containerd
+          type: Directory
+{{- if .Values.gkeNodeFix.enabled }}
+      - name: host-kubelet-config
+        hostPath:
+          path: /home/kubernetes
+          type: Directory
+{{- end }}
+      - name: host-opt-kata
+        hostPath:
+          path: /opt/kata
+          type: DirectoryOrCreate
+{{- end }}
