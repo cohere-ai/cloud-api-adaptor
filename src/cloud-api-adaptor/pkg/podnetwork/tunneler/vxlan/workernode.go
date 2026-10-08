@@ -150,6 +150,16 @@ func (t *workerNodeTunneler) Setup(nsPath string, podNodeIPs []netip.Addr, confi
 		return fmt.Errorf("failed to change vxlan interface name %s on netns %s to %s: %w", hostVxlanInterface, podNS.Path(), PodInterfaceName, err)
 	}
 
+	if config.MTUOverride {
+		mtu := config.MTU
+		if mtu > maxMTU {
+			mtu = maxMTU
+		}
+		if err := podVxlanInterface.SetMTU(mtu); err != nil {
+			return fmt.Errorf("failed to set MTU of %s to %d: %w", PodInterfaceName, mtu, err)
+		}
+	}
+
 	if err := podVxlanInterface.SetUp(); err != nil {
 		return err
 	}
