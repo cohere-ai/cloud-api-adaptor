@@ -79,14 +79,80 @@ secrets:
 #
 # Note: libvirt/docker provider files override this with the dev image.
 image:
-  name: quay.io/confidential-containers/cloud-api-adaptor
-  tag: "f5dd0b2657a76482c6acabe0285cc87eb5d49473"
+  # Cohere fork default. Published by .github/workflows/publish-cohere.yaml on
+  # every push to the cohere branch. `latest-cohere` is a floating tag that
+  # follows the tip of that branch, so pin something immutable in production:
+  # either a release (e.g. "v0.2.0-cohere.7") or a 12-char commit SHA from a
+  # branch build (e.g. "df5b15761e40"). Both also exist with an `-amd64`
+  # suffix; prefer the unsuffixed name, which is a manifest list over it.
+  name: ghcr.io/cohere-ai/cloud-api-adaptor/cloud-api-adaptor
+  tag: latest-cohere
 
 # Cloud provider: libvirt, aws, azure, byom, gcp, ibmcloud, vsphere
-provider: libvirt
+provider: gcp
+
 # Per-pod cloud overrides for legacy single-provider mode. Denied by default.
 # Use exact annotation keys from the security table in README.md.
 allowedCloudConfigAnnotations: []
+
+# Override the DaemonSet container command. Set to bypass entrypoint.sh when
+# using Workload Identity (no GCP_CREDENTIALS file needed).
+command: ["/bin/sh", "-c", "exec cloud-api-adaptor gcp"]
+
+# nodeSelector / tolerations inherited by the cloud-api-adaptor and
+# fix-gke-node-config DaemonSets and by multi-provider RuntimeClass scheduling.
+# Empty by default; consumers set these to fence CAA and peer pod workloads onto
+# their worker pool. Per-provider values add placement constraints and
+# tolerations to both the provider DaemonSet and its RuntimeClass. Provider
+# selectors cannot override global selector values because the global selector
+# also places the DaemonSet that installs remote handlers on those nodes.
+nodeSelector: {}
+tolerations: []
+
+# GCP Workload Identity Federation for CAA (hostNetwork-compatible).
+#
+# CAA runs with hostNetwork=true, which bypasses the GKE metadata proxy. Regular
+# GKE Workload Identity (the `iam.gke.io/gcp-service-account` annotation alone)
+# therefore does NOT authenticate CAA as the bound GSA — it falls through to the
+# node SA instead.
+#
+# This block wires up Workload Identity Federation via a projected SA token and
+# an ADC external_account config. The GCP Go SDK (`cloud.google.com/go/auth`)
+# reads the token from disk and exchanges it at STS, with no metadata server
+# involvement. This path works over hostNetwork.
+#
+# Required on the GCP side (typically via Terraform):
+#   - A workload identity pool + provider for the GKE cluster
+#   - roles/iam.workloadIdentityUser on `serviceAccountEmail` for the KSA
+#     principal  serviceAccount:<pool>.svc.id.goog[<ns>/cloud-api-adaptor]
+#   - IAM roles on `serviceAccountEmail` for CAA's Compute API needs
+#
+# When enabled, this also unsets GCP_CREDENTIALS in the CAA env so the SDK
+# falls through to ADC detection (which picks up GOOGLE_APPLICATION_CREDENTIALS).
+gcpWorkloadIdentity:
+  enabled: false
+  # Full STS audience for the ADC external_account config — begins with
+  # "//iam.googleapis.com/projects/...". Example:
+  #   //iam.googleapis.com/projects/123456789012/locations/global/workloadIdentityPools/my-pool/providers/my-provider
+  audience: ""
+  # The GSA CAA should impersonate. Must have compute.instanceAdmin.v1,
+  # compute.networkUser, and iam.serviceAccountUser on the project (or the
+  # subset of those needed by the peer pod provisioning flow).
+  serviceAccountEmail: ""
+  # Audience to request in the projected SA token. For GKE's default pool this
+  # is typically the same URL as `audience` (without the leading `//`), i.e.
+  # "https://iam.googleapis.com/projects/..../providers/...". Leave empty to
+  # derive from `audience` automatically.
+  tokenAudience: ""
+  # Token refresh cadence (seconds). Kubernetes caps projected SA token
+  # lifetimes; 3600 is a reasonable balance between rotation and STS load.
+  tokenExpirationSeconds: 3600
+
+# GKE node config fixes. Deploys a separate DaemonSet that patches containerd
+# (discard_unpacked_layers) and kubelet (runtimeRequestTimeout) on each node.
+gkeNodeFix:
+  enabled: true
+  runtimeRequestTimeout: "15m"
 
 
 # Maximum number of peer pods allowed to run simultaneously
@@ -96,16 +162,23 @@ limit: "10"
 
 # DaemonSet configuration
 daemonset:
-  # Update strategy controls how the CAA DaemonSet performs rolling updates
+  # Allow up to 30 minutes for peer pods on the node to become Ready.
+  # The startup probe runs every 20 seconds.
+  startupProbe:
+    httpGet:
+      path: /startup
+      port: 8000
+    failureThreshold: 90
+    periodSeconds: 20
+    initialDelaySeconds: 20
+    timeoutSeconds: 1
+    successThreshold: 1
+  # Update strategy controls how the CAA DaemonSet performs rolling updates.
+  # CAA uses hostNetwork, so two pods on the same node cause a port conflict.
+  # maxSurge must be 0; roll one node at a time by killing old before starting new.
   updateStrategy:
-    # maxUnavailable: Maximum number of pods that can be unavailable during update
-    # maxSurge: Maximum number of extra pods that can be created during update
-    #
-    # Default (maxUnavailable: 0, maxSurge: 1) provides zero downtime updates
-    # and works on both small (1 node) and large clusters.
-    # Override with custom values for specific deployment needs.
-    maxUnavailable: 0
-    maxSurge: 1
+    maxUnavailable: 1
+    maxSurge: 0
   # A free-form map which can be used to inject provider-specific or platform-specific labels.
   #
   # Example (Azure Workload Identity):
@@ -129,6 +202,14 @@ daemonset:
 # Configuration options documented in ../../../peerpod-ctrl/chart/values.yaml
 resourceCtrl:
   enabled: true
+  image:
+    # Cohere fork default. Published by .github/workflows/publish-cohere.yaml on
+    # every push to the cohere branch. As with the CAA image above, pin a
+    # release or a 12-char commit SHA in production rather than this floating
+    # tag. Keep the two images on the same build — they are versioned together
+    # and a mismatch is not a supported combination.
+    repository: ghcr.io/cohere-ai/cloud-api-adaptor/peerpod-ctrl
+    tag: latest-cohere
 
 # peerpods-webhook subchart configuration
 # Mutating webhook that modifies pod specs to use peer pods runtime and resources
@@ -143,8 +224,21 @@ kata-deploy:
   # Set to false if kata is already installed (e.g., via another chart or operator).
   # If disabled, ensure kata-remote shim is enabled otherwise CAA will not work.
   enabled: true
+  # Fence the kata-deploy DaemonSet to the CAA worker pool. Empty by default;
+  # consumers must supply matching nodeSelector / tolerations via --set.
+  nodeSelector: {}
+  tolerations: []
+  # kata-deploy 3.31 defaults to system-node-critical. GKE only admits that
+  # priority class outside kube-system when the namespace has a matching
+  # ResourceQuota, so the DaemonSet cannot create pods in
+  # confidential-containers-system. Keep the pre-3.31 behavior (no priority
+  # class); set it per environment if the quota is added.
+  priorityClassName: ""
+  # No external snapshotter needed. The kata-remote shim uses
+  # experimental_force_guest_pull (set in configuration-remote.toml)
+  # to pull images inside the guest VM without nydus-snapshotter.
   snapshotter:
-    setup: ["nydus"]
+    setup: []
   defaultShim:
     amd64: remote
     arm64: remote
@@ -185,3 +279,18 @@ kata-deploy:
       enabled: false
     remote:
       enabled: true
+      containerd:
+        # Override kata-deploy's default of "nydus". nydus is not installed
+        # (snapshotter.setup: [] above), so routing kata-remote to it would
+        # break pod sandbox creation with
+        #   "dial unix:///run/nydus-snapshotter/...: connection refused".
+        # Empty string causes kata-deploy to omit the snapshotter line from
+        # the containerd drop-in, letting containerd fall back to overlayfs.
+        snapshotter: ""
+        # Required for peer pods: sets runtime.experimental_force_guest_pull
+        # = true in configuration-remote.toml so the kata-agent pulls images
+        # inside the guest VM. Without this, the kata-agent tries to bind-
+        # mount /run/kata-containers/shared/containers/<id>/rootfs (populated
+        # by virtiofs for local kata) which doesn't exist on peer-pod VMs,
+        # failing CreateContainer with ENOENT.
+        forceGuestPull: true
