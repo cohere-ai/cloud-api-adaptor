@@ -179,4 +179,5 @@ static-helm-check: ## Run static checks on helm chart (lint and template renderi
 			helm template test-release install/charts/peerpods/ -f "$$provider" > /dev/null || exit 1; \
 		fi \
 	done
+	@bash install/charts/peerpods/tests/check-chart-defaults.sh
 	@echo "Static helm checks passed"
