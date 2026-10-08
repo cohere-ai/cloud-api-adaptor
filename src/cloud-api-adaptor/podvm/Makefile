@@ -16,6 +16,7 @@ PODVM_BYOM_BINARIES_IMAGE ?= $(REGISTRY)/podvm-byom-binaries-ubuntu-$(DISTRO_ARC
 PODVM_BYOM_E2E_CONTAINER_NAME ?= $(REGISTRY)/podvm-byom-e2e-image-$(DISTRO_ARCH)
 VERIFY_PROVENANCE ?= no
 EXPORT_BINARIES ?= true
+PROVENANCE_EXTRA_REF ?=
 MKOSI_VERSION ?= v26
 
 _SHA := $(shell git rev-parse --short HEAD)
@@ -81,6 +82,7 @@ endif
 		--build-arg PAUSE_BIN=$(PAUSE_BIN) \
 		--build-arg IMAGE_NAME=mkosi-podvm-binaries \
 		--build-arg VERIFY_PROVENANCE=$(VERIFY_PROVENANCE) \
+		--build-arg PROVENANCE_EXTRA_REF=$(PROVENANCE_EXTRA_REF) \
 		$(if $(AUTHFILE),--build-arg AUTHFILE=$(AUTHFILE),) \
 		$(if $(DEFAULT_AGENT_POLICY_FILE),--build-arg DEFAULT_AGENT_POLICY_FILE=$(DEFAULT_AGENT_POLICY_FILE),) \
 		$(if $(filter $(EXPORT_BINARIES),false),--load,-o type=local,dest="./resources/binaries-tree") \

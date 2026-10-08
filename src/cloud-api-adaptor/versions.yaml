@@ -59,6 +59,12 @@ oci:
   kata-containers:
     registry: ghcr.io/kata-containers/cached-artefacts
     reference: c7351e797efff8bfc6bd73da0eb1909be12e2cfe # v4.2.0
+  # Cohere fork of guest-components. The fork's publish-artifacts workflow
+  # publishes attestation-agent (incl. a tdx-snp-nvidia variant that bundles
+  # TDX + SNP + Azure SNP-vTPM + NVIDIA GPU attesters and libnvat.so),
+  # confidential-data-hub, and api-server-rest to GHCR.
+  # Bump `reference` to the 40-char SHA whose publish-artifacts run has
+  # completed successfully (visible on the GHCR Packages page).
   guest-components:
-    registry: ghcr.io/confidential-containers/guest-components
-    reference: eae0bf63a3a9db7721f86e0a2b0b9941a7fcba3a
+    registry: ghcr.io/cohere-ai/guest-components
+    reference: 58cb3d7b2ae44d127c7784b7aaa698a8d5203180 # v0.22.0-cohere.1 (upstream v0.22.0 eae0bf63 + Cohere)
