@@ -30,12 +30,7 @@ on:
         type: string
         default: ""
 
-permissions:
-  actions: read       # download smoke measurements artifact in the GCP smoke workflow
-  id-token: write      # OIDC token for build provenance attestation
-  attestations: write  # actions/attest-build-provenance
-  contents: read       # actions/checkout
-  packages: write      # push OCI artifact to GHCR
+permissions: {}
 
 # A second workflow_dispatch for the same ref must not race the first build or
 # replace the OCI artifact backing an already-published cloud image.
@@ -59,6 +54,9 @@ jobs:
   meta:
     name: Compute metadata
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
     outputs:
       distro: ${{ steps.compute.outputs.distro }}
       class: ${{ steps.compute.outputs.class }}
@@ -218,6 +216,11 @@ jobs:
     name: Build PodVM (${{ matrix.profile }})
     needs: meta
     runs-on: ubuntu-latest
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
+      packages: write
     strategy:
       fail-fast: false
       matrix:
@@ -337,6 +340,7 @@ jobs:
           private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
           owner: cohere-ai
           repositories: cohere-cc-baselines
+          permission-contents: read
 
       - name: Extract UKI and predict TDX measurements
         id: measure
@@ -548,6 +552,11 @@ jobs:
   deploy-gcp:
     name: Deploy ${{ matrix.profile }} to GCP
     needs: [meta, build]
+    permissions:
+      attestations: read
+      contents: read
+      id-token: write
+      packages: read
     if: |
       needs.build.result == 'success' &&
       (github.event_name == 'push' ||
@@ -566,6 +575,12 @@ jobs:
   smoke-gcp-tdx:
     name: Smoke TDX measurements (GCP debug image)
     needs: [meta, deploy-gcp]
+    permissions:
+      actions: read
+      attestations: read
+      contents: read
+      id-token: write
+      packages: read
     if: |
       needs.deploy-gcp.result == 'success' &&
       (github.event_name == 'push' ||
@@ -587,6 +602,11 @@ jobs:
   deploy-azure:
     name: Deploy ${{ matrix.profile }} to Azure
     needs: [meta, build]
+    permissions:
+      attestations: read
+      contents: read
+      id-token: write
+      packages: read
     if: |
       needs.build.result == 'success' &&
       github.event_name == 'workflow_dispatch' &&

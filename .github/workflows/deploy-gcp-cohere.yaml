@@ -20,11 +20,7 @@ on:
         required: true
         type: string
 
-permissions:
-  id-token: write      # GCP Workload Identity Federation via OIDC
-  contents: read       # actions/checkout
-  packages: read       # pull OCI artifact from GHCR
-  attestations: read   # gh attestation verify
+permissions: {}
 
 env:
   OCI_IMAGE: ghcr.io/${{ github.repository }}/podvm
@@ -35,6 +31,11 @@ jobs:
   deploy:
     name: GCP
     runs-on: ubuntu-latest
+    permissions:
+      attestations: read # gh attestation verify
+      contents: read     # actions/checkout
+      id-token: write    # GCP Workload Identity Federation via OIDC
+      packages: read     # pull OCI artifact from GHCR
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
