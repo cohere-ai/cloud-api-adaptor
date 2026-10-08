@@ -1,4 +1,4 @@
-{{- if include "peerpods.gkeNodeFixEnabled" . }}
+{{- if and (include "peerpods.gkeNodeFixEnabled" .) (not .Values.providers) }}
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:

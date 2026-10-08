@@ -18,6 +18,27 @@ import (
 
 const OwnerAnnotation = "kata.peerpods.io/caa-owner"
 
+const defaultPodVMExtendedResource = "kata.peerpods.io/vm"
+
+func podVMExtendedResourceName() string {
+	if resourceName := os.Getenv("POD_VM_EXTENDED_RESOURCE"); resourceName != "" {
+		return resourceName
+	}
+	return defaultPodVMExtendedResource
+}
+
+// ownerAnnotationKey returns the node annotation that records which CAA
+// instance owns the advertised extended resource. Multiple providers can
+// share a node, each advertising its own resource, so a non-default resource
+// gets its own owner key; the default resource keeps the upstream key.
+func ownerAnnotationKey() string {
+	resourceName := podVMExtendedResourceName()
+	if resourceName == defaultPodVMExtendedResource {
+		return OwnerAnnotation
+	}
+	return OwnerAnnotation + "-" + strings.TrimPrefix(resourceName, "kata.peerpods.io/")
+}
+
 // AdvertiseExtendedResources sets up extended resources for the node and records
 // ownerUID as the annotation owner so a concurrent shutdown from a previous instance
 // can detect it is no longer the current owner and skip removal.
@@ -31,7 +52,7 @@ func AdvertiseExtendedResources(peerPodsLimitPerNode int, ownerUID string) error
 
 	nodeName := os.Getenv("NODE_NAME")
 
-	patch := append([]jsonPatch{}, newJSONPatch("add", "/status/capacity", "kata.peerpods.io~1vm",
+	patch := append([]jsonPatch{}, newJSONPatch("add", "/status/capacity", podVMExtendedResourceName(),
 		strconv.Itoa(peerPodsLimitPerNode)))
 
 	config, err := getKubeConfig()
@@ -45,7 +66,7 @@ func AdvertiseExtendedResources(peerPodsLimitPerNode int, ownerUID string) error
 	}
 
 	if ownerUID != "" {
-		if err := patchNodeAnnotation(cli, nodeName, OwnerAnnotation, ownerUID); err != nil {
+		if err := patchNodeAnnotation(cli, nodeName, ownerAnnotationKey(), ownerUID); err != nil {
 			logger.Printf("Failed to set owner annotation on node %s: %v", nodeName, err)
 			return err
 		}
@@ -87,7 +108,7 @@ func RemoveExtendedResources(ownerUID string) (bool, error) {
 		if err != nil {
 			return false, fmt.Errorf("failed to get node %s: %v", nodeName, err)
 		}
-		currentOwner := node.Annotations[OwnerAnnotation]
+		currentOwner := node.Annotations[ownerAnnotationKey()]
 		if currentOwner != ownerUID {
 			logger.Printf("Skipping extended resource removal on node %s: current owner is %q, this instance is %q",
 				nodeName, currentOwner, ownerUID)
@@ -95,7 +116,7 @@ func RemoveExtendedResources(ownerUID string) (bool, error) {
 		}
 	}
 
-	patch := append([]jsonPatch{}, newJSONPatch("remove", "/status/capacity", "kata.peerpods.io~1vm", ""))
+	patch := append([]jsonPatch{}, newJSONPatch("remove", "/status/capacity", podVMExtendedResourceName(), ""))
 
 	err = patchNodeStatus(cli, nodeName, patch)
 	if err != nil {

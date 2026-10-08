@@ -1,3 +1,4 @@
+{{- if not .Values.providers }}
 {{- if include "peerpods.gcpWorkloadIdentityEnabled" . }}
 {{- if not .Values.gcpWorkloadIdentity.audience }}
 {{- fail "gcpWorkloadIdentity.enabled=true requires gcpWorkloadIdentity.audience" }}
@@ -31,4 +32,5 @@ data:
       },
       "service_account_impersonation_url": "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/{{ .Values.gcpWorkloadIdentity.serviceAccountEmail }}:generateAccessToken"
     }
+{{- end }}
 {{- end }}

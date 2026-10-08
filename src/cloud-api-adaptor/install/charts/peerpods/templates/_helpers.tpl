@@ -145,5 +145,9 @@ otherwise it is on when a GCP CAA is deployed.
 {{- $enabled := .Values.gkeNodeFix.enabled -}}
 {{- if kindIs "bool" $enabled -}}
 {{- if $enabled }}true{{ end -}}
+{{- else if .Values.providers -}}
+{{- range $provider := .Values.providers -}}
+{{- if and (include "peerpods.providerEnabled" $provider) (eq $provider.cloudProvider "gcp") }}true{{ end -}}
+{{- end -}}
 {{- else if eq .Values.provider "gcp" }}true{{ end -}}
 {{- end }}
