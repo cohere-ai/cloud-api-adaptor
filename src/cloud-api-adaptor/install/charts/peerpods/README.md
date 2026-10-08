@@ -181,6 +181,36 @@ You can override any value by either:
 1. Editing the provider file directly (CI will check for drift)
 2. Creating your own values file and passing it with `-f`
 
+### Per-pod cloud configuration overrides
+
+Cloud configuration annotations are denied by default. Enabling a key grants
+every pod that can reach that CAA instance permission to request that override.
+Use `allowedCloudConfigAnnotations` in single-provider mode or
+`providers[].allowedCloudConfigAnnotations` in multi-provider mode.
+Prepend `io.katacontainers.config.hypervisor.` to each suffix below.
+
+| Annotation suffix | Provider | Effect | Risk |
+|---|---|---|---|
+| `gcp_zone` | GCP | Selects a zone in the configured subnet region | Capacity and data-residency change |
+| `gcp_disk_type` | GCP | Selects the boot disk type | Cost and performance change |
+| `gcp_root_volume_size` | GCP | Increases boot disk size | Cost increase |
+| `gcp_use_public_ip` | GCP | Attaches an external IP | Public network exposure |
+| `gcp_network_tags` | GCP | Adds firewall-targeting network tags | Expands firewall policy matches |
+| `gcp_tags` | GCP | Adds resource-manager tags | Expands IAM or organization-policy matches |
+| `gcp_instance_types` | GCP | Restricts selection to listed allowed machine types | Cost and capacity change |
+| `azure_zone` | Azure | Selects an availability zone | Capacity and data-residency change |
+| `azure_root_volume_size` | Azure | Increases boot disk size | Cost increase |
+| `azure_use_public_ip` | Azure | Attaches an external IP | Public network exposure |
+| `azure_tags` | Azure | Adds resource tags | Policy and cost-allocation change |
+| `azure_instance_sizes` | Azure | Restricts selection to listed allowed VM sizes | Cost and capacity change |
+| `use_spot` | GCP, Azure | Requests interruptible capacity | VM eviction and workload interruption |
+
+The following security-sensitive keys cannot be allowlisted:
+`gcp_disable_cvm`, `gcp_confidential_type`, `azure_disable_cvm`, and
+`azure_enable_secure_boot`.
+Run a separate CAA instance if workloads require weaker confidential-compute
+or boot-integrity settings.
+
 ## Uninstall
 
 To uninstall and remove all resources created by this chart, run:

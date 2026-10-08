@@ -6,6 +6,10 @@ provider: alibabacloud
 
 providerConfigs:
   alibabacloud:
+    # Comma-separated allowlist of GCP or Azure pod annotations that may override operator VM configuration
+    # (default: "")
+    # ALLOWED_CLOUD_CONFIG_ANNOTATIONS: ""
+
     # CA certificate file for custom TLS (e.g. /etc/certificates/ca.crt)
     # (default: "")
     # CACERT_FILE: ""
