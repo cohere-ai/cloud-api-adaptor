@@ -1,5 +1,6 @@
 [Build]
 Environment=SOURCE_DATE_EPOCH=0
+SandboxTrees=mkosi.sandbox
 
 [Content]
 RemoveFiles=/var/log
