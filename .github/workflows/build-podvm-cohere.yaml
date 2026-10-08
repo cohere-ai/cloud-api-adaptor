@@ -1,0 +1,638 @@
+name: Build PodVM Image (Cohere)
+
+on:
+  push:
+    tags: ["podvm-v*"]
+    branches: ["cohere"]
+  workflow_dispatch:
+    inputs:
+      distro:
+        description: "PodVM distro"
+        required: false
+        type: choice
+        options: [ubuntu]
+        default: ubuntu
+      ssh_public_key:
+        description: "SSH public key for debug images (optional)"
+        required: false
+        type: string
+      deploy_gcp:
+        description: "Deploy to GCP after build"
+        required: false
+        type: boolean
+        default: true
+      deploy_azure:
+        description: "Publish to Azure Compute Gallery (needs Azure CC infra)."
+        required: false
+        type: boolean
+        default: false
+      provenance_extra_ref:
+        description: >-
+          Dev only: also accept guest-components artifacts built from this ref, e.g.
+          refs/heads/yousef/upgrade-v0.22.0 for an upgrade under review. Requires a
+          dev-class ubuntu build with deploy_gcp and deploy_azure both false; otherwise
+          the run fails. Ignored for push builds.
+        required: false
+        type: string
+        default: ""
+
+permissions: {}
+
+# A second workflow_dispatch for the same ref must not race the first build or
+# replace the OCI artifact backing an already-published cloud image.
+concurrency:
+  group: podvm-build-${{ github.ref }}-${{ github.sha }}-${{ inputs.distro || 'ubuntu' }}
+  cancel-in-progress: false
+
+env:
+  # tdx-snp-nvidia selects the AA OCI tag suffix
+  # (<sha>-tdx-snp-nvidia_x86_64).
+  # The Cohere fork's variant bundles TDX + SNP + Azure SNP-vTPM + NVIDIA GPU
+  # attesters and includes libnvat.so* alongside the binary.
+  TEE_PLATFORM: tdx-snp-nvidia
+  OCI_IMAGE: ghcr.io/${{ github.repository }}/podvm
+  VERSIONS_YAML: src/cloud-api-adaptor/versions.yaml
+  # oras release assets are mutable; every install checks this hash. Update it
+  # with tools.oras in versions.yaml (oras_<version>_checksums.txt upstream).
+  ORAS_SHA256: "5b3f1cbb86d869eee68120b9b45b9be983f3738442f87ee5f06b00edd0bab336"
+  SMOKE_MACHINE_TYPE: a3-highgpu-1g
+  SMOKE_RAM_GIB: "234"
+  BASELINES_REPO: cohere-ai/cohere-cc-baselines
+
+jobs:
+  meta:
+    name: Compute metadata
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout repository contents
+      packages: read # verify that computed OCI tags are unused
+    outputs:
+      distro: ${{ steps.compute.outputs.distro }}
+      class: ${{ steps.compute.outputs.class }}
+      ttl: ${{ steps.compute.outputs.ttl }}
+      image_name_release: ${{ steps.compute.outputs.image_name_release }}
+      image_name_debug: ${{ steps.compute.outputs.image_name_debug }}
+      image_tag_release: ${{ steps.compute.outputs.image_tag_release }}
+      image_tag_debug: ${{ steps.compute.outputs.image_tag_debug }}
+      family_release: ${{ steps.compute.outputs.family_release }}
+      family_debug: ${{ steps.compute.outputs.family_debug }}
+      smoke_machine_type: ${{ steps.compute.outputs.smoke_machine_type }}
+      smoke_ram_gib: ${{ steps.compute.outputs.smoke_ram_gib }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Compute tags and image names
+        id: compute
+        env:
+          DISTRO: ${{ inputs.distro || 'ubuntu' }}
+        run: |
+          # Classify so consumers can pin (release/cohere) or auto-clean (dev).
+          # Names are immutable; workflow reruns get an -r<attempt> suffix.
+          sha=${GITHUB_SHA:0:7}
+          case "$GITHUB_REF" in
+            refs/tags/podvm-v*)
+              class=release; ttl=keep
+              # Tag podvm-v0.2.0-cohere.7 → disc 0-2-0-cohere-7 (dots to dashes,
+              # no extra "v"). GCE names allow [a-z0-9-], 63 chars max.
+              v="${GITHUB_REF#refs/tags/podvm-v}"; disc="${v//./-}" ;;
+            refs/heads/cohere)
+              class=cohere; ttl=90d
+              disc="$(date -u +%Y%m%d)-$sha" ;;
+            *)
+              class=dev; ttl=30d
+              slug=$(echo "$GITHUB_REF_NAME" | tr '[:upper:]' '[:lower:]' \
+                | sed 's/[^a-z0-9-]/-/g; s/^-*//; s/-*$//' | cut -c1-20)
+              disc="${slug:-manual}-$sha" ;;
+          esac
+          # TEE_PLATFORM is deliberately not in the name: it costs 15 chars and
+          # never varies per build. It is carried on the GCE image as the tee=
+          # label, in the description, and in measurements.json.
+          base="podvm-$DISTRO-$class"
+          # Longest GCE name is ${base}-${disc}-debug-import (63 char limit).
+          # That leaves (50 - len(base) - 1) chars for disc.
+          max_disc_len=$((50 - ${#base} - 1))
+          if [ "$max_disc_len" -lt 1 ]; then
+            echo "ERROR: image name prefix '$base' is too long for GCE image names" >&2
+            exit 1
+          fi
+          attempt_suffix=""
+          [ "${GITHUB_RUN_ATTEMPT:-1}" -gt 1 ] && attempt_suffix="-r$GITHUB_RUN_ATTEMPT"
+          if [ "$class" = "release" ]; then
+            # Keep the full version disc. Overflow is a hard error so a tag is
+            # never published under a truncated name.
+            if [ -n "$attempt_suffix" ]; then
+              max_disc_len=$((max_disc_len - ${#attempt_suffix}))
+              disc="${disc}${attempt_suffix}"
+            fi
+            if [ "${#disc}" -gt "$max_disc_len" ]; then
+              echo "ERROR: GCE image disc '$disc' (${#disc} chars) exceeds ${max_disc_len}-char budget for prefix '$base'" >&2
+              exit 1
+            fi
+          elif [ -n "$attempt_suffix" ]; then
+            max_base_disc_len=$((max_disc_len - ${#attempt_suffix}))
+            if [ "$max_base_disc_len" -lt 1 ]; then
+              echo "ERROR: rerun suffix '$attempt_suffix' leaves no room for image discriminator" >&2
+              exit 1
+            fi
+            disc="${disc:0:$max_base_disc_len}$attempt_suffix"
+          else
+            disc="${disc:0:$max_disc_len}"
+          fi
+          name="$base-$disc"
+          {
+            echo "distro=$DISTRO"
+            echo "class=$class"
+            echo "ttl=$ttl"
+            echo "image_name_release=$name"
+            echo "image_name_debug=$name-debug"
+            echo "image_tag_release=$name"
+            echo "image_tag_debug=$name-debug"
+            echo "family_release=$base"
+            echo "family_debug=$base-debug"
+            echo "smoke_machine_type=$SMOKE_MACHINE_TYPE"
+            echo "smoke_ram_gib=$SMOKE_RAM_GIB"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Validate provenance_extra_ref
+        env:
+          PROVENANCE_EXTRA_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.provenance_extra_ref || '' }}
+          IMAGE_CLASS: ${{ steps.compute.outputs.class }}
+          DISTRO: ${{ steps.compute.outputs.distro }}
+          DEPLOY_GCP: ${{ inputs.deploy_gcp }}
+          DEPLOY_AZURE: ${{ inputs.deploy_azure }}
+        run: |
+          [ -z "$PROVENANCE_EXTRA_REF" ] && exit 0
+          if ! [[ "$PROVENANCE_EXTRA_REF" =~ ^refs/heads/[A-Za-z0-9._/-]+$ ]]; then
+            echo "ERROR: provenance_extra_ref must be refs/heads/<branch>" >&2
+            exit 1
+          fi
+          # The override must never reach a published cloud image or a
+          # cohere/release-class artifact. Fail loudly instead of dropping it.
+          if [ "$IMAGE_CLASS" != "dev" ] || [ "$DEPLOY_GCP" = "true" ] || [ "$DEPLOY_AZURE" = "true" ]; then
+            echo "ERROR: provenance_extra_ref requires a dev-class build with deploy_gcp=false and deploy_azure=false (got class=$IMAGE_CLASS deploy_gcp=$DEPLOY_GCP deploy_azure=$DEPLOY_AZURE)" >&2
+            exit 1
+          fi
+          # Only the ubuntu binaries Dockerfile forwards the override.
+          if [ "$DISTRO" != "ubuntu" ]; then
+            echo "ERROR: provenance_extra_ref is only supported for distro=ubuntu (got $DISTRO)" >&2
+            exit 1
+          fi
+          echo "provenance_extra_ref accepted for this non-deploying dev build: $PROVENANCE_EXTRA_REF"
+
+      - name: Install ORAS
+        run: |
+          command -v yq || sudo snap install yq
+          ORAS_VERSION=$(yq '.tools.oras' "$VERSIONS_YAML")
+          curl -fsSLO "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_amd64.tar.gz"
+          sha256sum -c <(echo "$ORAS_SHA256  oras_${ORAS_VERSION}_linux_amd64.tar.gz")
+          tar -xzf "oras_${ORAS_VERSION}_linux_amd64.tar.gz" oras
+          rm -f "oras_${ORAS_VERSION}_linux_amd64.tar.gz"
+          sudo mv oras /usr/local/bin/
+          oras version
+
+      - name: Login to GHCR
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify OCI tags are unused
+        env:
+          RELEASE_TAG: ${{ steps.compute.outputs.image_tag_release }}
+          DEBUG_TAG: ${{ steps.compute.outputs.image_tag_debug }}
+        run: |
+          check_unused() {
+            local ref="$1"
+            local resolve_output
+            if resolve_output=$(oras resolve "$ref" 2>&1); then
+              echo "ERROR: refusing to replace existing PodVM artifact $ref ($resolve_output)" >&2
+              echo "Use 'Re-run all jobs' for an -r<attempt> rebuild; 'Re-run failed jobs' reuses the original metadata. To reuse the existing artifact, run a deploy workflow." >&2
+              return 1
+            fi
+            if ! grep -qiE 'not found|404' <<<"$resolve_output"; then
+              echo "ERROR: could not verify that $ref is unused:" >&2
+              echo "$resolve_output" >&2
+              return 1
+            fi
+          }
+
+          check_unused "${OCI_IMAGE}:${RELEASE_TAG}"
+          check_unused "${OCI_IMAGE}:${DEBUG_TAG}"
+
+  build:
+    name: Build PodVM (${{ matrix.profile }})
+    needs: meta
+    runs-on: ubuntu-latest
+    permissions:
+      attestations: write # publish build provenance
+      contents: read      # checkout repository contents
+      id-token: write     # sign build provenance via OIDC
+      packages: write     # publish the PodVM OCI artifact
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [release, debug]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Free up runner disk space
+        run: |
+          echo "=== Before cleanup ==="
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/share/boost /opt/hostedtoolcache/CodeQL
+          sudo apt-get purge -y google-cloud-cli azure-cli microsoft-edge-stable \
+            dotnet-* aspnetcore-* 2>/dev/null || true
+          sudo apt-get autoremove -y
+          echo "=== After cleanup ==="
+          df -h /
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            alien binutils bubblewrap dnf git make mtools qemu-utils uidmap
+          sudo apt-get clean
+          sudo rm -rf /var/lib/apt/lists/*
+
+          command -v yq || sudo snap install yq
+          yq --version
+
+      - name: Tune kernel for mkosi
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+
+      - name: Install ORAS
+        run: |
+          ORAS_VERSION=$(yq '.tools.oras' "$VERSIONS_YAML")
+          curl -fsSLO "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_amd64.tar.gz"
+          sha256sum -c <(echo "$ORAS_SHA256  oras_${ORAS_VERSION}_linux_amd64.tar.gz")
+          tar -xzf "oras_${ORAS_VERSION}_linux_amd64.tar.gz" oras
+          rm -f "oras_${ORAS_VERSION}_linux_amd64.tar.gz"
+          sudo mv oras /usr/local/bin/
+          oras version
+
+      - name: Install cvm-measure
+        env:
+          CVM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          CVM_MEASURE_REF=$(yq -r '.git["cvm-measure"].reference' "$VERSIONS_YAML")
+          git clone --depth 1 \
+            "https://x-access-token:${CVM_TOKEN}@github.com/cohere-ai/cvm-measure.git" /tmp/cvm-measure
+          git -C /tmp/cvm-measure fetch --depth 1 origin "${CVM_MEASURE_REF}"
+          git -C /tmp/cvm-measure checkout "${CVM_MEASURE_REF}"
+          pip install --break-system-packages /tmp/cvm-measure
+          rm -rf /tmp/cvm-measure
+          cvm-measure --version
+
+      - name: Inject SSH key for debug image
+        if: matrix.profile == 'debug'
+        working-directory: src/cloud-api-adaptor/podvm
+        env:
+          SSH_PUBLIC_KEY: ${{ inputs.ssh_public_key || vars.DEBUG_SSH_PUBLIC_KEY }}
+        run: |
+          if [ -z "$SSH_PUBLIC_KEY" ]; then
+            echo "No SSH public key configured, skipping"
+            exit 0
+          fi
+          mkdir -p resources
+          printf '%s\n' "$SSH_PUBLIC_KEY" > resources/authorized_keys
+          chmod 0400 resources/authorized_keys
+          echo "SSH key injected for debug image"
+
+      - name: Build binaries
+        working-directory: src/cloud-api-adaptor/podvm
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROVENANCE_EXTRA_REF: ${{ github.event_name == 'workflow_dispatch' && needs.meta.outputs.class == 'dev' && !inputs.deploy_gcp && !inputs.deploy_azure && inputs.provenance_extra_ref || '' }}
+        run: |
+          make \
+            VERIFY_PROVENANCE=yes \
+            PROVENANCE_EXTRA_REF="$PROVENANCE_EXTRA_REF" \
+            TEE_PLATFORM="$TEE_PLATFORM" \
+            podvm-binaries
+          docker system prune -af --volumes 2>/dev/null || true
+          echo "Disk after binaries build:"
+          df -h /
+
+      - name: Build OS image
+        working-directory: src/cloud-api-adaptor/podvm
+        env:
+          PROFILE: ${{ matrix.profile }}
+        run: |
+          TARGET="image"
+          if [ "$PROFILE" = "debug" ]; then
+            TARGET="image-debug"
+          fi
+          TEE_PLATFORM="$TEE_PLATFORM" \
+          make "$TARGET"
+
+          ls -lh build/
+
+      - name: Free disk space
+        run: |
+          echo "=== Before cleanup ==="
+          df -h /
+          mv src/cloud-api-adaptor/podvm/build/system.raw /tmp/disk.raw
+          docker system prune -af --volumes 2>/dev/null || true
+          echo "=== After cleanup ==="
+          df -h /
+
+      - name: Mint GitHub App token for baselines
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+        with:
+          client-id: ${{ secrets.GH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: cohere-ai
+          repositories: cohere-cc-baselines
+          permission-contents: read
+
+      - name: Extract UKI and predict TDX measurements
+        id: measure
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          IMAGE_NAME: ${{ matrix.profile == 'release' && needs.meta.outputs.image_name_release || needs.meta.outputs.image_name_debug }}
+          IMAGE_FAMILY: ${{ matrix.profile == 'release' && needs.meta.outputs.family_release || needs.meta.outputs.family_debug }}
+          IMAGE_CLASS: ${{ needs.meta.outputs.class }}
+          IMAGE_TTL: ${{ needs.meta.outputs.ttl }}
+          CAA_COMMIT: ${{ github.sha }}
+          CAA_REF: ${{ github.ref_name }}
+          DISTRO: ${{ needs.meta.outputs.distro }}
+          PROFILE: ${{ matrix.profile }}
+          # Same gated value the Build binaries step passes to make. Always
+          # recorded (empty when unused) because the deploy workflows refuse
+          # artifacts whose measurements.json lacks this field.
+          PROVENANCE_EXTRA_REF: ${{ github.event_name == 'workflow_dispatch' && needs.meta.outputs.class == 'dev' && !inputs.deploy_gcp && !inputs.deploy_azure && inputs.provenance_extra_ref || '' }}
+        run: |
+          cvm-measure extract-uki --disk /tmp/disk.raw --output /tmp/BOOTX64.EFI
+
+          mkdir -p /tmp/cvm-artifacts
+          DEFAULTS="/tmp/cvm-artifacts/defaults.json"
+          gh api "/repos/${BASELINES_REPO}/contents/baselines/gcp/tdx/defaults.json" \
+            --jq .content | base64 -d > "$DEFAULTS"
+
+          FIRMWARE_SHA384=$(jq -er --arg machine "$SMOKE_MACHINE_TYPE" \
+            '.[$machine].firmware_sha384 | select(test("^[0-9a-f]{96}$"))' "$DEFAULTS")
+          BASELINE_VERSION=$(jq -er --arg machine "$SMOKE_MACHINE_TYPE" \
+            '.[$machine].version | select(test("^v[1-9][0-9]*$"))' "$DEFAULTS")
+          BASELINE_PATH="baselines/gcp/tdx/versions/${FIRMWARE_SHA384}/${BASELINE_VERSION}/${SMOKE_MACHINE_TYPE}.json"
+          BASELINE="/tmp/cvm-artifacts/${SMOKE_MACHINE_TYPE}.json"
+          gh api "/repos/${BASELINES_REPO}/contents/${BASELINE_PATH}" \
+            --jq .content | base64 -d > "$BASELINE"
+
+          jq -e --arg machine "$SMOKE_MACHINE_TYPE" --arg firmware "$FIRMWARE_SHA384" \
+            '.machine_type == $machine and .firmware_sha384 == $firmware' "$BASELINE"
+          FIRMWARE="/tmp/cvm-artifacts/${FIRMWARE_SHA384}.fd"
+          curl -fsSL \
+            --connect-timeout 10 \
+            --max-time 120 \
+            "https://storage.googleapis.com/gce_tcb_integrity/ovmf_x64_csm/${FIRMWARE_SHA384}.fd" \
+            -o "$FIRMWARE"
+          echo "${FIRMWARE_SHA384}  ${FIRMWARE}" | sha384sum -c -
+
+          cvm-measure tdx \
+            --firmware "$FIRMWARE" \
+            --uki /tmp/BOOTX64.EFI \
+            --baseline "$BASELINE" \
+            --disk /tmp/disk.raw \
+            --ram "$SMOKE_RAM_GIB" \
+            --output-format json > /tmp/tdx-measurements.json
+
+          jq -e 'has("mrtd") and has("rtmr0") and has("rtmr1") and has("rtmr2") and has("rtmr3")' \
+            /tmp/tdx-measurements.json
+          RTMR2=$(jq -r '.rtmr2' /tmp/tdx-measurements.json)
+
+          KERNEL=$(python3 -c "
+          from cvm_measure.tdx.pe import pe_extract_section
+          data = pe_extract_section(open('/tmp/BOOTX64.EFI','rb').read(), '.uname', use_virtual_size=True)
+          print(data.decode(errors='replace').strip('\x00') if data else 'unknown')
+          ")
+
+          # NVIDIA driver version is pinned in the distro mkosi package list
+          # (e.g. `nvidia-driver-580-open=580.159.04-1ubuntu1`). Surface the
+          # `epoch:upstream-debian` portion so downstream tooling (model-integrity
+          # kata-policy) can bind attestation to a specific driver build.
+          DISTRO_CONF="src/cloud-api-adaptor/podvm/mkosi.images/system/mkosi.conf.d/${DISTRO}.conf"
+          if [ ! -f "$DISTRO_CONF" ]; then
+            echo "ERROR: mkosi distro config not found: $DISTRO_CONF" >&2
+            exit 1
+          fi
+
+          NVIDIA_DRIVER_PKG=$(awk -F= '
+            /^[[:space:]]*nvidia-driver-[0-9]+(-open)?[[:space:]]*=/ {
+              gsub(/[[:space:]]/,"",$1); gsub(/[[:space:]]/,"",$2);
+              print $1 "=" $2; exit
+            }' "$DISTRO_CONF")
+          if [ "$DISTRO" = "ubuntu" ] && [ -z "$NVIDIA_DRIVER_PKG" ]; then
+            echo "ERROR: could not extract nvidia-driver-* pin from $DISTRO_CONF" >&2
+            exit 1
+          fi
+          NVIDIA_DRIVER_VERSION=""
+          if [ -n "$NVIDIA_DRIVER_PKG" ]; then
+            NVIDIA_DRIVER_VERSION="${NVIDIA_DRIVER_PKG#*=}"
+            echo "nvidia driver: $NVIDIA_DRIVER_PKG"
+          else
+            echo "No nvidia-driver-* pin found in $DISTRO_CONF; omitting NVIDIA driver metadata"
+          fi
+
+          jq -n \
+            --arg image_name "$IMAGE_NAME" \
+            --arg image_family "$IMAGE_FAMILY" \
+            --arg image_class "$IMAGE_CLASS" \
+            --arg image_ttl "$IMAGE_TTL" \
+            --arg rtmr2_sha384 "$RTMR2" \
+            --arg kernel "$KERNEL" \
+            --arg nvidia_driver_pkg "$NVIDIA_DRIVER_PKG" \
+            --arg nvidia_driver_version "$NVIDIA_DRIVER_VERSION" \
+            --arg caa_commit "$CAA_COMMIT" \
+            --arg caa_ref "$CAA_REF" \
+            --arg caa_version "$CAA_REF" \
+            --arg distro "$DISTRO" \
+            --arg profile "$PROFILE" \
+            --arg provenance_extra_ref "$PROVENANCE_EXTRA_REF" \
+            --arg tee_platform "$TEE_PLATFORM" \
+            --arg build_date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '$ARGS.named
+             | if .nvidia_driver_version == "" then
+                 del(.nvidia_driver_pkg, .nvidia_driver_version)
+               else
+                 .
+               end' > /tmp/measurements.json
+
+          jq \
+            --slurpfile image /tmp/measurements.json \
+            --arg smoke_machine_type "$SMOKE_MACHINE_TYPE" \
+            --arg smoke_ram_gib "$SMOKE_RAM_GIB" \
+            '$image[0] + .
+             | .smoke_machine_type = $smoke_machine_type
+             | .smoke_ram_gib = ($smoke_ram_gib | tonumber)' \
+            /tmp/tdx-measurements.json > /tmp/smoke-measurements.json
+
+          cat /tmp/measurements.json
+
+      - name: Prepare artifacts
+        run: |
+          tar -czf /tmp/disk.tar.gz -C /tmp disk.raw
+          rm /tmp/disk.raw
+          echo "Compressed size: $(du -sh /tmp/disk.tar.gz | cut -f1)"
+
+      - name: Upload smoke measurements
+        if: matrix.profile == 'debug'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: smoke-measurements-${{ needs.meta.outputs.image_name_debug }}
+          path: /tmp/smoke-measurements.json
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Login to GHCR
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push artifact to GHCR
+        id: push
+        env:
+          OCI_TAG: ${{ matrix.profile == 'release' && needs.meta.outputs.image_tag_release || needs.meta.outputs.image_tag_debug }}
+          IMAGE_TITLE: ${{ matrix.profile == 'release' && needs.meta.outputs.image_name_release || needs.meta.outputs.image_name_debug }}
+          DISTRO: ${{ needs.meta.outputs.distro }}
+          PROFILE: ${{ matrix.profile }}
+          CAA_COMMIT: ${{ github.sha }}
+        run: |
+          OCI_REF="${OCI_IMAGE}:${OCI_TAG}"
+          RTMR2=$(jq -r '.rtmr2_sha384' /tmp/measurements.json)
+          NVIDIA_DRIVER_VERSION=$(jq -r '.nvidia_driver_version // ""' /tmp/measurements.json)
+
+          if RESOLVE_OUTPUT=$(oras resolve "$OCI_REF" 2>&1); then
+            echo "ERROR: refusing to replace existing PodVM artifact $OCI_REF ($RESOLVE_OUTPUT)" >&2
+            echo "Use 'Re-run all jobs' for an -r<attempt> rebuild; 'Re-run failed jobs' reuses the original metadata. To reuse the existing artifact, run a deploy workflow." >&2
+            exit 1
+          fi
+          if ! grep -qiE 'not found|404' <<<"$RESOLVE_OUTPUT"; then
+            echo "ERROR: could not verify that $OCI_REF is unused:" >&2
+            echo "$RESOLVE_OUTPUT" >&2
+            exit 1
+          fi
+
+          cd /tmp
+          ANNOTATIONS=(
+            --annotation "org.opencontainers.image.title=${IMAGE_TITLE}"
+            --annotation "org.opencontainers.image.description=PodVM OS image (${DISTRO}/${TEE_PLATFORM}/${PROFILE})"
+            --annotation "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}"
+            --annotation "org.opencontainers.image.revision=${GITHUB_SHA}"
+            --annotation "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            --annotation "com.cohere.caa.commit=${CAA_COMMIT}"
+            --annotation "com.cohere.caa.version=${GITHUB_REF_NAME}"
+            --annotation "com.cohere.rtmr2=${RTMR2}"
+          )
+          if [ -n "$NVIDIA_DRIVER_VERSION" ]; then
+            ANNOTATIONS+=(--annotation "com.cohere.nvidia.driver_version=${NVIDIA_DRIVER_VERSION}")
+          fi
+
+          oras push "$OCI_REF" \
+            disk.tar.gz:application/vnd.cohere.podvm.disk.tar+gzip \
+            measurements.json:application/vnd.cohere.podvm.measurements+json \
+            "${ANNOTATIONS[@]}" \
+            --format json > oras-output.json
+
+          cat oras-output.json
+          DIGEST=$(jq -r '.digest' oras-output.json)
+
+          {
+            echo "digest=$DIGEST"
+            echo "oci_ref=${OCI_REF}@${DIGEST}"
+            echo "oci_tag=$OCI_TAG"
+          } >> "$GITHUB_OUTPUT"
+          echo "Pushed: $OCI_REF @ $DIGEST"
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        with:
+          subject-name: ${{ env.OCI_IMAGE }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+  # ---------------------------------------------------------------------------
+  # Deploy to GCP — release & debug images
+  # ---------------------------------------------------------------------------
+  deploy-gcp:
+    name: Deploy ${{ matrix.profile }} to GCP
+    needs: [meta, build]
+    permissions:
+      attestations: read # verify build provenance in the called workflow
+      contents: read     # checkout repository contents in the called workflow
+      id-token: write    # authenticate to GCP in the called workflow
+      packages: read     # pull the PodVM OCI artifact in the called workflow
+    if: |
+      needs.build.result == 'success' &&
+      (github.event_name == 'push' ||
+       (github.event_name == 'workflow_dispatch' && inputs.deploy_gcp))
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [release, debug]
+    uses: ./.github/workflows/deploy-gcp-cohere.yaml
+    with:
+      image_tag: ${{ matrix.profile == 'release' && needs.meta.outputs.image_tag_release || needs.meta.outputs.image_tag_debug }}
+    secrets:
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+  smoke-gcp-tdx:
+    name: Smoke TDX measurements (GCP debug image)
+    needs: [meta, deploy-gcp]
+    permissions:
+      actions: read      # download predicted measurements in the called workflow
+      attestations: read # verify build provenance in the called workflow
+      contents: read     # checkout repository contents in the called workflow
+      id-token: write    # authenticate to GCP in the called workflow
+      packages: read     # pull the PodVM OCI artifact in the called workflow
+    if: |
+      needs.deploy-gcp.result == 'success' &&
+      (github.event_name == 'push' ||
+       (github.event_name == 'workflow_dispatch' && inputs.deploy_gcp))
+    uses: ./.github/workflows/smoke-gcp-tdx.yaml
+    with:
+      image_tag: ${{ needs.meta.outputs.image_tag_debug }}
+      image_name: ${{ needs.meta.outputs.image_name_debug }}
+      machine_type: ${{ needs.meta.outputs.smoke_machine_type }}
+      ram_gib: ${{ needs.meta.outputs.smoke_ram_gib }}
+    secrets:
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      DEBUG_SSH_PRIVATE_KEY: ${{ secrets.DEBUG_SSH_PRIVATE_KEY }}
+
+  # ---------------------------------------------------------------------------
+  # Deploy to Azure Compute Gallery — opt-in; needs the Azure CC infra.
+  # ---------------------------------------------------------------------------
+  deploy-azure:
+    name: Deploy ${{ matrix.profile }} to Azure
+    needs: [meta, build]
+    permissions:
+      attestations: read # verify build provenance in the called workflow
+      contents: read     # checkout repository contents in the called workflow
+      id-token: write    # authenticate to Azure in the called workflow
+      packages: read     # pull the PodVM OCI artifact in the called workflow
+    if: |
+      needs.build.result == 'success' &&
+      github.event_name == 'workflow_dispatch' &&
+      inputs.deploy_azure
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [release, debug]
+    uses: ./.github/workflows/deploy-azure-cohere.yaml
+    with:
+      image_tag: ${{ matrix.profile == 'release' && needs.meta.outputs.image_tag_release || needs.meta.outputs.image_tag_debug }}
+    secrets:
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}

@@ -49,6 +49,10 @@ git:
   kbs:
     url: https://github.com/confidential-containers/trustee
     reference: 258ea4acb7b9bd865fce5c63a539f2120dba8298
+  # PodVM CI: UKI extract + TDX measurement (needs `tdx --disk` for RTMR[1]).
+  cvm-measure:
+    url: https://github.com/cohere-ai/cvm-measure
+    reference: 7c2e57fd546f5f25056376e936adccf498e9ef81
 # If a tag is given it will attempt to pull the oci image by tag. if a
 # reference is specified the corresponding tag will be constructed using
 # the reference and suffixes like architecture or tee.
