@@ -6,6 +6,7 @@ package gcp
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"log"
 	"net/netip"
@@ -20,6 +21,7 @@ import (
 	provider "github.com/confidential-containers/cloud-api-adaptor/src/cloud-providers"
 	"github.com/confidential-containers/cloud-api-adaptor/src/cloud-providers/util"
 	"github.com/confidential-containers/cloud-api-adaptor/src/cloud-providers/util/cloudinit"
+	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
 	proto "google.golang.org/protobuf/proto"
 )
@@ -397,6 +399,12 @@ func (p *gcpProvider) CreateInstance(ctx context.Context, podName, sandboxID str
 		NetworkInterfaces: []*computepb.NetworkInterface{networkInterface},
 	}
 
+	if len(p.serviceConfig.NetworkTags) > 0 {
+		items := make([]string, len(p.serviceConfig.NetworkTags))
+		copy(items, p.serviceConfig.NetworkTags)
+		instanceResource.Tags = &computepb.Tags{Items: items}
+	}
+
 	// Check if OnHostMaintenance needs to be set to TERMINATE
 	// This is required for:
 	// 1. Confidential VMs
@@ -421,9 +429,15 @@ func (p *gcpProvider) CreateInstance(ctx context.Context, podName, sandboxID str
 		requiresTerminatePolicy = true
 	}
 
-	if requiresTerminatePolicy {
+	if requiresTerminatePolicy || p.serviceConfig.UseSpotInstances {
+		provisioningModel := "STANDARD"
+		if p.serviceConfig.UseSpotInstances {
+			provisioningModel = "SPOT"
+			logger.Printf("UseSpotInstances=true, setting ProvisioningModel to SPOT")
+		}
 		instanceResource.Scheduling = &computepb.Scheduling{
 			OnHostMaintenance: proto.String("TERMINATE"),
+			ProvisioningModel: proto.String(provisioningModel),
 		}
 	}
 
@@ -521,6 +535,10 @@ func (p *gcpProvider) DeleteInstance(ctx context.Context, instanceID string) err
 	}
 	op, err := p.instancesClient.Delete(ctx, req)
 	if err != nil {
+		if isGCPNotFound(err) {
+			logger.Printf("instance %s already deleted, nothing to do", instanceID)
+			return nil
+		}
 		return fmt.Errorf("Instances.Delete error: %w, req: %v", err, req)
 	}
 	err = op.Wait(ctx)
@@ -529,6 +547,14 @@ func (p *gcpProvider) DeleteInstance(ctx context.Context, instanceID string) err
 	}
 	logger.Printf("deleted an instance %s", instanceID)
 	return nil
+}
+
+func isGCPNotFound(err error) bool {
+	var apiErr *googleapi.Error
+	if errors.As(err, &apiErr) {
+		return apiErr.Code == 404
+	}
+	return false
 }
 
 func (p *gcpProvider) Teardown() error {
