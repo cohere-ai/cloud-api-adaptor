@@ -91,11 +91,13 @@ secrets:
 # Note: libvirt provider files override this with the dev image.
 image:
   # Cohere fork default. Published by .github/workflows/publish-cohere.yaml on
-  # every push to the cohere branch. `latest-cohere` is a floating tag that
-  # follows the tip of that branch, so pin something immutable in production:
-  # either a release (e.g. "v0.2.0-cohere.7") or a 12-char commit SHA from a
-  # branch build (e.g. "df5b15761e40"). Both also exist with an `-amd64`
-  # suffix; prefer the unsuffixed name, which is a manifest list over it.
+  # every push to cohere or a cohere-v* release branch. `latest-cohere` and
+  # `latest-cohere-v<x-y-z>` are floating tags that follow those branch tips,
+  # so pin something immutable in production: a release (e.g.
+  # "v0.23.0-cohere.1") or a 12-char commit SHA from a branch build. Published
+  # charts already default to the matching release or commit tag. Both also
+  # exist with an `-amd64` suffix; prefer the unsuffixed name, which is a
+  # manifest list over it.
   name: ghcr.io/cohere-ai/cloud-api-adaptor/cloud-api-adaptor
   tag: latest-cohere
 
@@ -308,8 +310,8 @@ daemonset:
 resourceCtrl:
   enabled: true
   image:
-    # Cohere fork default. Published by .github/workflows/publish-cohere.yaml on
-    # every push to the cohere branch. As with the CAA image above, pin a
+    # Cohere fork default. Published by .github/workflows/publish-cohere.yaml
+    # with the CAA image above. As with the CAA image, pin a
     # release or a 12-char commit SHA in production rather than this floating
     # tag. Keep the two images on the same build — they are versioned together
     # and a mismatch is not a supported combination.
