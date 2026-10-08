@@ -84,6 +84,10 @@ image:
 
 # Cloud provider: libvirt, aws, azure, byom, gcp, ibmcloud, vsphere
 provider: libvirt
+# Per-pod cloud overrides for legacy single-provider mode. Denied by default.
+# Use exact annotation keys from the security table in README.md.
+allowedCloudConfigAnnotations: []
+
 
 # TLS profile for CAA and peer pod connections.
 # When set, these values are injected into the peer-pods-cm ConfigMap as
