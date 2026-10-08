@@ -314,8 +314,7 @@ if [ "$TEST_MODE" = "scratch-space" ]; then
 	sudo virsh qemu-agent-command "${VM_NAME}" \
 	 '{"execute": "guest-exec", "arguments": { "path": "/bin/bash", "arg": [ "-c", "echo smoketest-podvm-123456 > /run/kata-containers/image/smoketest.txt && sync" ], "capture-output": false }}'
 
-	grep -qa "${UNIQUE_STRING}" "${IMAGE}"
-	if [ $? -eq 0 ]; then
+	if grep -qa "${UNIQUE_STRING}" "${IMAGE}"; then
 		echo "::error:: Unique string written to encrypted device is visible from the host"
 		exit 1
 	fi
