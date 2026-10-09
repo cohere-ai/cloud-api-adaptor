@@ -1,0 +1,265 @@
+name: Deploy PodVM to GCP (Cohere)
+
+on:
+  workflow_call:
+    inputs:
+      image_tag:
+        description: "OCI artifact tag in GHCR (e.g. podvm-ubuntu-release-0-2-0-cohere-7)"
+        required: true
+        type: string
+    secrets:
+      GCP_WORKLOAD_IDENTITY_PROVIDER:
+        required: true
+      GCP_SERVICE_ACCOUNT:
+        required: true
+
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "OCI artifact tag in GHCR to deploy"
+        required: true
+        type: string
+
+permissions: {}
+
+env:
+  OCI_IMAGE: ghcr.io/${{ github.repository }}/podvm
+  PODVM_GCP_IMAGE_PROJECT: cohere-artifacts
+  VERSIONS_YAML: src/cloud-api-adaptor/versions.yaml
+  # oras release assets are mutable; every install checks this hash. Update it
+  # with tools.oras in versions.yaml (oras_<version>_checksums.txt upstream).
+  ORAS_SHA256: "5b3f1cbb86d869eee68120b9b45b9be983f3738442f87ee5f06b00edd0bab336"
+
+jobs:
+  deploy:
+    name: GCP
+    runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-gcp-cohere-${{ inputs.image_tag }}
+      cancel-in-progress: false
+    permissions:
+      attestations: read # gh attestation verify
+      contents: read     # actions/checkout
+      id-token: write    # GCP Workload Identity Federation via OIDC
+      packages: read     # pull OCI artifact from GHCR
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install ORAS
+        run: |
+          command -v yq || sudo snap install yq
+          ORAS_VERSION=$(yq '.tools.oras' "$VERSIONS_YAML")
+          curl -fsSLO "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_amd64.tar.gz"
+          sha256sum -c <(echo "$ORAS_SHA256  oras_${ORAS_VERSION}_linux_amd64.tar.gz")
+          tar -xzf "oras_${ORAS_VERSION}_linux_amd64.tar.gz" oras
+          sudo mv oras /usr/local/bin/
+          oras version
+
+      - name: Login to GHCR
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify attestation
+        id: verify
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+        run: |
+          IMAGE_DIGEST=$(oras resolve "${OCI_IMAGE}:${IMAGE_TAG}")
+          IMAGE_REF="${OCI_IMAGE}:${IMAGE_TAG}@${IMAGE_DIGEST}"
+          gh attestation verify \
+            "oci://${IMAGE_REF}" \
+            --repo "${GITHUB_REPOSITORY}"
+          echo "image_ref=$IMAGE_REF" >> "$GITHUB_OUTPUT"
+          echo "Attestation verified for ${IMAGE_REF}"
+
+      - name: Pull artifact and read measurements
+        id: pull
+        env:
+          IMAGE_REF: ${{ steps.verify.outputs.image_ref }}
+        run: |
+          mkdir -p /tmp/podvm
+          cd /tmp/podvm
+          oras pull "${IMAGE_REF}"
+          ls -lh
+
+          if [ ! -f measurements.json ]; then
+            echo "ERROR: measurements.json not found in artifact — build is broken"
+            exit 1
+          fi
+
+          cat measurements.json
+
+          IMAGE_NAME=$(jq -r '.image_name' measurements.json)
+          if [ -z "$IMAGE_NAME" ] || [ "$IMAGE_NAME" = "null" ]; then
+            echo "ERROR: image_name is missing or empty in measurements.json"
+            exit 1
+          fi
+          # GCE names max 63; this workflow uses ${IMAGE_NAME}-import.
+          if [ "${#IMAGE_NAME}" -gt 56 ]; then
+            echo "ERROR: image_name length ${#IMAGE_NAME} exceeds GCE limit (56 before -import)" >&2
+            exit 1
+          fi
+
+          IMAGE_FAMILY=$(jq -r '.image_family // ""' measurements.json)
+          IMAGE_CLASS=$(jq -r '.image_class // ""' measurements.json)
+          IMAGE_TTL=$(jq -r '.image_ttl // ""' measurements.json)
+          if [ -z "$IMAGE_FAMILY" ] || [ -z "$IMAGE_CLASS" ] || [ -z "$IMAGE_TTL" ]; then
+            echo "ERROR: image_family/image_class/image_ttl missing in measurements.json"
+            exit 1
+          fi
+
+          {
+            echo "image_name=$IMAGE_NAME"
+            echo "image_family=$IMAGE_FAMILY"
+            echo "image_class=$IMAGE_CLASS"
+            echo "image_ttl=$IMAGE_TTL"
+            echo "distro=$(jq -r '.distro' measurements.json)"
+            echo "profile=$(jq -r '.profile' measurements.json)"
+            echo "caa_commit=$(jq -r '.caa_commit' measurements.json)"
+            echo "caa_commit_short=$(jq -r '.caa_commit[:7]' measurements.json)"
+            echo "caa_version=$(jq -r '.caa_version' measurements.json)"
+            echo "caa_ref=$(jq -r '.caa_ref' measurements.json)"
+            echo "tee_platform=$(jq -r '.tee_platform' measurements.json)"
+            echo "rtmr2=$(jq -r '.rtmr2_sha384 // ""' measurements.json)"
+            echo "kernel=$(jq -r '.kernel // ""' measurements.json)"
+            echo "build_date=$(jq -r '.build_date // ""' measurements.json)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
+
+      - name: Upload to GCS
+        id: upload
+        env:
+          IMAGE_NAME: ${{ steps.pull.outputs.image_name }}
+          GCS_BUCKET: ${{ vars.PODVM_GCS_BUCKET }}
+        run: |
+          GCS_URI="gs://${GCS_BUCKET}/${IMAGE_NAME}/disk.tar.gz"
+          gcloud storage cp /tmp/podvm/disk.tar.gz "$GCS_URI"
+          gcloud storage cp /tmp/podvm/measurements.json \
+            "gs://${GCS_BUCKET}/${IMAGE_NAME}/measurements.json"
+          echo "gcs_uri=$GCS_URI" >> "$GITHUB_OUTPUT"
+
+      - name: Create GCP compute image
+        env:
+          IMAGE_NAME: ${{ steps.pull.outputs.image_name }}
+          IMAGE_FAMILY: ${{ steps.pull.outputs.image_family }}
+          IMAGE_CLASS: ${{ steps.pull.outputs.image_class }}
+          IMAGE_TTL: ${{ steps.pull.outputs.image_ttl }}
+          DISTRO: ${{ steps.pull.outputs.distro }}
+          CAA_VERSION: ${{ steps.pull.outputs.caa_version }}
+          CAA_COMMIT: ${{ steps.pull.outputs.caa_commit }}
+          CAA_COMMIT_SHORT: ${{ steps.pull.outputs.caa_commit_short }}
+          CAA_REF: ${{ steps.pull.outputs.caa_ref }}
+          PROFILE: ${{ steps.pull.outputs.profile }}
+          TEE_PLATFORM: ${{ steps.pull.outputs.tee_platform }}
+          RTMR2: ${{ steps.pull.outputs.rtmr2 }}
+          KERNEL: ${{ steps.pull.outputs.kernel }}
+          BUILD_DATE: ${{ steps.pull.outputs.build_date }}
+          GCS_URI: ${{ steps.upload.outputs.gcs_uri }}
+          GCP_PROJECT: ${{ env.PODVM_GCP_IMAGE_PROJECT }}
+          IMAGE_REF: ${{ steps.verify.outputs.image_ref }}
+        run: |
+          # Names are immutable, so a collision means this artifact was already
+          # deployed. Fail rather than overwrite and break attestation pinning.
+          if gcloud compute images describe "$IMAGE_NAME" --project="$GCP_PROJECT" &>/dev/null; then
+            echo "ERROR: image $IMAGE_NAME already exists in $GCP_PROJECT" >&2
+            echo "Use the existing image, or use 'Re-run all jobs' in the build workflow for an -r<attempt> rebuild." >&2
+            exit 1
+          fi
+
+          if [ -z "$TEE_PLATFORM" ] || [ "$TEE_PLATFORM" = "null" ]; then
+            echo "ERROR: tee_platform is missing from measurements.json" >&2
+            exit 1
+          fi
+
+          case "$TEE_PLATFORM" in
+            tdx-snp-nvidia)
+              GUEST_OS_FEATURES="TDX_CAPABLE,SEV_CAPABLE,SEV_SNP_CAPABLE,UEFI_COMPATIBLE,GVNIC"
+              ;;
+            tdx|tdx-nvidia)
+              GUEST_OS_FEATURES="TDX_CAPABLE,UEFI_COMPATIBLE,GVNIC"
+              ;;
+            snp|amd)
+              GUEST_OS_FEATURES="SEV_SNP_CAPABLE,UEFI_COMPATIBLE,GVNIC"
+              ;;
+            sev)
+              GUEST_OS_FEATURES="SEV_CAPABLE,UEFI_COMPATIBLE,GVNIC"
+              ;;
+            *)
+              echo "ERROR: unsupported tee_platform '$TEE_PLATFORM'" >&2
+              exit 1
+              ;;
+          esac
+
+          RAW_IMAGE="${IMAGE_NAME}-import"
+          if gcloud compute images describe "$RAW_IMAGE" --project="$GCP_PROJECT" &>/dev/null; then
+            echo "Deleting stale intermediate image $RAW_IMAGE"
+            gcloud compute images delete "$RAW_IMAGE" \
+              --project="$GCP_PROJECT" --quiet
+          fi
+
+          gcloud compute images create "$RAW_IMAGE" \
+            --source-uri="$GCS_URI" \
+            --project="$GCP_PROJECT" \
+            --description="podvm import (intermediate): distro=${DISTRO} tee=${TEE_PLATFORM} caa=${CAA_VERSION} commit=${CAA_COMMIT}"
+
+          sanitize_label() { echo "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9_-]/-/g' | cut -c1-63; }
+          LABELS="class=${IMAGE_CLASS}"
+          LABELS="${LABELS},ttl=${IMAGE_TTL}"
+          LABELS="${LABELS},caa-commit=$(sanitize_label "$CAA_COMMIT_SHORT")"
+          LABELS="${LABELS},caa-branch=$(sanitize_label "$CAA_REF")"
+          LABELS="${LABELS},profile=$(sanitize_label "$PROFILE")"
+          LABELS="${LABELS},distro=$(sanitize_label "$DISTRO")"
+          LABELS="${LABELS},tee=${TEE_PLATFORM}"
+          [ -n "$KERNEL" ] && LABELS="${LABELS},kernel=$(sanitize_label "$KERNEL")"
+          [ -n "$BUILD_DATE" ] && LABELS="${LABELS},build-date=$(sanitize_label "$BUILD_DATE")"
+
+          gcloud compute images create "$IMAGE_NAME" \
+            --source-image="$RAW_IMAGE" \
+            --source-image-project="$GCP_PROJECT" \
+            --project="$GCP_PROJECT" \
+            --family="$IMAGE_FAMILY" \
+            --description="podvm: distro=${DISTRO} tee=${TEE_PLATFORM} profile=${PROFILE} class=${IMAGE_CLASS} caa=${CAA_VERSION} commit=${CAA_COMMIT} rtmr2=${RTMR2} oci=${IMAGE_REF}" \
+            --labels="$LABELS" \
+            --guest-os-features="$GUEST_OS_FEATURES"
+
+          gcloud compute images delete "$RAW_IMAGE" \
+            --project="$GCP_PROJECT" --quiet
+
+          gcloud compute images describe "$IMAGE_NAME" \
+            --project="$GCP_PROJECT" \
+            --format="yaml(name,family,status,diskSizeGb,guestOsFeatures,description,labels)"
+
+          {
+            echo "### PodVM image published"
+            echo ""
+            echo "| Field | Value |"
+            echo "| --- | --- |"
+            echo "| Name | \`${IMAGE_NAME}\` |"
+            echo "| Family | \`${IMAGE_FAMILY}\` |"
+            echo "| Class | ${IMAGE_CLASS} |"
+            echo "| TTL | ${IMAGE_TTL} |"
+            echo "| Project | ${GCP_PROJECT} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Clean up GCS staging files
+        if: success()
+        env:
+          GCS_BUCKET: ${{ vars.PODVM_GCS_BUCKET }}
+          IMAGE_NAME: ${{ steps.pull.outputs.image_name }}
+        run: |
+          gcloud storage rm --recursive "gs://${GCS_BUCKET}/${IMAGE_NAME}/"
+          echo "Cleaned up GCS staging files"

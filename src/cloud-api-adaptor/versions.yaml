@@ -30,7 +30,7 @@ tools:
   cert-manager: v1.15.3
   bats: 1.10.0
   iptables-wrapper: bfef9e5087a198b50a4124bb9ce9d2c7c99025dd
-  golang: 1.25.10
+  golang: 1.25.12
   kcli: 99.0.202507200957
   mkosi: v26
   protoc: 3.16.0
@@ -50,6 +50,10 @@ git:
   kbs:
     url: https://github.com/confidential-containers/trustee
     reference: d4e317620c4039c89779b725f74974d8f005da66
+  # PodVM CI: UKI extract + TDX measurement (needs `tdx --disk` for RTMR[1]).
+  cvm-measure:
+    url: https://github.com/cohere-ai/cvm-measure
+    reference: 7c2e57fd546f5f25056376e936adccf498e9ef81
 # If a tag is given it will attempt to pull the oci image by tag. if a
 # reference is specified the corresponding tag will be constructed using
 # the reference and suffixes like architecture or tee.
@@ -60,6 +64,14 @@ oci:
   kata-containers:
     registry: ghcr.io/kata-containers/cached-artefacts
     reference: bef049d07e34d467b3a0910fdc65f30aa4647a0a # v3.31.0 + tagging fix
+  # Cohere fork of guest-components, built from a cohere-v<release> version
+  # branch: upstream guest-components v0.21.0 plus the Cohere patches (see
+  # COHERE.md in the fork). Its publish-artifacts workflow publishes
+  # attestation-agent (incl. a tdx-snp-nvidia variant that bundles
+  # TDX + SNP + Azure SNP-vTPM + NVIDIA GPU attesters and libnvat.so),
+  # confidential-data-hub, and api-server-rest to GHCR, tagged by commit SHA.
+  # Bump `reference` to the 40-char SHA whose publish-artifacts run has
+  # completed successfully.
   guest-components:
-    registry: ghcr.io/confidential-containers/guest-components
-    reference: f1561038b9a58d309a3366cc8e25d8e6162424a0
+    registry: ghcr.io/cohere-ai/guest-components
+    reference: efaac35c69e5e0c55a97b596d4dd2f3ce2baec8a # v0.21.0-cohere.1 (cohere-ai/guest-components#18)

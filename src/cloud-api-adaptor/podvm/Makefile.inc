@@ -31,7 +31,7 @@ DEFAULT_AGENT_POLICY_FILE ?= allow-all.rego
 
 # Run github artifact provenance verifications
 VERIFY_PROVENANCE ?= no
-GUEST_COMPONENTS_REPO := confidential-containers/guest-components
+GUEST_COMPONENTS_REPO := cohere-ai/guest-components
 KATA_REPO := kata-containers/kata-containers
 
 # Verify that GUEST_COMPONENTS_REF is a sha-1 commit digest
@@ -190,7 +190,17 @@ $(PAUSE): | $(PAUSE_SRC) $(UMOCI_SRC)/umoci
 $(ATTESTATION_AGENT): $(FORCE_TARGET)
 	$(call pull_gc_artifact,attestation-agent,$(TEE_PLATFORM)_$(ARCH))
 	tar xvJpf attestation-agent.tar.xz
+	# Cohere fork's tdx-snp-nvidia AA tarball bundles libnvat.so* (NVIDIA
+	# attestation-sdk-cpp) under lib/. Install it into the podvm rootfs so
+	# the dynamically linked AA can resolve it at runtime. Other AA
+	# variants ship a binary-only tarball, in which case lib/ is absent
+	# and this block is a no-op.
 	install -D --compare attestation-agent "$@"
+	@set -- lib/libnvat.so* 2>/dev/null; \
+	if [ -d lib ] && [ -e "$$1" ]; then \
+	  install -d "$(FILES_DIR)/usr/lib"; \
+	  cp -a lib/libnvat.so* "$(FILES_DIR)/usr/lib/"; \
+	fi
 
 $(CONFIDENTIAL_DATA_HUB): $(FORCE_TARGET)
 	$(call pull_gc_artifact,confidential-data-hub,$(ARCH))
