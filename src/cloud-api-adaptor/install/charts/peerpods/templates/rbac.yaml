@@ -1,3 +1,4 @@
+{{- if not .Values.providers }}
 # when owner reference is both object must be on the same namespace, hence,
 # caa should have cluster-wide permissions to support any pod namespace
 apiVersion: v1
@@ -155,3 +156,4 @@ roleRef:
   kind: ClusterRole
   name: cm-editor
   apiGroup: rbac.authorization.k8s.io
+{{- end }}

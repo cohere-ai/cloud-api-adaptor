@@ -31,7 +31,7 @@ DEFAULT_AGENT_POLICY_FILE ?= allow-all.rego
 
 # Run github artifact provenance verifications
 VERIFY_PROVENANCE ?= no
-GUEST_COMPONENTS_REPO := confidential-containers/guest-components
+GUEST_COMPONENTS_REPO := cohere-ai/guest-components
 KATA_REPO := kata-containers/kata-containers
 
 # Verify that GUEST_COMPONENTS_REF is a sha-1 commit digest
@@ -192,7 +192,13 @@ $(PAUSE): | $(PAUSE_SRC) $(UMOCI_SRC)/umoci
 $(ATTESTATION_AGENT): $(FORCE_TARGET)
 	$(call pull_gc_artifact,attestation-agent,$(TEE_PLATFORM)_$(ARCH))
 	tar xvJpf attestation-agent.tar.xz
+	# Cohere fork's tdx-snp-nvidia AA tarball bundles its non-glibc shared
+	# library closure under lib/. Other variants ship a binary-only tarball.
 	install -D --compare attestation-agent "$@"
+	@if [ -d lib ]; then \
+	  install -d "$(FILES_DIR)/usr/local/lib/attestation-agent"; \
+	  cp -a lib/. "$(FILES_DIR)/usr/local/lib/attestation-agent/"; \
+	fi
 
 $(CONFIDENTIAL_DATA_HUB): $(FORCE_TARGET)
 	$(call pull_gc_artifact,confidential-data-hub,$(ARCH))

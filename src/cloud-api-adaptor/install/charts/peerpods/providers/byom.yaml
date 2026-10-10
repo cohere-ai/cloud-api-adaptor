@@ -6,6 +6,10 @@ provider: byom
 
 providerConfigs:
   byom:
+    # Comma-separated allowlist of GCP or Azure pod annotations that may override operator VM configuration
+    # (default: "")
+    # ALLOWED_CLOUD_CONFIG_ANNOTATIONS: ""
+
     # CA certificate file for custom TLS (e.g. /etc/certificates/ca.crt)
     # (default: "")
     # CACERT_FILE: ""
@@ -41,6 +45,10 @@ providerConfigs:
     # Maximum number of IPs allowed in a range
     # (default: "100")
     # MAX_RANGE_IPS: "100"
+
+    # Cap the overlay MTU when > 0; set to the underlay path MTU minus 50 bytes of VXLAN overhead (for example, 1150 for a 1200-byte path); 0 keeps the discovered interface MTU
+    # (default: "0")
+    # MTU: "0"
 
     # pause image to be used for the pods
     # (default: "")

@@ -1,3 +1,4 @@
+{{- if not .Values.providers }}
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -25,12 +26,22 @@ spec:
       serviceAccountName: cloud-api-adaptor
       containers:
       - command:
+        {{- if .Values.command }}
+        {{- toYaml .Values.command | nindent 8 }}
+        {{- else }}
         - /usr/local/bin/entrypoint.sh
+        {{- end }}
         env:
         - name: NODE_NAME
           valueFrom:
             fieldRef:
               fieldPath: spec.nodeName
+{{- if include "peerpods.gcpWorkloadIdentityEnabled" . }}
+        - name: GOOGLE_APPLICATION_CREDENTIALS
+          value: /var/run/secrets/gcp-wif/credentials.json
+        - name: GCP_CREDENTIALS
+          value: ""
+{{- end }}
         envFrom:
 {{- if include "peerpods.secretName" . }}
         - secretRef:
@@ -47,13 +58,7 @@ spec:
             - NET_ADMIN
             - SYS_ADMIN
         startupProbe:
-          httpGet:
-            path: /startup
-            port: 8000
-            host: 127.0.0.1
-          failureThreshold: 30
-          periodSeconds: 20
-          initialDelaySeconds: 20
+{{- toYaml .Values.daemonset.startupProbe | nindent 10 }}
         # TODO: We should think about a better patch strategy for keeping per provider
         # patches in different files, otherwise this template might get bloated.
         volumeMounts:
@@ -70,6 +75,11 @@ spec:
 {{- if include "peerpods.alibabacloudRrsaEnabled" . }}
         - mountPath: /var/run/secrets/ack.alibabacloud.com/rrsa-tokens
           name: rrsa-oidc-token
+          readOnly: true
+{{- end }}
+{{- if include "peerpods.gcpWorkloadIdentityEnabled" . }}
+        - mountPath: /var/run/secrets/gcp-wif
+          name: gcp-wif
           readOnly: true
 {{- end }}
         - mountPath: /run/peerpod
@@ -95,7 +105,11 @@ spec:
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
       nodeSelector:
-        node.kubernetes.io/worker: ""
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       volumes:
 {{- if and (or (eq .Values.provider "libvirt") (eq .Values.provider "byom")) (include "peerpods.sshKeySecretName" .) }}
       - name: ssh
@@ -120,6 +134,26 @@ spec:
               audience: "sts.aliyuncs.com"
               expirationSeconds: 3600
               path: token
+{{- end }}
+{{- if include "peerpods.gcpWorkloadIdentityEnabled" . }}
+      # GCP Workload Identity Federation: projected SA token + ADC config
+      # merged into one volume. The GCP SDK reads credentials.json (from the
+      # ConfigMap), which points at token (from the projected SA token) and
+      # exchanges it at STS for an impersonation access token on
+      # `gcpWorkloadIdentity.serviceAccountEmail`. Works over hostNetwork.
+      - name: gcp-wif
+        projected:
+          defaultMode: 420
+          sources:
+          - serviceAccountToken:
+              audience: {{ include "peerpods.gcpWorkloadIdentityTokenAudience" . | quote }}
+              expirationSeconds: {{ .Values.gcpWorkloadIdentity.tokenExpirationSeconds | default 3600 }}
+              path: token
+          - configMap:
+              name: cloud-api-adaptor-gcp-wif
+              items:
+              - key: credentials.json
+                path: credentials.json
 {{- end }}
       - hostPath:
           path: /run/peerpod
@@ -153,4 +187,5 @@ spec:
               path: vault-token
               expirationSeconds: 3600
               audience: iam
+{{- end }}
 {{- end }}

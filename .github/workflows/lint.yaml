@@ -153,7 +153,9 @@ jobs:
           sudo apt-get update -y
           sudo apt-get install -y libvirt-dev
       - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+        # Cohere: govulncheck v1.8.0+ requires Go 1.26, but this branch builds
+        # with Go 1.25 (GOTOOLCHAIN=local). Restore @latest after the Go 1.26 bump.
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
       - name: Run govulncheck
         run: make govulncheck
 
