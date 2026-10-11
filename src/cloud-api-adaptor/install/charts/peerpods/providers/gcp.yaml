@@ -6,6 +6,10 @@ provider: gcp
 
 providerConfigs:
   gcp:
+    # Comma-separated allowlist of GCP or Azure pod annotations that may override operator VM configuration
+    # (default: "")
+    # ALLOWED_CLOUD_CONFIG_ANNOTATIONS: ""
+
     # CA certificate file for custom TLS (e.g. /etc/certificates/ca.crt)
     # (default: "")
     # CACERT_FILE: ""
@@ -58,6 +62,10 @@ providerConfigs:
     # (required)
     GCP_NETWORK: ""
 
+    # Network tags for firewall rule targeting on peer pod VMs, comma separated
+    # (default: "")
+    # GCP_NETWORK_TAGS: ""
+
     # GCP Project ID
     # (required)
     GCP_PROJECT_ID: ""
@@ -66,6 +74,10 @@ providerConfigs:
     # (default: "")
     # GCP_SUBNETWORK: ""
 
+    # Use Spot (preemptible) instances for peer pod VMs. Reduces cost significantly but VMs may be reclaimed by GCP at any time.
+    # (default: "false")
+    # GCP_USE_SPOT_INSTANCES: "false"
+
     # Zone
     # (required)
     GCP_ZONE: ""
@@ -73,6 +85,10 @@ providerConfigs:
     # Default initdata for all Pods
     # (default: "")
     # INITDATA: ""
+
+    # Cap the overlay MTU when > 0; set to the underlay path MTU minus 50 bytes of VXLAN overhead (for example, 1150 for a 1200-byte path); 0 keeps the discovered interface MTU
+    # (default: "0")
+    # MTU: "0"
 
     # pause image to be used for the pods
     # (default: "")

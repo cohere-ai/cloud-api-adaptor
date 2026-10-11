@@ -61,14 +61,23 @@ type Instance struct {
 }
 
 type InstanceTypeSpec struct {
-	InstanceType string
-	VCPUs        int64
-	Memory       int64
-	Arch         string
-	GPUs         int64
-	Image        string
-	MultiNic     bool
-	Volumes      []CloudVolume
+	InstanceType   string
+	VCPUs          int64
+	Memory         int64
+	Arch           string
+	GPUs           int64
+	Image          string
+	MultiNic       bool
+	Volumes        []CloudVolume
+	UseSpot        bool
+	UseSpotSet     bool
+	Zone           string
+	DiskType       string
+	RootVolumeSize int64
+	UsePublicIP    *bool
+	NetworkTags    []string
+	Tags           map[string]string
+	InstanceTypes  []string
 }
 
 type CloudVolume struct {

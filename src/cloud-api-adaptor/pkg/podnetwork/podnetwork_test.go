@@ -14,9 +14,12 @@ import (
 	testutils "github.com/confidential-containers/cloud-api-adaptor/src/cloud-api-adaptor/pkg/internal/testing"
 	"github.com/confidential-containers/cloud-api-adaptor/src/cloud-api-adaptor/pkg/podnetwork/tunneler"
 	"github.com/confidential-containers/cloud-api-adaptor/src/cloud-api-adaptor/pkg/podnetwork/tuntest"
+	"github.com/confidential-containers/cloud-api-adaptor/src/cloud-api-adaptor/pkg/util/netops"
 )
 
-type mockWorkerNodeTunneler struct{}
+type mockWorkerNodeTunneler struct {
+	setup func(*tunneler.Config)
+}
 
 func newMockWorkerNodeTunneler() (tunneler.Tunneler, error) {
 	return &mockWorkerNodeTunneler{}, nil
@@ -27,6 +30,9 @@ func (t *mockWorkerNodeTunneler) Configure(n *tunneler.NetworkConfig, config *tu
 }
 
 func (t *mockWorkerNodeTunneler) Setup(nsPath string, podNodeIPs []netip.Addr, config *tunneler.Config) error {
+	if t.setup != nil {
+		t.setup(config)
+	}
 	return nil
 }
 
@@ -120,6 +126,70 @@ func TestWorkerNode(t *testing.T) {
 		})
 		require.Nil(t, err, "hostInterface=%q", hostInterface)
 	}
+}
+
+func TestWorkerNodeMTUCap(t *testing.T) {
+	testutils.SkipTestIfNotRoot(t)
+
+	const mockTunnelType = "mock-mtu"
+	var setupConfig *tunneler.Config
+	tunneler.Register(
+		mockTunnelType,
+		func() (tunneler.Tunneler, error) {
+			return &mockWorkerNodeTunneler{
+				setup: func(config *tunneler.Config) {
+					setupConfig = config
+				},
+			}, nil
+		},
+		newMockPodNodeTunneler,
+	)
+
+	workerNodeNS, _ := tuntest.NewNamedNS(t, "test-mtu-workernode")
+	defer tuntest.DeleteNamedNS(t, workerNodeNS)
+	tuntest.BridgeAdd(t, workerNodeNS, "ens0")
+	tuntest.AddrAdd(t, workerNodeNS, "ens0", "192.168.0.2/24")
+	tuntest.RouteAdd(t, workerNodeNS, "", "192.168.0.1", "ens0")
+
+	workerPodNS, _ := tuntest.NewNamedNS(t, "test-mtu-workerpod")
+	defer tuntest.DeleteNamedNS(t, workerPodNS)
+	tuntest.BridgeAdd(t, workerPodNS, "eth0")
+	tuntest.AddrAdd(t, workerPodNS, "eth0", "172.16.0.2/24")
+	tuntest.RouteAdd(t, workerPodNS, "", "172.16.0.1", "eth0")
+
+	err := workerNodeNS.Run(func() error {
+		workerNode, err := NewWorkerNode(&tunneler.NetworkConfig{
+			TunnelType: mockTunnelType,
+			MTU:        1200,
+		})
+		require.NoError(t, err)
+
+		config, err := workerNode.Inspect(workerPodNS.Path())
+		require.NoError(t, err)
+		require.Equal(t, 1200, config.MTU)
+		require.True(t, config.MTUOverride)
+
+		podNS, err := netops.OpenNamespace(workerPodNS.Path())
+		require.NoError(t, err)
+		defer podNS.Close()
+		podLink, err := podNS.LinkFind("eth0")
+		require.NoError(t, err)
+		actualMTU, err := podLink.GetMTU()
+		require.NoError(t, err)
+		require.Equal(t, 1500, actualMTU, "Inspect must not mutate the CNI-managed pod interface")
+
+		err = workerNode.Setup(
+			workerPodNS.Path(),
+			[]netip.Addr{netip.MustParseAddr("192.168.0.3")},
+			config,
+		)
+		require.NoError(t, err)
+		require.Same(t, config, setupConfig)
+		require.Equal(t, 1200, setupConfig.MTU)
+		require.True(t, setupConfig.MTUOverride)
+		return nil
+	})
+	require.NoError(t, err)
 }
 
 func TestPodNode(t *testing.T) {

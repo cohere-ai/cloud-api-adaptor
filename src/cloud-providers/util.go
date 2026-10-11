@@ -20,6 +20,13 @@ import (
 
 var logger = log.New(log.Writer(), "[adaptor/cloud] ", log.LstdFlags|log.Lmsgprefix)
 
+func isAllowedInstanceType(instanceType string, validInstanceTypes []string, defaultInstanceType string) bool {
+	if len(validInstanceTypes) > 0 {
+		return util.Contains(validInstanceTypes, instanceType)
+	}
+	return instanceType == defaultInstanceType
+}
+
 // Method to verify the correct instanceType to be used for Pod VM
 func VerifyCloudInstanceType(instanceType string, validInstanceTypes []string, defaultInstanceType string) (string, error) {
 	// If instanceType is empty, set instanceType to default.
@@ -30,7 +37,7 @@ func VerifyCloudInstanceType(instanceType string, validInstanceTypes []string, d
 	}
 
 	// If instanceTypes is empty and instanceType is not default, return error
-	if len(validInstanceTypes) == 0 && instanceType != defaultInstanceType {
+	if len(validInstanceTypes) == 0 && !isAllowedInstanceType(instanceType, validInstanceTypes, defaultInstanceType) {
 		// Return error if instanceTypes is empty and instanceType is not default
 		return "", fmt.Errorf("requested instance type (%q) is not default (%q) and supported instance types list is empty",
 			instanceType, defaultInstanceType)
@@ -38,7 +45,7 @@ func VerifyCloudInstanceType(instanceType string, validInstanceTypes []string, d
 	}
 
 	// If instanceTypes is not empty and instanceType is not among the supported instance types, return error
-	if len(validInstanceTypes) > 0 && !util.Contains(validInstanceTypes, instanceType) {
+	if len(validInstanceTypes) > 0 && !isAllowedInstanceType(instanceType, validInstanceTypes, defaultInstanceType) {
 		return "", fmt.Errorf("requested instance type (%q) is not part of supported instance types list", instanceType)
 	}
 
@@ -63,10 +70,95 @@ func SortInstanceTypesOnResources(instanceTypeSpecList []InstanceTypeSpec) []Ins
 	return instanceTypeSpecList
 }
 
+// ChooseString returns an annotation value when set, otherwise the operator default.
+func ChooseString(annotationValue, defaultValue string) string {
+	if annotationValue != "" {
+		return annotationValue
+	}
+	return defaultValue
+}
+
+// ChooseBool returns an annotation value when set, otherwise the operator default.
+func ChooseBool(annotationValue *bool, defaultValue bool) bool {
+	if annotationValue != nil {
+		return *annotationValue
+	}
+	return defaultValue
+}
+
+// ChooseInt64 returns an annotation value only when it increases the operator default.
+func ChooseInt64(annotationValue int64, defaultValue int) int64 {
+	if annotationValue > int64(defaultValue) {
+		return annotationValue
+	}
+	return int64(defaultValue)
+}
+
+// MergeStringSlices adds per-pod values without removing operator defaults.
+func MergeStringSlices(annotationValues, defaultValues []string) []string {
+	merged := make([]string, 0, len(defaultValues)+len(annotationValues))
+	seen := make(map[string]struct{}, len(defaultValues)+len(annotationValues))
+	for _, values := range [][]string{defaultValues, annotationValues} {
+		for _, value := range values {
+			if _, ok := seen[value]; ok {
+				continue
+			}
+			seen[value] = struct{}{}
+			merged = append(merged, value)
+		}
+	}
+	return merged
+}
+
+// MergeStringMap adds per-pod values while preserving operator values on key conflicts.
+func MergeStringMap(annotationValues, defaultValues map[string]string) map[string]string {
+	merged := make(map[string]string, len(defaultValues)+len(annotationValues))
+	for key, value := range annotationValues {
+		merged[key] = value
+	}
+	for key, value := range defaultValues {
+		merged[key] = value
+	}
+	return merged
+}
+
 func SelectInstanceTypeToUse(spec InstanceTypeSpec, specList []InstanceTypeSpec, validInstanceTypes []string, defaultInstanceType string) (string, error) {
 
 	var instanceType string
 	var err error
+
+	if spec.InstanceType == "" && len(spec.InstanceTypes) > 0 {
+		requestedTypes := make([]string, 0, len(spec.InstanceTypes))
+		for _, candidate := range spec.InstanceTypes {
+			if isAllowedInstanceType(candidate, validInstanceTypes, defaultInstanceType) {
+				requestedTypes = append(requestedTypes, candidate)
+			}
+		}
+		if len(requestedTypes) == 0 {
+			return "", fmt.Errorf("none of the requested instance types are part of the supported instance types list")
+		}
+		spec.InstanceTypes = requestedTypes
+
+		// Restrict best-fit selection to the per-pod candidate list.
+		hasResourceMetadata := len(specList) > 0
+		filteredSpecList := make([]InstanceTypeSpec, 0, len(spec.InstanceTypes))
+		for _, candidate := range specList {
+			if util.Contains(spec.InstanceTypes, candidate.InstanceType) {
+				filteredSpecList = append(filteredSpecList, candidate)
+			}
+		}
+		// A per-pod list without resource requirements is ordered by preference.
+		// Providers without resource metadata (currently GCP) also use the first
+		// candidate, because best-fit selection cannot run against an empty list.
+		hasResourceRequirements := spec.GPUs > 0 || (spec.VCPUs != 0 && spec.Memory != 0)
+		if spec.InstanceType == "" && hasResourceRequirements && hasResourceMetadata && len(filteredSpecList) == 0 {
+			return "", fmt.Errorf("none of the requested instance types have provider resource metadata")
+		}
+		specList = filteredSpecList
+		if spec.InstanceType == "" && (!hasResourceRequirements || len(specList) == 0) {
+			spec.InstanceType = spec.InstanceTypes[0]
+		}
+	}
 
 	// spec.InstanceType gets the highest priority
 	if spec.InstanceType != "" {

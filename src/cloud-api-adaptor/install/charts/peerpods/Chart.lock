@@ -8,5 +8,11 @@ dependencies:
 - name: peerpods-webhook
   repository: file://../../../../webhook/chart
   version: 0.4.0
-digest: sha256:69f57756cd2a199174cc3f63022e88a05e3015648f4b605184ec6f0ed7896324
-generated: "2026-07-27T09:56:33.155923+01:00"
+- name: peerpods-webhook
+  repository: file://../../../../webhook/chart
+  version: 0.4.0
+- name: peerpods-webhook
+  repository: file://../../../../webhook/chart
+  version: 0.4.0
+digest: sha256:fdd6f9aec131406852da46161b42e14f43d054a06c9ebc66426c5e143c5a7764
+generated: "2026-10-08T14:14:02.23859-04:00"

@@ -36,6 +36,31 @@ if [[ "${ARCHITECTURE}" == "s390x" ]]; then
 	fi
 fi
 
+# NVIDIA GPU support: enable services and ensure check script is executable.
+# Services gate themselves at runtime via ExecCondition=/usr/local/bin/check-nvidia-gpu
+# so they're harmless on non-GPU VMs.
+chmod +x /usr/local/bin/check-nvidia-gpu 2>/dev/null || true
+if command -v nvidia-persistenced &>/dev/null; then
+    systemctl enable nvidia-persistenced.service || true
+    systemctl enable nvidia-fabricmanager.service || true
+fi
+
+# Validate the installed binary against the completed image, not the builder.
+if ! aa_dependencies=$(LD_LIBRARY_PATH=/usr/local/lib/attestation-agent \
+    ldd /usr/local/bin/attestation-agent 2>&1); then
+    case "${aa_dependencies}" in
+        *"not a dynamic executable"*|*"statically linked"*) ;;
+        *)
+            printf '%s\n' "${aa_dependencies}" >&2
+            exit 1
+            ;;
+    esac
+elif printf '%s\n' "${aa_dependencies}" | grep -q 'not found'; then
+    printf '%s\n' "${aa_dependencies}" >&2
+    echo "ERROR: attestation-agent has unresolved shared library dependencies" >&2
+    exit 1
+fi
+
 # Conditional SFTP support: enable process-user-data.path only if ENABLE_SFTP is set
 
 ENABLE_SFTP=${ENABLE_SFTP:-false}

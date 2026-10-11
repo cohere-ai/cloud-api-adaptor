@@ -1,0 +1,39 @@
+{{- if and .Values.gkeNodeFix.enabled (not .Values.providers) }}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: fix-gke-node-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: fix-gke-node-config
+spec:
+  selector:
+    matchLabels:
+      app: fix-gke-node-config
+  template:
+    metadata:
+      labels:
+        app: fix-gke-node-config
+    spec:
+      hostPID: true
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+{{ include "peerpods.gkeNodeFixInitContainers" . | nindent 6 }}
+      containers:
+      - name: pause
+        image: registry.k8s.io/pause:3.10
+      volumes:
+      - name: host-containerd-config
+        hostPath:
+          path: /etc/containerd
+          type: Directory
+      - name: host-kubelet-config
+        hostPath:
+          path: /home/kubernetes
+          type: Directory
+{{- end }}
