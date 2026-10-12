@@ -36,6 +36,30 @@ if [[ "${ARCHITECTURE}" == "s390x" ]]; then
 	fi
 fi
 
+# NVIDIA GPU support. mkosi applies presets after the packages enable their
+# units, so enable them again here. They skip themselves on VMs without an
+# NVIDIA GPU (ExecCondition=/usr/local/bin/check-nvidia-gpu).
+if command -v nvidia-persistenced &>/dev/null; then
+    systemctl enable nvidia-persistenced.service nvidia-fabricmanager.service
+fi
+
+# Validate the installed attestation-agent against the completed image, not
+# the builder: its bundled libraries live under /usr/local/lib/attestation-agent.
+if ! aa_dependencies=$(LD_LIBRARY_PATH=/usr/local/lib/attestation-agent \
+    ldd /usr/local/bin/attestation-agent 2>&1); then
+    case "${aa_dependencies}" in
+        *"not a dynamic executable"*|*"statically linked"*) ;;
+        *)
+            printf '%s\n' "${aa_dependencies}" >&2
+            exit 1
+            ;;
+    esac
+elif printf '%s\n' "${aa_dependencies}" | grep -q 'not found'; then
+    printf '%s\n' "${aa_dependencies}" >&2
+    echo "ERROR: attestation-agent has unresolved shared library dependencies" >&2
+    exit 1
+fi
+
 # Conditional SFTP support: enable process-user-data.path only if ENABLE_SFTP is set
 
 ENABLE_SFTP=${ENABLE_SFTP:-false}

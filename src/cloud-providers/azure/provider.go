@@ -112,7 +112,7 @@ func generateSSHPublicKey() ([]byte, error) {
 	return publicKeyBytes, nil
 }
 
-func (p *azureProvider) getIPs(ctx context.Context, vm *armcompute.VirtualMachine) ([]netip.Addr, error) {
+func (p *azureProvider) getIPs(ctx context.Context, vm *armcompute.VirtualMachine, usePublicIP bool) ([]netip.Addr, error) {
 	nicClient, err := armnetwork.NewInterfacesClient(p.serviceConfig.SubscriptionID, p.azureClient, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create network interfaces client: %w", err)
@@ -135,7 +135,7 @@ func (p *azureProvider) getIPs(ctx context.Context, vm *armcompute.VirtualMachin
 	}
 
 	// we add the public ip addresses as first elements, if available
-	if p.serviceConfig.UsePublicIP {
+	if usePublicIP {
 		publicIPClient, err := armnetwork.NewPublicIPAddressesClient(p.serviceConfig.SubscriptionID, p.azureClient, nil)
 		if err != nil {
 			return nil, fmt.Errorf("create public ip client: %w", err)
@@ -202,7 +202,7 @@ func (p *azureProvider) create(ctx context.Context, parameters *armcompute.Virtu
 	return &resp.VirtualMachine, nil
 }
 
-func (p *azureProvider) buildNetworkConfig(nicName string) *armcompute.VirtualMachineNetworkInterfaceConfiguration {
+func (p *azureProvider) buildNetworkConfig(nicName string, usePublicIP bool) *armcompute.VirtualMachineNetworkInterfaceConfiguration {
 	ipConfig := armcompute.VirtualMachineNetworkInterfaceIPConfiguration{
 		Name: to.Ptr("ip-config"),
 		Properties: &armcompute.VirtualMachineNetworkInterfaceIPConfigurationProperties{
@@ -212,7 +212,7 @@ func (p *azureProvider) buildNetworkConfig(nicName string) *armcompute.VirtualMa
 		},
 	}
 
-	if p.serviceConfig.UsePublicIP {
+	if usePublicIP {
 		publicIPConfig := armcompute.VirtualMachinePublicIPAddressConfiguration{
 			Name: to.Ptr(nicName),
 			Properties: &armcompute.VirtualMachinePublicIPAddressConfigurationProperties{
@@ -237,6 +237,14 @@ func (p *azureProvider) buildNetworkConfig(nicName string) *armcompute.VirtualMa
 	}
 
 	return &config
+}
+
+func applySpotConfig(parameters *armcompute.VirtualMachine, useSpot bool) {
+	if !useSpot {
+		return
+	}
+	parameters.Properties.Priority = to.Ptr(armcompute.VirtualMachinePriorityTypesSpot)
+	parameters.Properties.EvictionPolicy = to.Ptr(armcompute.VirtualMachineEvictionPolicyTypesDelete)
 }
 
 func (p *azureProvider) CreateInstance(ctx context.Context, podName, sandboxID string, cloudConfig cloudinit.CloudConfigGenerator, spec provider.InstanceTypeSpec) (instance *provider.Instance, err error) {
@@ -285,6 +293,18 @@ func (p *azureProvider) CreateInstance(ctx context.Context, podName, sandboxID s
 		imageID = spec.Image
 	}
 
+	// The operator default is configured with -zone; a permitted per-pod
+	// annotation may override it.
+	if spec.Zone != "" {
+		if err := validateZoneOverride(spec.Zone); err != nil {
+			return nil, err
+		}
+	}
+	zone := provider.ChooseString(spec.Zone, p.serviceConfig.Zone)
+	usePublicIP := provider.ChooseBool(spec.UsePublicIP, p.serviceConfig.UsePublicIP)
+	rootVolumeSize := provider.ChooseInt64(spec.RootVolumeSize, p.serviceConfig.RootVolumeSize)
+	tags := provider.MergeStringMap(spec.Tags, p.serviceConfig.Tags)
+
 	if len(spec.Volumes) > 0 {
 		if err := p.validateDiskCount(ctx, instanceSize, len(spec.Volumes)); err != nil {
 			return nil, err
@@ -294,9 +314,13 @@ func (p *azureProvider) CreateInstance(ctx context.Context, podName, sandboxID s
 		}
 	}
 
-	vmParameters, err := p.getVMParameters(instanceSize, diskName, cloudConfigData, sshBytes, instanceName, nicName, imageID, spec.Volumes)
+	vmParameters, err := p.getVMParameters(instanceSize, diskName, cloudConfigData, sshBytes, instanceName, nicName, imageID, zone, usePublicIP, rootVolumeSize, tags, spec.Volumes...)
 	if err != nil {
 		return nil, err
+	}
+	if spec.UseSpotSet && spec.UseSpot {
+		applySpotConfig(vmParameters, true)
+		logger.Printf("Spot instance requested, setting priority to Spot with Delete eviction policy")
 	}
 
 	logger.Printf("CreateInstance: name: %q", instanceName)
@@ -314,7 +338,7 @@ func (p *azureProvider) CreateInstance(ctx context.Context, podName, sandboxID s
 		Name: instanceName,
 	}
 
-	ips, err := p.getIPs(ctx, vm)
+	ips, err := p.getIPs(ctx, vm, usePublicIP)
 	if err != nil {
 		logger.Printf("getting IPs for the instance : %v ", err)
 		return instance, err
@@ -525,17 +549,27 @@ func parseDiskResourceID(diskID string) (resourceGroup, diskName string, err err
 	return match[1], match[2], nil
 }
 
-func (p *azureProvider) getResourceTags() map[string]*string {
-	tags := map[string]*string{}
-
-	// Add custom tags from serviceConfig.Tags
-	for k, v := range p.serviceConfig.Tags {
-		tags[k] = to.Ptr(v)
+func (p *azureProvider) getResourceTags(tags map[string]string) map[string]*string {
+	result := map[string]*string{}
+	for k, v := range tags {
+		result[k] = to.Ptr(v)
 	}
-	return tags
+	return result
 }
 
-func (p *azureProvider) getVMParameters(instanceSize, diskName, cloudConfig string, sshBytes []byte, instanceName, nicName string, imageID string, csiVolumes []provider.CloudVolume) (*armcompute.VirtualMachine, error) {
+// validateZoneOverride accepts only Azure availability zone numbers.
+func validateZoneOverride(zone string) error {
+	switch zone {
+	case "1", "2", "3":
+		return nil
+	}
+	return fmt.Errorf("invalid Azure availability zone %q: must be 1, 2 or 3", zone)
+}
+
+// maxOSDiskSizeGB is the largest managed OS disk Azure supports.
+const maxOSDiskSizeGB = 4095
+
+func (p *azureProvider) getVMParameters(instanceSize, diskName, cloudConfig string, sshBytes []byte, instanceName, nicName, imageID, zone string, usePublicIP bool, rootVolumeSize int64, tags map[string]string, csiVolumes ...provider.CloudVolume) (*armcompute.VirtualMachine, error) {
 	userDataB64 := base64.StdEncoding.EncodeToString([]byte(cloudConfig))
 
 	// Azure limits the base64 encrypted userData to 64KB.
@@ -575,7 +609,7 @@ func (p *azureProvider) getVMParameters(instanceSize, diskName, cloudConfig stri
 		}
 	}
 
-	networkConfig := p.buildNetworkConfig(nicName)
+	networkConfig := p.buildNetworkConfig(nicName, usePublicIP)
 
 	// Configure OS disk with optional root volume size
 	osDisk := &armcompute.OSDisk{
@@ -586,10 +620,15 @@ func (p *azureProvider) getVMParameters(instanceSize, diskName, cloudConfig stri
 		ManagedDisk:  managedDiskParams,
 	}
 
-	// Set disk size if RootVolumeSize is configured
-	if p.serviceConfig.RootVolumeSize > 0 {
-		osDisk.DiskSizeGB = to.Ptr(int32(p.serviceConfig.RootVolumeSize))
-		logger.Printf("Setting root volume size to %d GB", p.serviceConfig.RootVolumeSize)
+	// Set disk size if RootVolumeSize is configured. A per-pod annotation can
+	// raise it, so bound it before the int32 conversion: an unchecked value
+	// above 2^31 would wrap and shrink the operator's disk instead.
+	if rootVolumeSize > maxOSDiskSizeGB {
+		return nil, fmt.Errorf("root volume size %d GB exceeds the Azure OS disk maximum of %d GB", rootVolumeSize, maxOSDiskSizeGB)
+	}
+	if rootVolumeSize > 0 {
+		osDisk.DiskSizeGB = to.Ptr(int32(rootVolumeSize))
+		logger.Printf("Setting root volume size to %d GB", rootVolumeSize)
 	}
 
 	// Attach CSI volumes as data disks
@@ -643,7 +682,11 @@ func (p *azureProvider) getVMParameters(instanceSize, diskName, cloudConfig stri
 			},
 			UserData: to.Ptr(userDataB64),
 		},
-		Tags: p.getResourceTags(),
+		Tags: p.getResourceTags(tags),
+	}
+
+	if zone != "" {
+		vmParameters.Zones = []*string{to.Ptr(zone)}
 	}
 
 	return &vmParameters, nil

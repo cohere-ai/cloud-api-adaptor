@@ -12,6 +12,8 @@ permissions: {}
 
 jobs:
   caa:
+    # Upstream-only: forks publish their own releases.
+    if: github.repository_owner == 'confidential-containers'
     uses: $/.github/workflows/caa_build_and_push_all_arches.yaml
     with:
       dev_tags: ${{ github.event.release.tag_name }}-dev
@@ -24,6 +26,8 @@ jobs:
       QUAY_PASSWORD: ${{ secrets.QUAY_PASSWORD }}
 
   peerpod-ctrl:
+    # Upstream-only: forks publish their own releases.
+    if: github.repository_owner == 'confidential-containers'
     uses: $/.github/workflows/peerpod-ctrl_build_and_push_all_arches.yaml
     with:
       image_tags: ${{ github.event.release.tag_name }}
@@ -34,6 +38,8 @@ jobs:
       QUAY_PASSWORD: ${{ secrets.QUAY_PASSWORD }}
 
   podvm-images:
+    # Upstream-only: forks publish their own releases.
+    if: github.repository_owner == 'confidential-containers'
     uses: $/.github/workflows/podvm_publish.yaml
     with:
       git_ref: ${{ github.ref }}
@@ -60,6 +66,8 @@ jobs:
       QUAY_PASSWORD: ${{ secrets.QUAY_PASSWORD }}
 
   webhook:
+    # Upstream-only: forks publish their own releases.
+    if: github.repository_owner == 'confidential-containers'
     uses: $/.github/workflows/webhook_image_publish.yaml
     with:
       image_tags: ${{ github.event.release.tag_name }}
@@ -72,6 +80,8 @@ jobs:
       QUAY_PASSWORD: ${{ secrets.QUAY_PASSWORD }}
 
   peerpods-chart:
+    # Upstream-only: forks publish their own releases.
+    if: github.repository_owner == 'confidential-containers'
     uses: $/.github/workflows/peerpods-chart_image.yaml
     with:
       git_ref: ${{ github.event.release.tag_name }}

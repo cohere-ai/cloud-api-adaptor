@@ -15,6 +15,10 @@ on:
         description: 'Git ref to checkout (e.g. tag for releases). Leave empty to checkout default ref'
         required: false
         type: string
+      image_tag:
+        description: 'Default CAA and peerpod-ctrl image tag written into values.yaml before packaging. Leave empty to keep values.yaml as is'
+        required: false
+        type: string
   workflow_call:
     inputs:
       registry:
@@ -27,6 +31,10 @@ on:
         type: string
       git_ref:
         description: 'Git ref to checkout (e.g. tag for releases). Leave empty to checkout default ref'
+        required: false
+        type: string
+      image_tag:
+        description: 'Default CAA and peerpod-ctrl image tag written into values.yaml before packaging. Leave empty to keep values.yaml as is'
         required: false
         type: string
 
@@ -60,11 +68,25 @@ jobs:
           fetch-depth: 0
 
       - name: Install yq
+        env:
+          YQ_VERSION: v4.44.3
+          YQ_SHA256: a2c097180dd884a8d50c956ee16a9cec070f30a7947cf4ebf87d5f36213e9ed7
         run: |
-          echo "Installing yq..."
-          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
-          sudo chmod +x /usr/local/bin/yq
+          curl -fsSLo /tmp/yq "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
+          echo "${YQ_SHA256}  /tmp/yq" | sha256sum --check --strict
+          sudo install -m 0755 /tmp/yq /usr/local/bin/yq
+          rm /tmp/yq
           yq --version
+
+      - name: Set default image tags
+        if: inputs.image_tag != ''
+        env:
+          IMAGE_TAG: ${{ inputs.image_tag }}
+        run: |
+          yq -i ".image.tag = \"${IMAGE_TAG}\"" values.yaml
+          yq -i ".resourceCtrl.image.tag = \"${IMAGE_TAG}\"" values.yaml
+          echo "image.tag: $(yq '.image.tag' values.yaml)"
+          echo "resourceCtrl.image.tag: $(yq '.resourceCtrl.image.tag' values.yaml)"
 
       - name: Read versions from Chart.yaml and versions.yaml
         id: read_version

@@ -1,0 +1,225 @@
+---
+# Publish Cohere-fork artifacts to GHCR on every push to `cohere` or a
+# protected `cohere-v<upstream version>` branch.
+#
+# Builds the *release* CAA image only (no libvirt); upstream's reusable
+# caa_build_and_push.yaml has a hardcoded matrix that builds dev+release in
+# parallel, so we inline the release path here to avoid wasting an hour of CI
+# on a libvirt build we don't ship. peerpod-ctrl is also inlined (amd64-only,
+# gcp,azure build tags) because upstream's reusable hardcodes GOFLAGS without
+# the gcp provider.
+#
+# Tags produced (push to <branch>):
+#   ghcr.io/cohere-ai/cloud-api-adaptor/cloud-api-adaptor:latest-<branch>{,-amd64}
+#   ghcr.io/cohere-ai/cloud-api-adaptor/cloud-api-adaptor:<12-char-sha>{,-amd64}
+#   ghcr.io/cohere-ai/cloud-api-adaptor/peerpod-ctrl:latest-<branch>
+#   ghcr.io/cohere-ai/cloud-api-adaptor/peerpod-ctrl:<12-char-sha>
+#   ghcr.io/cohere-ai/cloud-api-adaptor/charts/peerpods:0.0.0-dev.<branch>
+#
+# `cohere` keeps its `latest-cohere` / `0.0.0-dev.cohere` tags. A version
+# branch such as `cohere-v0.23.0` publishes `latest-cohere-v0-23-0` (dots to
+# dashes) and chart `0.0.0-dev.coherev0.23.0` (dashes dropped, which the
+# chart workflow's version check requires). Each release line has its own
+# floating tag, so a push to one never moves another's.
+#
+# A manual dispatch from any other branch publishes only the commit tags and
+# chart 0.0.0-dev.g<12-char-sha>, so test builds never move a floating tag.
+#
+# CAA carries both an `-amd64` tag (written by the build) and a plain one (a
+# manifest list over it); peerpod-ctrl is only ever plain. Prefer the plain
+# names so consumers are not tied to the arch we happen to build.
+#
+# The chart always publishes to a floating `0.0.0-dev.<branch>` tag here —
+# mirroring upstream's `0.0.0-dev` convention for main-branch pushes — so we
+# never silently overwrite a real Chart.yaml version. Real SemVer chart tags
+# (e.g. 0.1.4-cohere.2) are produced by publish-cohere-release.yaml on release
+# events and match the GH Release tag, not Chart.yaml on disk at push time.
+name: Publish (cohere)
+
+on:
+  push:
+    branches: [cohere, "cohere-v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: publish-cohere-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions: {}
+
+env:
+  REGISTRY: ghcr.io/cohere-ai/cloud-api-adaptor
+
+jobs:
+  tags:
+    name: Compute tags
+    runs-on: ubuntu-24.04
+    outputs:
+      image_tags: ${{ steps.t.outputs.image_tags }}
+      chart_version: ${{ steps.t.outputs.chart_version }}
+      short_sha: ${{ steps.t.outputs.short_sha }}
+    steps:
+      - name: Derive tag list from branch and commit SHA
+        id: t
+        env:
+          SHA: ${{ github.sha }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          short="${SHA:0:12}"
+          case "$BRANCH" in
+            cohere|cohere-v*)
+              # OCI tags: dots to dashes (latest-cohere-v0-23-0). Chart
+              # versions: the chart workflow only allows [A-Za-z0-9.] in the
+              # pre-release, so drop the dashes (0.0.0-dev.coherev0.23.0).
+              image_tags="latest-${BRANCH//./-},${short}"
+              chart_version="0.0.0-dev.${BRANCH//-/}"
+              ;;
+            *)
+              # Manual dispatch from a feature branch: publish immutable
+              # commit tags only, so a test build never moves a floating tag.
+              image_tags="${short}"
+              chart_version="0.0.0-dev.g${short}"
+              ;;
+          esac
+          {
+            echo "image_tags=${image_tags}"
+            echo "chart_version=${chart_version}"
+            echo "short_sha=${short}"
+          } >> "$GITHUB_OUTPUT"
+
+  caa:
+    name: Build CAA image (release, amd64)
+    needs: tags
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read   # checkout the cohere ref
+      packages: write  # push image manifests to GHCR
+    defaults:
+      run:
+        working-directory: src/cloud-api-adaptor
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - name: Read Go version from versions.yaml
+        run: |
+          command -v yq || sudo snap install yq
+          go_version="$(yq '.tools.golang' versions.yaml)"
+          [ -n "$go_version" ]
+          echo "GO_VERSION=${go_version}" >> "$GITHUB_ENV"
+
+      - name: Setup Go ${{ env.GO_VERSION }}
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: "**/go.sum"
+          cache: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      - name: Login to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push release image
+        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+          RELEASE_TAGS: ${{ needs.tags.outputs.image_tags }}
+        with:
+          timeout_minutes: 60
+          retry_wait_seconds: 120
+          max_attempts: 3
+          command: |
+            cd src/cloud-api-adaptor && \
+              ARCHES=linux/amd64 \
+              RELEASE_BUILD=true \
+              RELEASE_TAGS="${RELEASE_TAGS}" \
+              make image registry="${REGISTRY}"
+
+      # hack/build.sh suffixes every tag with `-amd64` on a single-arch build,
+      # so the plain `latest-cohere` and `<sha>` names only exist if we publish
+      # a manifest list over them. Keep in step with publish-cohere-release.yaml.
+      - name: Publish multi-arch manifest
+        env:
+          IMAGE_REGISTRY: ${{ env.REGISTRY }}
+          IMAGE_NAME: cloud-api-adaptor
+          IMAGE_TAGS: ${{ needs.tags.outputs.image_tags }}
+          ARCHES: amd64
+        run: ./hack/publish.sh publish-multiarch-manifest
+
+  peerpod-ctrl:
+    name: Build peerpod-ctrl image (amd64)
+    needs: tags
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read   # checkout the cohere ref
+      packages: write  # push image manifests to GHCR
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      - name: Login to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Determine image tags
+        id: tags
+        env:
+          IMAGE_TAGS: ${{ needs.tags.outputs.image_tags }}
+          REGISTRY: ${{ env.REGISTRY }}
+        run: |
+          tags_csv=""
+          for t in ${IMAGE_TAGS//,/ }; do
+            tags_csv+="${REGISTRY}/peerpod-ctrl:${t},"
+          done
+          echo "tags=${tags_csv%,}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          tags: ${{ steps.tags.outputs.tags }}
+          push: true
+          context: src
+          file: src/peerpod-ctrl/Dockerfile
+          platforms: linux/amd64
+          build-args: |
+            GOFLAGS=-tags=gcp,azure
+
+  chart:
+    name: Publish peerpods Helm chart
+    # Publish the chart only after the images its defaults point at.
+    needs: [tags, caa, peerpod-ctrl]
+    uses: $/.github/workflows/peerpods-chart_image.yaml
+    with:
+      git_ref: ${{ github.sha }}
+      # Floating dev tag — mirrors upstream's `0.0.0-dev` convention for
+      # main-branch pushes. Real SemVer is reserved for release events.
+      chart_version: ${{ needs.tags.outputs.chart_version }}
+      # Default the chart to this commit's images rather than the floating
+      # tag in values.yaml.
+      image_tag: ${{ needs.tags.outputs.short_sha }}
+    permissions:
+      contents: read           # checkout the cohere ref
+      packages: write          # push chart artifact to GHCR
+      id-token: write          # OIDC token for actions/attest sigstore signing
+      attestations: write      # write build provenance attestations
+      artifact-metadata: write # actions/attest writes attestation metadata

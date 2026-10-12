@@ -1,0 +1,9 @@
+rules:
+  secrets-outside-env:
+    config:
+      # The PodVM build mints a GitHub App token for the private baselines
+      # repository with these repository secrets. Moving them to an environment
+      # needs a repository-settings change; see COHERE-FOLLOWUPS.md (H5).
+      allow:
+        - GH_APP_CLIENT_ID
+        - GH_APP_PRIVATE_KEY

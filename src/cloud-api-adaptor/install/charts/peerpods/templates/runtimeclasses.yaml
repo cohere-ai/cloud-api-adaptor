@@ -1,0 +1,27 @@
+{{- if .Values.providers }}
+{{- range $provider := .Values.providers }}
+{{- if include "peerpods.providerEnabled" $provider }}
+{{- $nodeSelector := merge (deepCopy ($.Values.nodeSelector | default dict)) ($provider.nodeSelector | default dict) }}
+{{- $tolerations := uniq (concat ($.Values.tolerations | default list) ($provider.tolerations | default list)) }}
+---
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: {{ $provider.runtimeClassName }}
+  labels:
+{{ include "peerpods.providerLabels" (dict "root" $ "provider" $provider) | nindent 4 }}
+handler: {{ $provider.runtimeClassName }}
+{{- if or $nodeSelector $tolerations }}
+scheduling:
+{{- with $nodeSelector }}
+  nodeSelector:
+{{ toYaml . | nindent 4 }}
+{{- end }}
+{{- with $tolerations }}
+  tolerations:
+{{ toYaml . | nindent 4 }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
