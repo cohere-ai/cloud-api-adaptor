@@ -15,20 +15,3 @@ cat > "${BUILDROOT}/etc/udev/rules.d/66-azure-storage.rules" << 'UDEVRULES'
 # Azure data disk symlinks by LUN
 ACTION=="add|change", SUBSYSTEM=="block", ENV{ID_VENDOR}=="Msft", ENV{ID_MODEL}=="Virtual_Disk", PROGRAM="/bin/sh -c 'readlink /sys/block/%k/device 2>/dev/null | sed -n \"s/.*[:/]\\([0-9]*\\)$/\\1/p\"'", SYMLINK+="disk/azure/data/by-lun/%c"
 UDEVRULES
-
-# Override the image's systemd-stub (from systemd-boot-efi) with the builder's
-# v256 stub from Ubuntu 24.10 (oracular). ukify reads this path when assembling
-# the UKI for Bootloader=uki, and cvm-measure predicts RTMR2 for the v256 stub.
-# On the Ubuntu 26.04 image this downgrades the stub from v259; see F8 in
-# COHERE-FOLLOWUPS.md.
-# Fail rather than silently ship the image's own stub, whose RTMR2 would not
-# match the prediction. Only the x86-64 UKI uses this stub.
-if [[ "${ARCHITECTURE}" == "x86-64" ]]; then
-    if [ ! -f /usr/lib/systemd/boot/efi/linuxx64.efi.stub ]; then
-        echo "ERROR: builder has no v256 systemd-stub at /usr/lib/systemd/boot/efi/linuxx64.efi.stub" >&2
-        exit 1
-    fi
-    mkdir -p "${BUILDROOT}/usr/lib/systemd/boot/efi"
-    cp /usr/lib/systemd/boot/efi/linuxx64.efi.stub \
-       "${BUILDROOT}/usr/lib/systemd/boot/efi/linuxx64.efi.stub"
-fi
