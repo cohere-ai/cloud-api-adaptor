@@ -52,7 +52,7 @@ git:
   # PodVM CI: UKI extract + TDX measurement (needs `tdx --disk` for RTMR[1]).
   cvm-measure:
     url: https://github.com/cohere-ai/cvm-measure
-    reference: 7c2e57fd546f5f25056376e936adccf498e9ef81
+    reference: 7fbc3a9a505fb93a7e81443f05c9ee66bfc998c6
 # If a tag is given it will attempt to pull the oci image by tag. if a
 # reference is specified the corresponding tag will be constructed using
 # the reference and suffixes like architecture or tee.
